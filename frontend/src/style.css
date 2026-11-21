@@ -14,9 +14,14 @@
   --border: #2b373a;
   --muted: #91a4a7;
   --input: #111a1d;
-  --accent: #79e6be;
+  /* Sampled from the supplied Forklift icon's green background. */
+  --accent: #41a04a;
+  --accent-text: var(--accent);
+  --accent-foreground: #07150a;
+  --accent-hover: #389140;
   --text: #dfe7e6;
   color-scheme: dark;
+  accent-color: var(--accent);
 }
 [data-theme="light"] {
   --bg: #f3f7f6;
@@ -24,7 +29,7 @@
   --border: #d8e2df;
   --muted: #526c67;
   --input: #f5f8f7;
-  --accent: #117855;
+  --accent-text: #287532;
   --text: #172e29;
   color: var(--text);
   background: var(--bg);
@@ -54,7 +59,7 @@ button {
   padding: 9px;
 }
 button:hover {
-  background: #7ba69418;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 button:disabled {
   opacity: 0.55;
@@ -72,8 +77,8 @@ select {
 }
 input:focus,
 select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px #79e6be22;
+  border-color: var(--accent-text);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent);
 }
 label {
   display: flex;
@@ -113,19 +118,19 @@ small {
 .eyebrow {
   font-size: 12px;
   letter-spacing: 1.8px;
-  color: var(--accent);
+  color: var(--accent-text);
   margin-bottom: 12px;
   font-weight: 600;
 }
 .primary {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--accent-foreground);
   font-weight: 650;
   padding: 11px 17px;
   white-space: nowrap;
 }
 .primary:hover {
-  background: #60cfa8;
+  background: var(--accent-hover);
 }
 .secondary {
   border: 1px solid var(--border);
@@ -157,12 +162,10 @@ aside {
   letter-spacing: -1px;
   padding: 0 12px;
 }
-.mark {
-  background: var(--accent);
-  color: var(--bg);
+.brand-icon {
+  display: block;
+  flex-shrink: 0;
   border-radius: 9px;
-  display: flex;
-  padding: 7px;
 }
 .workspace {
   display: flex;
@@ -180,8 +183,8 @@ aside {
   width: 34px;
   height: 34px;
   border-radius: 8px;
-  background: #71d5b21c;
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  color: var(--accent-text);
 }
 .nav-label {
   font-size: 11px;
@@ -201,13 +204,13 @@ nav button {
   font-size: 14px;
 }
 nav button.active {
-  background: #71d5b217;
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--accent-text);
 }
 .count {
   margin-left: auto;
   font-size: 12px;
-  background: #79e6be16;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -250,9 +253,9 @@ header > div {
   width: 34px;
   height: 34px;
   font-size: 12px;
-  color: var(--accent);
-  background: #71d5b218;
-  border: 1px solid #71d5b233;
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
   border-radius: 50%;
   font-weight: 600;
 }
@@ -296,7 +299,7 @@ main {
   font-size: 14px;
 }
 .stat svg {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .stat strong {
   display: block;
@@ -326,9 +329,9 @@ main {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--accent);
-  background: #71d5b214;
-  border: 1px solid #71d5b22a;
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   border-radius: 20px;
   padding: 4px 9px;
   font-size: 12px;
@@ -344,10 +347,14 @@ main {
 .db-icon {
   display: inline-flex;
   padding: 20px;
-  background: linear-gradient(145deg, #71d5b21d, transparent);
-  border: 1px solid #71d5b229;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--accent) 11%, transparent),
+    transparent
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   border-radius: 18px;
-  color: var(--accent);
+  color: var(--accent-text);
   margin-bottom: 18px;
 }
 .directory-art p {
@@ -392,9 +399,9 @@ dd {
 .event-icon {
   display: flex;
   padding: 9px;
-  background: #71d5b211;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
   border-radius: 9px;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .callout {
   display: flex;
@@ -404,10 +411,14 @@ dd {
   border: 1px solid var(--border);
   border-radius: 12px;
   margin-top: 3px;
-  background: linear-gradient(90deg, #71d5b20b, transparent);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 4%, transparent),
+    transparent
+  );
 }
 .callout > svg {
-  color: var(--accent);
+  color: var(--accent-text);
   flex-shrink: 0;
 }
 .callout p {
@@ -481,7 +492,7 @@ td {
   padding: 70px 25px;
 }
 .empty svg {
-  color: var(--accent);
+  color: var(--accent-text);
   margin: 0 auto 20px;
 }
 .empty p {
@@ -496,7 +507,11 @@ td {
   align-items: center;
   justify-content: center;
   padding: 35px;
-  background: radial-gradient(ellipse at 20% 10%, #79e6be11, transparent 60%);
+  background: radial-gradient(
+    ellipse at 20% 10%,
+    color-mix(in srgb, var(--accent) 7%, transparent),
+    transparent 60%
+  );
 }
 .auth-card {
   max-width: 500px;
@@ -513,7 +528,7 @@ td {
 .tag {
   font-size: 9px;
   letter-spacing: 1px;
-  color: var(--accent);
+  color: var(--accent-text);
   border: 1px solid var(--border);
   padding: 4px 6px;
   border-radius: 4px;
@@ -808,8 +823,8 @@ td {
   border-radius: 7px;
 }
 .wizard-progress [aria-current] {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent-text);
 }
 .setup-intro {
   line-height: 1.7;

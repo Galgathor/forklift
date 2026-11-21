@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Boxes,
   LayoutDashboard,
   Users,
   UsersRound,
@@ -38,6 +37,18 @@ type Overview = {
   directory_servers: DirectoryHealth;
 };
 const attr = (e: Entry, k: string) => e.attrs[k]?.[0] || "";
+function BrandIcon({ size = 40 }: { size?: number }) {
+  return (
+    <img
+      src="/forklift.png"
+      alt=""
+      aria-hidden="true"
+      width={size}
+      height={size}
+      className="brand-icon"
+    />
+  );
+}
 function App() {
   const [configured, setConfigured] = useState<boolean | null>(null),
     [session, setSession] = useState<{ username: string; csrf: string } | null>(
@@ -148,7 +159,7 @@ function App() {
   if (configured === null)
     return (
       <div className="auth">
-        <Boxes size={40} />
+        <BrandIcon size={64} />
         <p>Connecting to Forklift…</p>
         {banner}
       </div>
@@ -158,10 +169,7 @@ function App() {
       <div className="auth">
         <div className="auth-card">
           <div className="brand">
-            <span className="mark">
-              <Boxes />
-            </span>{" "}
-            forklift<span className="tag">EARLY ACCESS</span>
+            <BrandIcon /> forklift<span className="tag">EARLY ACCESS</span>
           </div>
           <p className="eyebrow">YOUR DIRECTORY, SIMPLIFIED</p>
           <h1>
@@ -228,10 +236,7 @@ function App() {
     <div className="layout">
       <aside>
         <div className="brand">
-          <span className="mark">
-            <Boxes />
-          </span>{" "}
-          forklift
+          <BrandIcon /> forklift
         </div>
         <div className="workspace">
           <span className="workspace-icon">
