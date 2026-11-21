@@ -7,11 +7,11 @@ if [ ! -f .secrets/bootstrap ]; then openssl rand -hex 32 > .secrets/bootstrap; 
 if [ ! -f .secrets/provision ]; then openssl rand -hex 32 > .secrets/provision; fi
 if [ ! -f .secrets/service ]; then openssl rand -hex 48 > .secrets/service; fi
 if [ ! -f .secrets/ca.crt ]; then
- openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj '/CN=Forklift Local CA' -keyout .secrets/ca.key -out .secrets/ca.crt
+ openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj '/CN=Forklift Local CA' -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign' -keyout .secrets/ca.key -out .secrets/ca.crt
 fi
 if [ ! -f .secrets/ldap.crt ]; then
  openssl req -new -newkey rsa:3072 -nodes -subj '/CN=ldap' -keyout .secrets/ldap.key -out .secrets/ldap.csr
- printf 'subjectAltName=DNS:ldap\nextendedKeyUsage=serverAuth\n' > .secrets/extensions
+ printf 'basicConstraints=critical,CA:FALSE\nsubjectAltName=DNS:ldap\nextendedKeyUsage=serverAuth\nkeyUsage=critical,digitalSignature,keyEncipherment\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n' > .secrets/extensions
  openssl x509 -req -in .secrets/ldap.csr -CA .secrets/ca.crt -CAkey .secrets/ca.key -CAcreateserial -days 365 -extfile .secrets/extensions -out .secrets/ldap.crt
 fi
 # Containers use fixed UID 10001; keep private material inaccessible to other users.

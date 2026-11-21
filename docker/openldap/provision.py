@@ -1,13 +1,13 @@
 """One-shot, constrained provisioning. No shell, Docker socket or cn=config API."""
-import base64, hashlib, hmac, json, os, re, subprocess, threading
+import base64, hashlib, hmac, json, os, re, subprocess, threading, ssl, time, sys, signal, socket
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from argon2 import PasswordHasher
 ROOT = Path('/directory')
 
 def secret(name): return Path('/run/secrets/' + name).read_text().strip()
 def hashed(value):
-    salt = os.urandom(16)
-    return '{SSHA}' + base64.b64encode(hashlib.sha1(value.encode() + salt).digest() + salt).decode()
+    return '{ARGON2}' + PasswordHasher(time_cost=3, memory_cost=65536, parallelism=1).hash(value)
 def b64(value): return base64.b64encode(value.encode()).decode()
 def start():
     return subprocess.Popen(['slapd', '-f', str(ROOT/'slapd.conf'), '-h', 'ldaps://0.0.0.0:636', '-d', '0'])
@@ -16,7 +16,9 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def reply(self, code, value):
         data = json.dumps(value).encode(); self.send_response(code); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(data)
-    def do_GET(self): self.reply(200, {'initialized': (ROOT/'complete').exists()})
+    def do_GET(self):
+        initialized = (ROOT/'complete').exists()
+        self.reply(200 if not initialized or (slapd is not None and slapd.poll() is None) else 503, {'initialized': initialized})
     def do_POST(self):
         if self.path != '/initialize': return self.reply(404, {})
         if (ROOT/'complete').exists(): return self.reply(409, {'error': 'Already initialized'})
@@ -38,11 +40,12 @@ pidfile /directory/slapd.pid
 argsfile /directory/slapd.args
 modulepath /usr/lib/ldap
 moduleload back_mdb
+moduleload argon2
 TLSCACertificateFile /run/secrets/ca.crt
 TLSCertificateFile /run/secrets/ldap.crt
 TLSCertificateKeyFile /run/secrets/ldap.key
 security simple_bind=128
-password-hash {{SSHA}}
+password-hash {{ARGON2}}
 database mdb
 maxsize 1073741824
 suffix "{base}"
@@ -62,10 +65,40 @@ access to * by dn.exact="cn=manager,{base}" write by users read by * none
             (ROOT/'complete').write_text(base)
             global slapd
             slapd = start()
+            context = ssl.create_default_context(cafile='/run/secrets/ca.crt')
+            for attempt in range(100):
+                try:
+                    with socket.create_connection(('127.0.0.1', 636), timeout=1) as raw:
+                        with context.wrap_socket(raw, server_hostname='ldap'): pass
+                    break
+                except (OSError, ssl.SSLError):
+                    if slapd.poll() is not None: raise RuntimeError('slapd exited')
+                    time.sleep(0.1)
+            else: raise RuntimeError('LDAP startup timed out')
             return self.reply(200, {'initialized': True})
-        except Exception:
+        except Exception as exc:
+            print("Provisioning failed: " + type(exc).__name__, file=sys.stderr, flush=True)
             self.reply(400, {'error': 'Provisioning failed; inspect local directory state'})
 
 os.umask(0o077)
 slapd = start() if (ROOT/'complete').exists() else None
-HTTPServer(('0.0.0.0', 8090), Handler).serve_forever()
+def shutdown(*args):
+    if slapd is not None:
+        slapd.terminate()
+        try: slapd.wait(timeout=8)
+        except subprocess.TimeoutExpired: slapd.kill()
+    sys.exit(0)
+signal.signal(signal.SIGTERM, shutdown)
+def supervise():
+    while True:
+        if slapd is not None and slapd.poll() is not None:
+            print('slapd exited; restarting container required', file=sys.stderr, flush=True)
+            os._exit(1)
+        time.sleep(1)
+threading.Thread(target=supervise, daemon=True).start()
+server = HTTPServer(('0.0.0.0', 8090), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.minimum_version = ssl.TLSVersion.TLSv1_2
+context.load_cert_chain('/run/secrets/ldap.crt', '/run/secrets/ldap.key')
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
