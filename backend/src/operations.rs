@@ -248,6 +248,24 @@ pub(super) async fn complete_recovery(
 mod tests {
     use super::*;
     #[test]
+    fn earlier_migrations_cannot_lower_the_downgrade_guard() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("PRAGMA user_version=4;").unwrap();
+        // A crash after either committed migration must still advertise schema 4.
+        hosts::migrate(&db).unwrap();
+        assert_eq!(
+            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            4
+        );
+        replicas::migrate(&db).unwrap();
+        assert_eq!(
+            db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            4
+        );
+    }
+    #[test]
     fn upgrade_is_idempotent_and_preserves_existing_state() {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch("CREATE TABLE attempts(at INTEGER); CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT); INSERT INTO settings VALUES('preserve','true');").unwrap();

@@ -80,7 +80,10 @@ fn valid_id(s: &str) -> Result<()> {
     Ok(())
 }
 pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
-    db.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS hosts(id TEXT PRIMARY KEY,hostname TEXT NOT NULL UNIQUE,data TEXT NOT NULL); PRAGMA user_version=2; COMMIT;")?;
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    db.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS hosts(id TEXT PRIMARY KEY,hostname TEXT NOT NULL UNIQUE,data TEXT NOT NULL);")?;
+    db.pragma_update(None, "user_version", version.max(2))?;
+    db.execute_batch("COMMIT;")?;
     Ok(())
 }
 pub(super) fn list(a: &App) -> Result<Vec<Host>> {

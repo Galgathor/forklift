@@ -19,7 +19,10 @@ pub(super) struct Server {
     pub credential_epoch: i64,
 }
 pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
-    db.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS directory_servers(id TEXT PRIMARY KEY,name TEXT NOT NULL,endpoint TEXT NOT NULL UNIQUE,provider TEXT NOT NULL,state TEXT NOT NULL,certificate TEXT,enrollment_hash TEXT,enrollment_expires INTEGER NOT NULL,last_checked_at INTEGER,last_sync_at INTEGER,last_error TEXT); PRAGMA user_version=3; COMMIT;")?;
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    db.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS directory_servers(id TEXT PRIMARY KEY,name TEXT NOT NULL,endpoint TEXT NOT NULL UNIQUE,provider TEXT NOT NULL,state TEXT NOT NULL,certificate TEXT,enrollment_hash TEXT,enrollment_expires INTEGER NOT NULL,last_checked_at INTEGER,last_sync_at INTEGER,last_error TEXT);")?;
+    db.pragma_update(None, "user_version", version.max(3))?;
+    db.execute_batch("COMMIT;")?;
     Ok(())
 }
 pub(super) fn records(a: &App) -> Result<Vec<Server>> {
