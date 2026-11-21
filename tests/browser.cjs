@@ -59,6 +59,34 @@ const fs = require("node:fs");
     await page
       .getByRole("heading", { name: "Enroll a second Docker host" })
       .waitFor();
+    await page.getByRole("button", { name: "Add server", exact: true }).click();
+    const setup = page.getByRole("dialog", { name: "Add directory server" });
+    await setup
+      .getByLabel("Existing server DNS name", { exact: true })
+      .fill("directory.home.arpa");
+    await setup
+      .getByLabel("Existing Docker host private IPv4 address", { exact: true })
+      .fill("192.168.1.10");
+    if (
+      !(await setup
+        .locator("pre")
+        .innerText()
+        .then((text) =>
+          text.includes(
+            "prepare-replication --hostname directory.home.arpa --bind 192.168.1.10",
+          ),
+        ))
+    )
+      throw Error("Missing primary preparation instructions");
+    if (
+      !(await setup
+        .getByRole("button", { name: "Check primary & continue", exact: true })
+        .isDisabled())
+    )
+      throw Error("HTTP enrollment should require WebUI HTTPS");
+    await setup
+      .getByRole("button", { name: "Close setup", exact: true })
+      .click();
     if (errors.length || (await page.getByRole("alert").count()))
       throw Error("Browser reported an application error");
     console.log(

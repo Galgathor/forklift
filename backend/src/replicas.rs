@@ -123,6 +123,7 @@ const DOCKERFILE: &str = include_str!("../assets/replica.Dockerfile");
 #[derive(Deserialize)]
 pub(super) struct Bundle {
     acknowledge: bool,
+    bind_address: Option<String>,
 }
 pub(super) async fn bundle(
     State(a): State<App>,
@@ -144,12 +145,17 @@ pub(super) async fn bundle(
             "An enrolled or in-progress server cannot receive another enrollment token",
         ));
     }
+    let deployment = p
+        .bind_address
+        .as_deref()
+        .map(crate::replica_setup::private_ipv4)
+        .transpose()?;
     let raw = token();
     let expiry = now() + 900;
     let enrollment = json!({"id":id,"token":raw,"hostname":hosts::endpoint_hostname(&server.endpoint)?,"provider":server.provider,"manager_url":a.url,"expires_at":expiry});
     let ca = std::fs::read("/run/secrets/ca.crt").map_err(anyhow::Error::from)?;
     let readme = format!(
-        "Forklift replica: {}\n\nPrivate enrollment bundle. Token expires at Unix time {} (15 minutes), is scoped to this server and can be redeemed once.\nExtract on the second Docker host. Keep this directory private. Run ./prepare.sh, set FORKLIFT_REPLICA_BIND to a private interface in .env, then docker compose up -d --build.\nThe DNS name {} must resolve to this host and its published LDAPS port must match {}. The provider {} must be reachable from the replica.\nManager HTTPS uses system trust; for private PKI place its public CA in enrollment/manager-ca.crt before startup.\nThe replica generates its own private TLS key. Its non-CA certificate is pinned during enrollment; the installation CA signing key is never distributed.\nWait for confirmed synchronization in Forklift before putting the replica in client endpoint lists. Regenerate host bundles so SSSD trusts the new server certificate.\nUse independent storage. Never share primary MDB files or promote this read-only server automatically.\nA consumed token cannot be replayed, even after an interrupted response. Stop the failed stack and reissue an unused enrollment, or remove/re-add a consumed server. Never erase a working directory to hide an error.\n",
+        "Forklift replica: {}\n\nPrivate enrollment bundle. Token expires at Unix time {} (15 minutes), is scoped to this server and can be redeemed once.\nExtract on the second Docker host. Keep this directory private. If .env is included, its private interface/port are already configured: run ./start.sh. Otherwise run ./prepare.sh, set FORKLIFT_REPLICA_BIND to a private interface in .env, then ./start.sh. Forklift installs OpenLDAP, creates certificates and configures replication; do not install another LDAP server first.\nThe DNS name {} must resolve to this host and its published LDAPS port must match {}. The provider {} must be reachable from the replica.\nManager HTTPS uses system trust; for private PKI place its public CA in enrollment/manager-ca.crt before startup.\nThe replica generates its own private TLS key. Its non-CA certificate is pinned during enrollment; the installation CA signing key is never distributed.\nWait for confirmed synchronization in Forklift before putting the replica in client endpoint lists. Regenerate host bundles so SSSD trusts the new server certificate.\nUse independent storage. Never share primary MDB files or promote this read-only server automatically.\nA consumed token cannot be replayed, even after an interrupted response. Stop the failed stack and reissue an unused enrollment, or remove/re-add a consumed server. Never erase a working directory to hide an error.\n",
         server.name,
         expiry,
         hosts::endpoint_hostname(&server.endpoint)?,
@@ -157,7 +163,7 @@ pub(super) async fn bundle(
         server.provider
     );
     let prepare = include_bytes!("../assets/replica.prepare.sh");
-    let bytes = archive(vec![
+    let mut files = vec![
         (
             ".gitignore",
             b".env\nenrollment/\ncredential-update.json\n".to_vec(),
@@ -183,7 +189,24 @@ pub(super) async fn bundle(
         ),
         ("enrollment/provider-ca.crt", ca, 0o644),
         ("README.txt", readme.into_bytes(), 0o600),
-    ])?;
+        (
+            "start.sh",
+            include_bytes!("../assets/replica.start.sh").to_vec(),
+            0o700,
+        ),
+    ];
+    if let Some(ip) = deployment {
+        let port = reqwest::Url::parse(&server.endpoint)
+            .map_err(|_| bad("Invalid replica endpoint"))?
+            .port()
+            .unwrap_or(636);
+        files.push((
+            ".env",
+            format!("FORKLIFT_REPLICA_BIND={ip}\nFORKLIFT_REPLICA_PORT={port}\n").into_bytes(),
+            0o600,
+        ));
+    }
+    let bytes = archive(files)?;
     a.db.lock().unwrap().execute("UPDATE directory_servers SET enrollment_hash=?,enrollment_expires=?,state='pending',last_error=NULL WHERE id=?",params![digest(&raw),expiry,id]).map_err(anyhow::Error::from)?;
     audit(&a, &who, "issue replica enrollment", &id)?;
     Ok((

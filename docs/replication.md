@@ -4,6 +4,43 @@ Forklift manages one writable OpenLDAP primary and up to eight read/authenticati
 
 There is no automatic primary promotion, shared database volume, Docker socket, manager-to-host SSH connection, or second management interface. Replicas remain read-only even when the primary fails. Writes wait for the primary to recover.
 
+## Add a second server without installing LDAP yourself
+
+**Your existing Forklift installation is already the primary LDAP server. The new machine does not need LDAP, certificates or replication configured in advance.** It only needs Linux and Docker Compose. Forklift creates the new directory and secures it when you run its downloaded deployment.
+
+Open **Directory Servers → Add server**. The wizard takes you through three steps:
+
+1. **Existing server, once.** Choose the LAN DNS name of the Docker host already running Forklift, such as `directory.home.arpa`, and point it to that host's private address in your LAN DNS. The wizard generates one command to run in the existing Forklift checkout:
+
+   ```sh
+   python3 scripts/forklift-admin.py prepare-replication \
+     --hostname directory.home.arpa --bind 192.168.1.10 --port 636
+   ```
+
+   This renews the primary certificate with the chosen DNS name, preserves the CA/existing certificate names and directory data, and publishes its encrypted directory port on that private interface. It records the Compose override in `.env` so ordinary subsequent Compose commands retain the publication. It briefly restarts the primary directory. You do not run `ldapadd`, edit LDIF or install another LDAP server. Allow this port from the new machine and manager; do not send it through NPM's HTTP proxy. Use the actual address assigned to your Docker host, not the example.
+
+   Click **Check primary & continue**. Forklift checks DNS, TLS and the exact primary certificate without sending LDAP credentials to the entered address. The address is saved for later replicas, so this preparation is normally only needed for the first replica. An `ldaps://ldap:636` container address is internal to Docker; it is not the address of the Docker host on your LAN.
+
+2. **New machine.** Enter its friendly name, DNS name and private IPv4 address. Point that DNS name to the new machine in your LAN DNS. Leave port 636 unless you have a port conflict. **Nothing needs to be listening at this address yet.** The wizard preconfigures the new stack's private bind address and port.
+
+3. **Install & connect.** Download the private deployment when you are ready to install it. Transfer it privately to the new machine. Copy the extraction instructions from the wizard, then run `./start.sh` in the extracted directory. This prepares permissions and starts the Compose stack, which installs OpenLDAP, creates its TLS certificate, enrolls and copies the primary directory. No `.env` editing is needed for wizard-generated bundles.
+
+The one-use enrollment credential expires 15 minutes after downloading/generating the bundle, not when you start filling out the wizard. If it expires before enrollment, stop that pending stack, choose **Continue setup**, extract the fresh download into its private deployment directory and run `./start.sh` again. Downloaded files remain owned by you; the startup helper copies enrollment material into a protected runtime volume. A configured directory is never reset. Keep the archive/private deployment directory protected: successful enrollment grants access to password hashes. Never erase a working directory as a way to retry setup.
+
+Before redeeming its token, the new machine verifies that it can reach the primary with a valid TLS certificate. A failed primary check reports the network/certificate problem and leaves the token unused. It must also reach Forklift's HTTPS address. Wait for **Synchronization confirmed**, then add the new endpoint to each Linux host and deploy an updated host bundle so SSSD receives the replica's certificate trust.
+
+### The two connections, in plain language
+
+| Connection | Example | Who prepares it? |
+| --- | --- | --- |
+| Forklift WebUI and enrollment | `https://forklift.example.com` | Your NPM HTTPS Proxy Host and `FORKLIFT_PUBLIC_URL` |
+| Existing primary directory | `directory.home.arpa:636` | Forklift's one-time preparation command |
+| New replica directory | `directory2.home.arpa:636` | The downloaded stack creates it when started |
+
+LAN DNS and firewall routing are still host/network configuration: both machines must resolve the names and reach the necessary private ports. Forklift generates and verifies the LDAP/TLS configuration. For a privately signed WebUI HTTPS certificate, place its **public** CA at `enrollment/manager-ca.crt` before starting; publicly trusted NPM certificates need no extra file.
+
+For custom Compose deployments, pass the same `--root`, `--project` and `--file` global options to the preparation command that you use for maintenance. The helper preserves the actual Compose file list, rejects incompatible custom LDAP port mappings and refuses all-interface/public publication. If the final Compose recreation fails, correct the port/interface conflict and rerun the command; directory data is retained. Review your firewall before publication. Existing primary certificate renewal journals must be completed before other maintenance.
+
 ## Upgrade an existing installation
 
 Make a consistent backup of metadata, directory storage and installation secrets first. Build and recreate the primary stack from the same checkout:
@@ -12,7 +49,7 @@ Make a consistent backup of metadata, directory storage and installation secrets
 docker compose up -d --build
 ```
 
-If you use the optional client/LDAPS Compose override, retain its `COMPOSE_FILE` setting. SQLite schema 2 migrates to schema 3. Before starting slapd, the directory helper recognizes the previous generated configuration, saves `slapd.conf.pre-replication`, adds the syncprov module/overlay and replication indexes, extends the password-hash read ACL only to dedicated replication identities, validates the configuration and reindexes the existing database offline. The MDB directory and existing identities are retained. This creates a brief authentication interruption on the primary; an already configured replica continues serving authentication.
+If you use the optional client/LDAPS Compose override, retain its `COMPOSE_FILE` setting. Older metadata migrates through schema 4. Before starting slapd, the directory helper recognizes the previous generated configuration, saves `slapd.conf.pre-replication`, adds the syncprov module/overlay and replication indexes, extends the password-hash read ACL only to dedicated replication identities, validates the configuration and reindexes the existing database offline. The MDB directory and existing identities are retained. This creates a brief authentication interruption on the primary; an already configured replica continues serving authentication.
 
 The helper refuses customized/unrecognized configurations rather than guessing. If an upgrade is interrupted during indexing, it retries the idempotent offline index operation on the next start. It does not discard a configured directory or run first-time setup. Rollback requires a matching complete backup and release, because old managers refuse newer metadata schemas.
 
@@ -31,34 +68,9 @@ Each replica generates a new RSA private key locally and a self-signed **non-CA 
 
 No installation CA signing key is mounted into the manager, primary or replica. The replica private key never travels to the manager. Pinning permits independent replica enrollment without copying a CA signing key or adding an unrestricted certificate-signing service. The generated leaf certificate lasts 365 days; Milestone 4 supports locally staged renewal, dual manager/client trust and verified finalization; follow [certificate lifecycle](operations.md#replica-certificate-and-replication-credential-lifecycle). Plan maintenance before expiry. Replacing the certificate without updating enrollment/trust makes monitoring and client TLS fail, as intended.
 
-## Add a replica
+## Advanced API enrollment
 
-1. Open **Directory Servers → Add server**. Enter a name, the replica's private LDAPS DNS endpoint (for example `ldaps://ldap2.homelab.internal:636`) and the primary LDAPS endpoint reachable from that replica (for example `ldaps://ldap1.homelab.internal:636`). These addresses must refer to different servers.
-2. Select **Generate deployment**. Download the private archive and transfer it securely to the second Docker host. The token is scoped to this registered node, expires in 15 minutes and can be redeemed once. Only its digest is stored in metadata. Do not commit, email, log or publicly share the archive: successful enrollment grants access to the directory's password hashes for replication.
-3. Extract into a private directory. The archive includes a pinned-version Dockerfile, the replica runtime, Compose, provider CA, one-time enrollment settings, `prepare.sh` and instructions. For private HTTPS PKI, add `enrollment/manager-ca.crt` now. Run:
-
-   ```sh
-   ./prepare.sh
-   ```
-
-4. Set `.env` to the second host's private interface and registered LDAP port:
-
-   ```dotenv
-   FORKLIFT_REPLICA_BIND=192.168.1.11
-   FORKLIFT_REPLICA_PORT=636
-   ```
-
-5. Start the replica:
-
-   ```sh
-   docker compose up -d --build
-   docker compose logs --tail=100 replica
-   ```
-
-6. Watch Directory Servers until **Synchronization confirmed** appears. Initial enrollment, a running container or a successful TCP handshake does not imply the directory data has synchronized.
-7. Edit each affected Linux host's ordered endpoints to include both the primary and replica. Generate and deploy a **new host bundle**, which includes the replica's pinned public certificate as well as the installation CA. Wait for synchronization after generating host credentials, because the new host read identity/password must reach the replica before failover can work.
-
-`prepare.sh` gives the runtime's fixed UID 10001 access to restricted enrollment files. It does not configure a remote Docker host from the manager. The replica container has a read-only root filesystem, dropped capabilities, no privilege escalation, and one independent writable data volume. The archive builds locally from pinned OpenLDAP/base versions; no private container registry is required.
+Existing API clients can still register explicit `endpoint`/`provider` addresses and request deployment bundles. Supply `bind_address` when generating a bundle to include a private IPv4 `.env`; without it, run `./prepare.sh` and explicitly set the bind address before `./start.sh`. The generated runtime and token checks are identical to wizard deployments. See the guided workflow above for ordinary installations.
 
 ## Credentials and privilege boundaries
 

@@ -49,10 +49,12 @@ PRIMARY_ROOT=ROOT/'primary';PRIMARY_ROOT.mkdir()
 shutil.copy2(SOURCE/'compose.yaml',PRIMARY_ROOT/'compose.yaml')
 shutil.copy2(SOURCE/'.env.example',PRIMARY_ROOT/'.env.example')
 (PRIMARY_ROOT/'scripts').mkdir();shutil.copy2(SOURCE/'scripts/install.sh',PRIMARY_ROOT/'scripts/install.sh')
+shutil.copy2(SOURCE/'scripts/renew-ldap-certificate.sh',PRIMARY_ROOT/'scripts/renew-ldap-certificate.sh')
+(PRIMARY_ROOT/'deploy/primary').mkdir(parents=True);shutil.copy2(SOURCE/'deploy/primary/clients.compose.yaml',PRIMARY_ROOT/'deploy/primary/clients.compose.yaml')
 run('sh','scripts/install.sh',cwd=PRIMARY_ROOT)
 (PRIMARY_ROOT/'.env').write_text('FORKLIFT_PUBLIC_URL='+URL+'\nFORKLIFT_PORT='+ENV['FORKLIFT_PORT']+'\nFORKLIFT_BIND=127.0.0.1\n')
 override=ROOT/'primary.yaml'
-override.write_text('services:\n  ldap:\n    image: forklift-ldap:latest\n    networks: [directory, web]\n  manager:\n    image: forklift-manager:latest\n')
+override.write_text('services:\n  ldap:\n    image: forklift-ldap:latest\n    networks:\n      directory: {}\n      web:\n        aliases: [primary.replication.test]\n  manager:\n    image: forklift-manager:latest\n')
 def compose(*args):
     return run('docker','compose','--project-directory',str(PRIMARY_ROOT),'-p',PROJECT,'-f',str(PRIMARY_ROOT/'compose.yaml'),'-f',str(override),*args,env=ENV)
 
@@ -135,15 +137,45 @@ try:
     request('/api/setup','POST',dict(token=bootstrap,name='Replication test',base=BASE,username='admin',password=PASSWORD))
     csrf=request('/api/login','POST',dict(username='admin',password=PASSWORD))['csrf']
     assert any(c.secure for c in jar),'HTTPS sessions did not receive Secure cookies'
+    print('Testing guided primary preparation, persisted publication and credential-free TLS checks…',flush=True)
+    request('/api/replication/setup',auth=False,expect=401)
+    assert request('/api/replication/setup')['https_ready']
+    probe=dict(hostname='primary.replication.test',port=636)
+    request('/api/replication/primary/check','POST',probe,use_csrf=False,expect=403)
+    request('/api/replication/primary/check','POST',dict(hostname='127.0.0.1',port=636),expect=400)
+    request('/api/replication/primary/check','POST',probe,expect=400) # existing certificate lacks this DNS name
+    bridge=json.loads(run('docker','network','inspect','bridge').stdout)[0]['IPAM']['Config'][0]['Gateway']
+    published=port()
+    operator=['python3',str(SOURCE/'scripts/forklift-admin.py'),'--root',str(PRIMARY_ROOT),'--project',PROJECT,'--file',str(PRIMARY_ROOT/'compose.yaml'),'--file',str(override),'prepare-replication']
+    invalid=run(*operator,'--hostname','primary.replication.test','--bind','0.0.0.0','--port',str(published),check=False)
+    assert invalid.returncode
+    run(*operator,'--hostname','primary.replication.test','--bind',bridge,'--port',str(published))
+    private=ssl.create_default_context(cafile=str(PRIMARY_ROOT/'.secrets/ca.crt'))
+    with socket.create_connection((bridge,published),timeout=5) as connection:
+        with private.wrap_socket(connection,server_hostname='primary.replication.test'):pass
+    assert 'COMPOSE_FILE=compose.yaml:' in (PRIMARY_ROOT/'.env').read_text()
+    request('/api/replication/primary/check','POST',probe)
+    assert request('/api/replication/setup')['primary_endpoint']=='ldaps://primary.replication.test:636'
+    if os.environ.get('FORKLIFT_TEST_BROWSER_DEPS'):
+        private_output=ROOT/'wizard-private';private_output.mkdir(mode=0o700)
+        browser=run('docker','run','--rm','-i','--network','host','--user',str(os.getuid())+':'+str(os.getgid()),'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--tmpfs','/tmp:rw,nosuid,size=256m','--shm-size','256m','-e','NODE_PATH=/deps','-v',str(Path(os.environ['FORKLIFT_TEST_BROWSER_DEPS']).resolve())+':/deps:ro','-v',str(SOURCE/'tests/enrollment-browser.cjs')+':/test.cjs:ro','-v',str(private_output)+':/output','mcr.microsoft.com/playwright:v1.65.0-noble@sha256:6e3fb709361521eb27161606e6da6d2674e5e89fa16516cb37d6fdd91372273d','node','/test.cjs',input=json.dumps(dict(url=URL,password=PASSWORD)).encode())
+        browser_node=json.loads(browser.stdout)['id']
+        shutil.copy2(private_output/'wizard.png','/tmp/forklift-enrollment-wizard.png')
+        with tarfile.open(private_output/'wizard.tar.gz',mode='r:gz') as archive:
+            assert archive.extractfile('.env').read()==b'FORKLIFT_REPLICA_BIND=192.168.1.25\nFORKLIFT_REPLICA_PORT=636\n'
+            assert archive.extractfile('start.sh') and archive.getmember('start.sh').mode==0o700
+        request('/api/replicas/'+browser_node,'DELETE')
+        print('PASS: real Chromium guided primary check, simple machine fields, private deployment download and installation instructions.',flush=True)
     print('Testing HTTPS enrollment authorization, token scope, expiry and certificate constraints…',flush=True)
-    draft=dict(name='Secondary',endpoint='ldaps://replica:636',provider='ldaps://ldap:636')
+    draft=dict(name='Secondary',endpoint='ldaps://replica:636',provider='ldaps://primary.replication.test:636')
     request('/api/directory-servers','POST',draft,auth=False,expect=401)
     request('/api/directory-servers','POST',draft,use_csrf=False,expect=403)
     request('/api/directory-servers','POST',dict(draft,provider='ldap://ldap'),expect=400)
     node=request('/api/directory-servers','POST',draft)
     request('/api/directory-servers','POST',draft,expect=400)
     request('/api/replicas/'+node['id']+'/bundle','POST',dict(acknowledge=True),use_csrf=False,expect=403)
-    bundle=request('/api/replicas/'+node['id']+'/bundle','POST',dict(acknowledge=True),raw=True)
+    request('/api/replicas/'+node['id']+'/bundle','POST',dict(acknowledge=True,bind_address='0.0.0.0'),expect=400)
+    bundle=request('/api/replicas/'+node['id']+'/bundle','POST',dict(acknowledge=True,bind_address='192.168.1.20'),raw=True)
     unpack(bundle,replica_dir)
     enrollment=json.loads((replica_dir/'enrollment/enrollment.json').read_text())
     payload=dict(token=enrollment['token'],certificate=(ROOT/'ca.crt').read_text())
@@ -162,11 +194,23 @@ try:
     enrollment['manager_url']='https://enrollment:8443'
     (replica_dir/'enrollment/enrollment.json').write_text(json.dumps(enrollment))
     (replica_dir/'enrollment/manager-ca.crt').write_bytes((ROOT/'ca.crt').read_bytes())
-    run('./prepare.sh',cwd=replica_dir)
-    assert (replica_dir/'.env').read_text().splitlines()==['FORKLIFT_REPLICA_BIND=127.0.0.1','FORKLIFT_REPLICA_PORT=636']
+    assert (replica_dir/'enrollment/enrollment.json').stat().st_uid==os.getuid()
+    assert (replica_dir/'.env').read_text().splitlines()==['FORKLIFT_REPLICA_BIND=192.168.1.20','FORKLIFT_REPLICA_PORT=636']
     (ROOT/'replica-override.yaml').write_text('services:\n  replica:\n    networks: [lan]\nnetworks:\n  lan:\n    external: true\n    name: '+PROJECT+'_web\n')
+    print('Testing unreachable primary is diagnosed before the one-use enrollment token is spent…',flush=True)
+    failed_enrollment=ROOT/'failed-enrollment';failed_enrollment.mkdir(mode=0o700)
+    failed_directory=ROOT/'failed-directory';failed_directory.mkdir(mode=0o700)
+    (failed_enrollment/'enrollment.json').write_text(json.dumps({**enrollment,'provider':'ldaps://ldap:1'}))
+    shutil.copy2(PRIMARY_ROOT/'.secrets/ca.crt',failed_enrollment/'provider-ca.crt')
+    for directory in [failed_enrollment,failed_directory]:
+        run('docker','run','--rm','-v',str(directory)+':/scope','alpine:3.22.2','chown','-R','10001:10001','/scope')
+    failed=run('docker','run','--rm','--network',PROJECT+'_web','--read-only','--cap-drop','ALL','--tmpfs','/tmp:rw,nosuid,size=16m','-v',str(failed_enrollment)+':/enrollment:ro','-v',str(failed_directory)+':/directory','--entrypoint','python3','forklift-ldap:latest','/replica.py',check=False)
+    assert failed.returncode and b'The enrollment token was not used' in failed.stderr
+    assert next(n for n in request('/api/directory-servers')['servers'] if n['id']==node['id'])['enrollment_state']=='pending'
     print('Building the generated standalone replica stack and waiting for native Syncrepl…',flush=True)
-    replica('up','-d','--build','--wait')
+    run('./start.sh',cwd=replica_dir,env={**replica_env,'COMPOSE_PROJECT_NAME':replica_project,'COMPOSE_FILE':str(replica_dir/'compose.yaml')+':'+str(ROOT/'replica-override.yaml')})
+    replica('up','-d','--no-build','--wait')
+    assert (replica_dir/'enrollment/enrollment.json').stat().st_uid==os.getuid()
     synchronized(node['id'])
     certificate=replica_exec('cat','/directory/server.crt').stdout.decode()
     request('/api/replicas/'+node['id']+'/enroll','POST',dict(token=enrollment['token'],certificate=certificate),auth=False,expect=403)

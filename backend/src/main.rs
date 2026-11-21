@@ -1,5 +1,6 @@
 mod hosts;
 mod operations;
+mod replica_setup;
 mod replicas;
 use axum::{
     Json, Router,
@@ -887,6 +888,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/audit/export", get(operations::audit_export))
         .route("/api/sessions/revoke", post(operations::revoke_sessions))
         .route("/api/recovery/complete", post(operations::complete_recovery))
+        .route("/api/replication/setup", get(replica_setup::status))
+        .route("/api/replication/primary/check", post(replica_setup::check))
         .route("/api/directory-servers", get(replicas::index).post(replicas::create))
         .route("/api/replicas/{id}/bundle", post(replicas::bundle))
         .route("/api/replicas/{id}/enroll", post(replicas::enroll))

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline local administration. Docker access is an operator privilege, never a WebUI capability."""
+"""Local operator administration. Docker access is an operator privilege, never a WebUI capability."""
 import argparse
 from contextlib import contextmanager
 import fcntl
@@ -18,8 +18,8 @@ SOURCE=Path(__file__).resolve().parents[1]
 TOOL='forklift-maintenance:latest'
 
 
-def command(args, *, data=None, check=True):
-    result=subprocess.run(args,input=data,capture_output=True)
+def command(args, *, data=None, check=True, env=None):
+    result=subprocess.run(args,input=data,capture_output=True,env=env)
     if check and result.returncode:
         # Do not print Compose environment, native-tool diagnostics, decrypted contents or secrets.
         raise RuntimeError('Operation failed ('+str(result.returncode)+'): '+args[0]+' '+(args[1] if len(args)>1 else ''))
@@ -288,6 +288,60 @@ def resume(installation,args):
     print(json.dumps({'resumed':True}))
 
 
+def publish_directory(installation,args):
+    import ipaddress
+    hostname=args.hostname
+    if len(hostname)>253 or not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?',label) for label in hostname.split('.')):
+        raise ValueError('Use a lowercase DNS name such as directory.home.arpa')
+    if re.fullmatch(r'[0-9.]+',hostname):raise ValueError('Use a DNS hostname, not an IP address')
+    address=ipaddress.ip_address(args.bind)
+    if address.version!=4 or not address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified or address.is_reserved:
+        raise ValueError('Bind to a private LAN IPv4 address on the primary Docker host')
+    if not 1<=args.port<=65535:raise ValueError('Use a port between 1 and 65535')
+    containers=installation.containers()
+    installation.volumes(containers) # Confirm this is the installation whose secrets we will renew.
+    if not all(c['State']['Running'] for c in containers.values()):raise ValueError('Start the existing Forklift stack before preparing replication')
+    labels=containers['ldap']['Config']['Labels']
+    files=labels.get('com.docker.compose.project.config_files','').split(',')
+    override=installation.root/'deploy/primary/clients.compose.yaml'
+    if not override.is_file():raise ValueError('Update this checkout first; the private directory Compose override is missing')
+    if not files or any(not Path(f).is_file() or any(c in f for c in '\n\r:$#"\\') for f in files):
+        raise ValueError('Cannot persist these custom Compose filenames safely')
+    if installation.model['services']['ldap'].get('ports') and str(override) not in files:
+        raise ValueError('LDAP already has custom port publication; review that Compose override before changing it')
+    # Renewal has its own local lock and a resumable key/certificate journal.
+    # It preserves existing DNS names and leaves the installation CA unchanged.
+    command(['sh',str(installation.root/'scripts/renew-ldap-certificate.sh'),hostname])
+    with locked(installation):
+        if installation.state_file.exists():raise ValueError('Resume pending maintenance before changing publication')
+        recorded=[]
+        for file in dict.fromkeys([*files,str(override)]):
+            try:recorded.append(Path(file).relative_to(installation.root).as_posix())
+            except ValueError:recorded.append(file)
+        values={'FORKLIFT_LDAPS_BIND':str(address),'FORKLIFT_LDAPS_PORT':str(args.port),
+                'COMPOSE_FILE':':'.join(recorded)}
+        envfile=installation.root/'.env'
+        content=envfile.read_text()
+        for key,value in values.items():
+            pattern=re.compile(r'^(?:export\s+)?'+key+r'\s*=.*$',re.M)
+            line=key+'='+value
+            content=pattern.sub(lambda _:line,content) if pattern.search(content) else content.rstrip()+'\n'+line+'\n'
+        temporary=envfile.with_name('.env.new')
+        with open(temporary,'w') as out:
+            os.chmod(temporary,0o600);out.write(content);out.flush();os.fsync(out.fileno())
+        temporary.replace(envfile)
+        fd=os.open(installation.root,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
+        # Use exactly the installation's Compose files plus the reviewed publication override.
+        compose=['docker','compose','--project-directory',str(installation.root),'-p',installation.project]
+        for file in dict.fromkeys([*files,str(override)]):compose+=['-f',file]
+        try:
+            command(compose+['up','-d','--no-deps','--no-build','--force-recreate','--wait','ldap'],env={**os.environ,**values})
+        except RuntimeError:
+            raise ValueError('Private directory publication did not complete. Check that the bind address belongs to this Docker host and the port is free, then rerun this command. Directory data is retained.') from None
+    print(json.dumps({'prepared':True,'hostname':hostname,'bind':str(address),'port':args.port,
+                      'next':'Return to Add server and check the primary connection. Allow this private port from the replica and manager only.'}),flush=True)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root',default=str(SOURCE));parser.add_argument('--project');parser.add_argument('--file',action='append')
@@ -298,8 +352,11 @@ def main():
         target=sub.add_parser(name);target.add_argument('--archive',required=True);target.add_argument('--identity',required=True);target.add_argument('--sha256',required=True);target.add_argument('--max-gib',type=int,default=8)
         if name=='restore':target.add_argument('--uid-floor',type=int,required=True);target.add_argument('--original-fenced',action='store_true')
     sub.add_parser('rotate-service');sub.add_parser('resume')
+    publish=sub.add_parser('prepare-replication',help='Prepare the existing primary for private replica connections');publish.add_argument('--hostname',required=True);publish.add_argument('--bind',required=True);publish.add_argument('--port',type=int,default=636)
     args=parser.parse_args()
     if not 1<=getattr(args,'max_gib',8)<=64:raise ValueError('Use a size limit between 1 and 64 GiB')
+    if args.action=='prepare-replication':
+        publish_directory(Installation(args),args);return
     if command(['docker','image','inspect',TOOL],check=False).returncode:
         raise ValueError('Build the maintenance image first: docker build -t forklift-maintenance -f docker/maintenance/Dockerfile .')
     if args.action=='keygen':

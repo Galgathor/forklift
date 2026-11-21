@@ -8,3 +8,5 @@ frontend/dist
 .forklift-restore-*
 .data
 **/__pycache__
+
+.env.new

@@ -1,4 +1,26 @@
 services:
+  prepare:
+    profiles: [tools]
+    image: alpine:3.22.2
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./enrollment:/source:ro
+      - replica_enrollment:/target
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        umask 077
+        cp /source/enrollment.json /target/enrollment.json
+        cp /source/provider-ca.crt /target/provider-ca.crt
+        if [ -f /source/manager-ca.crt ]; then cp /source/manager-ca.crt /target/manager-ca.crt; else rm -f /target/manager-ca.crt; fi
+        chown -R 10001:10001 /target
+        chmod 700 /target
+        chmod 600 /target/*
   replica:
     build:
       context: .
@@ -13,7 +35,7 @@ services:
       - "${FORKLIFT_REPLICA_BIND:?Set a private host IP}:${FORKLIFT_REPLICA_PORT:-636}:636"
     volumes:
       - replica_data:/directory
-      - ./enrollment:/enrollment:ro
+      - replica_enrollment:/enrollment:ro
     read_only: true
     tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
     cap_drop: [ALL]
@@ -25,3 +47,4 @@ services:
       retries: 5
 volumes:
   replica_data:
+  replica_enrollment:

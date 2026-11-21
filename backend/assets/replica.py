@@ -106,6 +106,15 @@ def enroll():
     p = json.loads(Path('/enrollment/enrollment.json').read_text())
     if not re.fullmatch(r'[a-f0-9]{32}', p['id']):
         raise ValueError('Invalid enrollment ID')
+    # Fail before redeeming the one-use token if this new machine cannot reach the primary.
+    from urllib.parse import urlsplit
+    provider=urlsplit(p['provider'])
+    try:
+        context=ssl.create_default_context(cafile='/enrollment/provider-ca.crt')
+        with socket.create_connection((provider.hostname,provider.port or 636),timeout=5) as connection:
+            with context.wrap_socket(connection,server_hostname=provider.hostname):pass
+    except Exception:
+        raise ValueError('Primary connection failed before enrollment: check the primary DNS record, private directory port/firewall and certificate hostname. Return to Add server and run the primary preparation command. The enrollment token was not used.') from None
     generate_certificate(p['hostname'])
     url = p['manager_url']
     if not url.startswith('https://'):
@@ -214,7 +223,7 @@ if __name__ == '__main__':
             enroll()
         except Exception as exc:
             # Do not log response bodies or credentials. Tokens are never command arguments.
-            print('Enrollment failed: '+type(exc).__name__+'. Check expiry, manager HTTPS and enrollment status.', file=sys.stderr)
+            print('Enrollment failed: '+(str(exc) if isinstance(exc,ValueError) else type(exc).__name__+'. Check expiry, manager HTTPS and enrollment status.'), file=sys.stderr)
             sys.exit(1)
     if (ROOT/'certificate-activation.json').exists():
         activate_certificate()

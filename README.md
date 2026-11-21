@@ -84,7 +84,7 @@ Complete private LDAPS publication, DNS/certificate setup, Ansible deployment, m
 
 ## Replication
 
-Open **Directory Servers → Add server** to register a read-only replica. Generate a private deployment archive with a 15-minute one-use enrollment token, transfer it to the second Docker host, run `./prepare.sh`, configure its private bind address and run `docker compose up -d --build`. Native Syncrepl synchronizes the directory over verified LDAPS into independent persistent storage. No second management UI, shared database, Docker socket or manager-to-host SSH is required.
+Open **Directory Servers → Add server** for guided setup. Your existing Forklift directory is already the primary; the new machine only needs Linux and Docker. The wizard generates a one-time primary preparation command, checks its private connection/certificate, then asks for the new machine's name and private address. Download its preconfigured bundle, transfer it privately and run `./start.sh`. Forklift installs OpenLDAP, creates its certificate and configures synchronization. No existing replica LDAPS endpoint, manual certificate setup or LDIF editing is required. LAN DNS/private routing and WebUI HTTPS must be available; the wizard explains each requirement before issuing the 15-minute enrollment credential.
 
 Monitoring compares actual nonempty OpenLDAP `contextCSN` sets and records last-confirmed synchronization. The manager can serve replica-backed read-only data during a primary outage; all writes wait for the primary. There is no automatic promotion or multi-provider mode. Linux clients use ordered endpoints and pinned replica certificate trust from regenerated host bundles. Asynchronous replication cannot apply revocations while disconnected.
 

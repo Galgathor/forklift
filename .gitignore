@@ -11,3 +11,5 @@ __pycache__/
 .forklift-maintenance.*
 
 .forklift-restore-*
+
+.env.new

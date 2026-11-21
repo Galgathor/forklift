@@ -1,10 +1,10 @@
 import { useState } from "react";
+import { ReplicaWizard } from "./ReplicaWizard";
 import {
   Database,
   Plus,
   Download,
   Trash2,
-  X,
   ShieldCheck,
   Activity,
 } from "lucide-react";
@@ -66,26 +66,20 @@ export function Servers({
   refresh,
 }: Props) {
   const [adding, setAdding] = useState(false),
-    [error, setError] = useState(""),
-    [saving, setSaving] = useState(false);
-  async function download(node: DirectoryNode, credential = false) {
+    [resuming, setResuming] = useState<DirectoryNode | undefined>();
+  async function rotateCredential(node: DirectoryNode) {
     if (
       !confirm(
-        credential
-          ? "Replace the replication password now? Download and apply this private update on the replica, restart it, then verify a new directory change synchronizes. Existing bound connections may remain valid until disconnected."
-          : "This private deployment bundle contains a one-use enrollment token valid for 15 minutes. Enroll only a trusted server: replication includes password hashes. Generate the bundle?",
+        "Replace the replication password now? Download and apply this private update on the replica, restart it, then verify a new directory change synchronizes. Existing bound connections may remain valid until disconnected.",
       )
     )
       return;
     await perform(async () => {
-      const r = await fetch(
-        `/api/replicas/${node.id}/${credential ? "credential" : "bundle"}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-          body: JSON.stringify({ acknowledge: true }),
-        },
-      );
+      const r = await fetch(`/api/replicas/${node.id}/credential`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify({ acknowledge: true }),
+      });
       if (!r.ok) {
         const v = await r.json();
         throw Error(v.error || "Unable to generate deployment");
@@ -93,7 +87,7 @@ export function Servers({
       const url = URL.createObjectURL(await r.blob());
       const a = document.createElement("a");
       a.href = url;
-      a.download = `forklift-replica-${credential ? "credential-" : ""}${node.id}.tar.gz`;
+      a.download = `forklift-replica-credential-${node.id}.tar.gz`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       await refresh();
@@ -116,7 +110,7 @@ export function Servers({
             className="primary"
             disabled={busy || readOnly}
             onClick={() => {
-              setError("");
+              setResuming(undefined);
               setAdding(true);
             }}
           >
@@ -125,9 +119,10 @@ export function Servers({
           </button>
         </div>
         <p className="hint">
-          One writable primary, independent read-only replicas. Native OpenLDAP
-          Syncrepl keeps identities and passwords synchronized. No automatic
-          promotion.
+          Keep a synchronized copy of your users, groups and passwords on
+          another machine. Forklift installs and configures its directory
+          automatically. Your existing server remains where administrative
+          changes are made.
         </p>
         <div className="server-grid">
           {health.servers.map((node) => (
@@ -153,9 +148,12 @@ export function Servers({
                         title="Generate deployment bundle"
                         aria-label="Generate replica deployment"
                         disabled={busy || readOnly}
-                        onClick={() => download(node)}
+                        onClick={() => {
+                          setResuming(node);
+                          setAdding(true);
+                        }}
                       >
-                        <Download size={18} />
+                        <Download size={18} /> Continue setup
                       </button>
                     )}
                     <button
@@ -189,7 +187,11 @@ export function Servers({
               </span>
               <dl>
                 <div>
-                  <dt>LDAPS endpoint</dt>
+                  <dt>
+                    {node.role === "primary"
+                      ? "Forklift’s internal connection"
+                      : "Private directory address"}
+                  </dt>
                   <dd>{node.endpoint}</dd>
                 </div>
                 {node.provider && (
@@ -234,7 +236,7 @@ export function Servers({
                     <button
                       className="secondary"
                       disabled={busy || readOnly}
-                      onClick={() => download(node, true)}
+                      onClick={() => rotateCredential(node)}
                     >
                       Rotate replication credential
                     </button>
@@ -346,17 +348,18 @@ export function Servers({
         </div>
         <ol className="steps">
           <li>
-            Add its reachable LDAPS DNS endpoint and the primary endpoint it
-            will use.
+            Open Add server. The wizard prepares your existing Forklift
+            directory for private network access and checks its certificate and
+            connection.
           </li>
           <li>
-            Generate a deployment bundle, transfer it privately and extract it
-            on that server.
+            Enter the new machine’s name and private address. It only needs
+            Docker; Forklift creates the new directory and its TLS certificate.
           </li>
           <li>
-            Run <code>./prepare.sh</code>, set its private bind address in{" "}
-            <code>.env</code>, then run{" "}
-            <code>docker compose up -d --build</code> before the token expires.
+            Download the preconfigured bundle, transfer it to the new machine
+            and run <code>./start.sh</code>. Copyable instructions appear in the
+            wizard.
           </li>
           <li>
             Wait for confirmed synchronization here, then update your Linux
@@ -370,82 +373,15 @@ export function Servers({
         </p>
       </section>
       {adding && (
-        <div className="overlay">
-          <section
-            className="dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Add directory server"
-          >
-            <div className="panel-title">
-              <h2>Add read-only replica</h2>
-              <button aria-label="Close" onClick={() => setAdding(false)}>
-                <X />
-              </button>
-            </div>
-            {error && (
-              <div className="error" role="alert">
-                {error}
-              </div>
-            )}
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const form = new FormData(e.currentTarget);
-                setSaving(true);
-                setError("");
-                try {
-                  await api(
-                    "directory-servers",
-                    "POST",
-                    Object.fromEntries(form),
-                  );
-                  setAdding(false);
-                  await refresh();
-                } catch (e) {
-                  setError((e as Error).message);
-                } finally {
-                  setSaving(false);
-                }
-              }}
-            >
-              <label>
-                Friendly name
-                <input
-                  name="name"
-                  placeholder="Garage directory"
-                  maxLength={100}
-                  required
-                />
-              </label>
-              <label>
-                Replica LDAPS endpoint
-                <input
-                  name="endpoint"
-                  placeholder="ldaps://ldap2.homelab.internal:636"
-                  required
-                />
-              </label>
-              <label>
-                Primary LDAPS endpoint, reachable from the replica
-                <input
-                  name="provider"
-                  placeholder="ldaps://ldap1.homelab.internal:636"
-                  required
-                />
-              </label>
-              <p className="hint">
-                The replica DNS name must point to its private address. Its
-                provider must present a certificate signed by this
-                installation’s CA. A private, one-use deployment bundle is
-                generated after registration.
-              </p>
-              <button className="primary" disabled={saving}>
-                {saving ? "Registering…" : "Register replica"}
-              </button>
-            </form>
-          </section>
-        </div>
+        <ReplicaWizard
+          existing={resuming}
+          health={health}
+          csrf={csrf}
+          readOnly={readOnly}
+          api={api}
+          refresh={refresh}
+          close={() => setAdding(false)}
+        />
       )}
     </>
   );

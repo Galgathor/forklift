@@ -787,3 +787,59 @@ td {
 .server-card details button {
   margin: 10px 0;
 }
+
+.replica-wizard {
+  width: min(760px, 100%);
+  max-width: 760px;
+}
+.wizard-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 20px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.wizard-progress li {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.wizard-progress [aria-current] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.setup-intro {
+  line-height: 1.7;
+  margin: 18px 0;
+}
+.replica-wizard details {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 16px 0;
+}
+.replica-wizard summary {
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.setup-command pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin: 12px 0;
+}
+.wizard-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 24px;
+}
+.replica-wizard dd {
+  overflow-wrap: anywhere;
+}
