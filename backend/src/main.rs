@@ -75,6 +75,9 @@ fn valid(s: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
 }
 fn base_valid(s: &str) -> bool {
+    if s.len() > 255 {
+        return false;
+    }
     let v: Vec<_> = s.split(',').collect();
     v.len() >= 2
         && v.iter().all(|s| {
@@ -557,6 +560,7 @@ async fn save_user(State(a): State<App>, h: HeaderMap, Json(p): Json<User>) -> R
         ("gidNumber", p.gid.to_string()),
         ("shadowExpire", if p.disabled { "1" } else { "-1" }.into()),
     ];
+    audit(&a, &who, "attempt save user", &p.username)?;
     if existing.is_empty() {
         if p.password.is_none() {
             return Err(bad("Password required"));
@@ -639,6 +643,7 @@ async fn delete_user(
         &format!("(memberUid={id})"),
     )
     .await?;
+    audit(&a, &who, "attempt delete user", &id)?;
     for g in groups {
         l.modify(
             g["dn"].as_str().unwrap(),
@@ -695,6 +700,7 @@ async fn save_group(
     }
     let dn = format!("cn={old},ou=groups,{b}");
     let exists = search(&mut l, &format!("ou=groups,{b}"), &format!("(cn={old})")).await?;
+    audit(&a, &who, "attempt save group", &p.name)?;
     if exists.is_empty() {
         let gid = next_id(&a)?;
         let mut fields = vec![
@@ -756,6 +762,7 @@ async fn delete_group(
     {
         return Err(bad("Group is a primary group for existing users"));
     }
+    audit(&a, &who, "attempt delete group", &id)?;
     l.delete(&format!("cn={id},ou=groups,{b}"))
         .await?
         .success()?;
@@ -793,6 +800,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .route("/api/{*path}", axum::routing::any(|| async { (StatusCode::NOT_FOUND, Json(json!({"error":"API endpoint not found"}))) }))
         .route("/api/status", get(status))
         .route("/api/setup", post(setup))
         .route("/api/login", post(login))

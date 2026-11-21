@@ -12,6 +12,8 @@ services:
       - ./.secrets/provision:/run/secrets/provision:ro
       - ./.secrets/service:/run/secrets/service:ro
     networks: [directory]
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     healthcheck:
@@ -39,6 +41,8 @@ services:
     networks: [directory, web]
     depends_on:
       ldap: {condition: service_healthy}
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     healthcheck:

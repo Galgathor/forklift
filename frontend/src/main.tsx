@@ -52,6 +52,10 @@ function App() {
       body: body ? JSON.stringify(body) : undefined,
     });
     const v = await r.json();
+    if (r.status === 401 && session) {
+      setSession(null);
+      setData(null);
+    }
     if (!r.ok) throw Error(v.error || "Request failed");
     return v;
   }
