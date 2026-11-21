@@ -72,7 +72,9 @@ def find_user(name):
     return next(u for u in request('/api/overview')['users'] if u['attrs']['uid']==[name])
 
 override = tempfile.NamedTemporaryFile(mode='w',suffix='.yaml',prefix='forklift-tests-',delete=False)
-override.write('services:\n  manager:\n    image: forklift-manager:latest\n  ldap:\n    image: forklift-ldap:latest\n')
+initial_manager='forklift-fixture-m2-manager:latest' if os.environ.get('FORKLIFT_TEST_UPGRADE')=='1' else 'forklift-manager:latest'
+initial_ldap='forklift-fixture-m2-ldap:latest' if os.environ.get('FORKLIFT_TEST_UPGRADE')=='1' else 'forklift-ldap:latest'
+override.write(f'services:\n  manager:\n    image: {initial_manager}\n  ldap:\n    image: {initial_ldap}\n')
 override.close()
 try:
     compose('up','-d','--no-build','--wait')
@@ -174,6 +176,21 @@ try:
     request('/api/groups/host-policy','DELETE',expect=400)
     request('/api/groups/host-policy','PUT',dict(name='renamed-policy',members=[]),expect=400)
     request('/api/hosts/'+h['id']+'/bundle','POST',dict(revision=1,rotate=True),expect=409)
+    if os.environ.get('FORKLIFT_TEST_UPGRADE')=='1':
+        print('Upgrading actual Milestone 2 containers and populated v2 metadata to Milestone 3…',flush=True)
+        snapshot=request('/api/overview')
+        schema="import sqlite3,sys; c=sqlite3.connect('/data/forklift.db'); assert c.execute('PRAGMA user_version').fetchone()[0]==int(sys.argv[1])"
+        def check_schema(version):
+            subprocess.run(['docker','run','--rm','--network','none','-v',PROJECT+'_metadata:/data:ro','--entrypoint','python3','forklift-ldap:latest','-c',schema,str(version)],check=True,capture_output=True)
+        check_schema(2)
+        Path(override.name).write_text(Path(override.name).read_text().replace(initial_manager,'forklift-manager:latest').replace(initial_ldap,'forklift-ldap:latest'))
+        compose('up','-d','--no-build','--force-recreate','--wait')
+        wait_ready();check_schema(3);request('/api/me')
+        upgraded=request('/api/overview')
+        assert upgraded['users']==snapshot['users'] and upgraded['groups']==snapshot['groups']
+        assert upgraded['hosts']==snapshot['hosts']
+        assert upgraded['directory_servers']['servers'][0]['context_csn']
+        print('PASS: populated schema 2 -> 3, LDAP syncprov/reindex upgrade, identities, numeric IDs, hosts and session preservation.',flush=True)
     if os.environ.get('FORKLIFT_TEST_UBUNTU')=='1':
         from ubuntu.client import exercise
         exercise(PROJECT,request,compose,PASSWORD,find_user)

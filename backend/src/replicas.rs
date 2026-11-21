@@ -455,8 +455,11 @@ async fn probe(a: App, s: Server, primary_csn: Option<Vec<String>>) -> Result<Va
     } else if s.state == "pending" && s.expires_at > 0 && s.expires_at <= now() {
         state = "expired".into();
     }
+    if s.state != "enrolled" {
+        error = error.or(s.last_error);
+    }
     Ok(
-        json!({"id":s.id,"name":s.name,"endpoint":s.endpoint,"provider":s.provider,"role":"replica","state":state,"enrollment_state":s.state,"reachable":reachable,"checked_at":if s.state=="enrolled"{Some(now())}else{None},"last_sync_at":sync,"context_csn":observed,"expires_at":s.expires_at,"error":error.or(s.last_error)}),
+        json!({"id":s.id,"name":s.name,"endpoint":s.endpoint,"provider":s.provider,"role":"replica","state":state,"enrollment_state":s.state,"reachable":reachable,"checked_at":if s.state=="enrolled"{Some(now())}else{None},"last_sync_at":sync,"context_csn":observed,"expires_at":s.expires_at,"error":error}),
     )
 }
 pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
