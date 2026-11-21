@@ -21,6 +21,7 @@ import {
   Pencil,
 } from "lucide-react";
 import "./style.css";
+import { Hosts, type Host } from "./Hosts";
 type Entry = { dn: string; attrs: Record<string, string[]> };
 type Overview = {
   directory: { name: string; base: string };
@@ -28,6 +29,7 @@ type Overview = {
   groups: Entry[];
   events: { at: number; actor: string; action: string; target: string }[];
   ldap: string;
+  hosts: Host[];
 };
 const attr = (e: Entry, k: string) => e.attrs[k]?.[0] || "";
 function App() {
@@ -251,7 +253,7 @@ function App() {
           <div className="secure">
             <ShieldCheck size={17} /> OpenLDAP, made simple
           </div>
-          <small>Forklift v0.1 · Milestone 1</small>
+          <small>Forklift v0.2 · Linux integration</small>
         </div>
       </aside>
       <div className="main">
@@ -347,6 +349,12 @@ function App() {
                         "Directory servers",
                         1,
                         "Primary directory connected",
+                      ],
+                      [
+                        Server,
+                        "Configured hosts",
+                        data.hosts.length,
+                        "Registered Linux configurations",
                       ],
                     ].map(([Icon, label, value, caption]) => {
                       const I = Icon as typeof Users;
@@ -524,6 +532,19 @@ function App() {
                                   (e.attrs.memberUid || []).join(", ") ||
                                   "No members"
                                 )}
+                                {page === "Groups" && (
+                                  <small>
+                                    Host policies:{" "}
+                                    {data.hosts
+                                      .filter((h) =>
+                                        h.allowed_groups.includes(
+                                          attr(e, "cn"),
+                                        ),
+                                      )
+                                      .map((h) => h.name)
+                                      .join(", ") || "None"}
+                                  </small>
+                                )}
                               </td>
                               <td>
                                 <div className="actions">
@@ -590,15 +611,14 @@ function App() {
                 </section>
               )}
               {page === "Hosts" && (
-                <section className="empty panel">
-                  <Server size={38} />
-                  <h2>Linux integration is next.</h2>
-                  <p className="muted">
-                    Host enrollment, SSSD configuration downloads and Ansible
-                    deployment are planned for Milestone 2.
-                  </p>
-                  <p>No hosts are enrolled by this release.</p>
-                </section>
+                <Hosts
+                  hosts={data.hosts}
+                  groups={data.groups.map((g) => attr(g, "cn"))}
+                  csrf={session.csrf}
+                  api={api}
+                  refresh={refresh}
+                  perform={perform}
+                />
               )}
               {page === "Settings" && (
                 <>
@@ -825,8 +845,8 @@ function App() {
                   )}
                   <p className="hint">
                     Add existing usernames. POSIX GIDs are allocated
-                    automatically. Host access policies will be available in
-                    Milestone 2.
+                    automatically. Host access policies are managed in the Hosts
+                    section.
                   </p>
                 </>
               )}
