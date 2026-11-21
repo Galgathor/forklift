@@ -30,7 +30,7 @@ Durable phase journals, a separate offline marker and coherent rollback storage 
 
 ## Replica boundary
 
-Enrollment requires manager HTTPS and an administrator-issued, one-use 15-minute token; only its digest is stored. A replica generates its private key locally. The manager validates/pins a self-signed non-CA RSA leaf restricted to the registered DNS/IP SAN. Native TLS chain/hostname validation remains enabled. The routine monitor uses a separate read identity and never sends the write-service password to a secondary.
+Enrollment requires manager HTTPS and an administrator-issued, one-use 15-minute token; only its digest is stored. The WebUI packages the token, public CA and connection details into a copyable join setting for the standalone replica stack. Base64 is transport encoding, not encryption; protect this setting and exclude `.env` from Git/build contexts. Regeneration invalidates the previous token. Certificates establish trust but do not authorize enrollment by themselves. A replica generates its private key locally. The manager validates/pins a self-signed non-CA RSA leaf restricted to the registered DNS/IP SAN. Native TLS chain/hostname validation remains enabled. The routine monitor uses a separate read identity and never sends the write-service password to a secondary.
 
 Replication/control secrets are purpose-separated per-node HMAC values derived from a protected installation key and credential epoch. Only epochs are in SQLite. The consumer necessarily stores its replication secret in restricted native configuration. Replicas can read password hashes and are trusted authentication infrastructure. They have independent read-only databases and no bindable root credential; no automatic promotion or multi-provider mode exists.
 

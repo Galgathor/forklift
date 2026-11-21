@@ -1076,6 +1076,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/replication/setup", get(replica_setup::status))
         .route("/api/directory-servers", get(replicas::index).post(replicas::create))
         .route("/api/replicas/{id}/bundle", post(replicas::bundle))
+        .route("/api/replicas/{id}/deployment", post(replicas::deployment))
         .route("/api/replicas/{id}/enroll", post(replicas::enroll))
         .route("/api/replicas/{id}/certificate", post(replicas::stage_certificate))
         .route("/api/replicas/{id}/certificate/finalize", post(replicas::finalize_certificate))

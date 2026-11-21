@@ -10,3 +10,5 @@ frontend/dist
 **/__pycache__
 
 .env.new
+
+**/.env

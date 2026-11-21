@@ -172,16 +172,7 @@ pub(super) async fn bundle(
         ));
     }
     let _guard = a.gate.lock().await;
-    let server = load(&a, &id)?;
-    if server.state == "enrolled" || server.state == "redeeming" {
-        return Err(bad(
-            "An enrolled or in-progress server cannot receive another enrollment token",
-        ));
-    }
-    let raw = token();
-    let expiry = now() + 900;
-    let enrollment = json!({"id":id,"token":raw,"hostname":hosts::endpoint_hostname(&server.endpoint)?,"provider":server.provider,"manager_url":public_url(&a),"expires_at":expiry,"address":server.address,"port":reqwest::Url::parse(&server.endpoint).map_err(|_|bad("Invalid endpoint"))?.port().unwrap_or(636),"control_port":server.control_port});
-    let ca = std::fs::read("/run/secrets/ca.crt").map_err(anyhow::Error::from)?;
+    let (server, enrollment, ca, expiry) = issue_enrollment(&a, &id, &who)?;
     let readme = format!(
         "Forklift replica: {}\n\nExtract this private archive on the new Docker host and start the included Compose stack using Docker Compose or your Docker hosting UI. Compose prepares enrollment permissions automatically; no administrator scripts or .env edits are required.\nOne-use enrollment expires at Unix time {}. Keep the deployment private. The directory binds {} on its configured port and its pinned-TLS control service uses port {}. Restrict both to the intended private networks.\nThe primary address is inherited from Forklift setup: {}. WebUI HTTPS must be reachable; for private HTTPS PKI place its public CA in enrollment/manager-ca.crt before starting.\nAfter enrollment, use Forklift for credentials, certificates and configuration. This node appears in Hosts automatically; that inventory record does not grant SSH access. Wait for confirmed synchronization before configuring Linux clients for failover.\n",
         server.name, expiry, server.address, server.control_port, server.provider
@@ -213,8 +204,6 @@ pub(super) async fn bundle(
         ("README.txt", readme.into_bytes(), 0o600),
     ];
     let bytes = archive(files)?;
-    a.db.lock().unwrap().execute("UPDATE directory_servers SET enrollment_hash=?,enrollment_expires=?,state='pending',last_error=NULL WHERE id=?",params![digest(&raw),expiry,id]).map_err(anyhow::Error::from)?;
-    audit(&a, &who, "issue replica enrollment", &id)?;
     Ok((
         [
             (header::CONTENT_TYPE, "application/gzip".to_string()),
@@ -228,6 +217,71 @@ pub(super) async fn bundle(
     )
         .into_response())
 }
+fn issue_enrollment(a: &App, id: &str, who: &str) -> Result<(Server, Value, Vec<u8>, i64)> {
+    let server = load(a, id)?;
+    if server.state == "enrolled" || server.state == "redeeming" {
+        return Err(bad(
+            "An enrolled or in-progress server cannot receive another enrollment token",
+        ));
+    }
+    let raw = token();
+    let expiry = now() + 900;
+    let enrollment = json!({"id":id,"token":raw,"hostname":hosts::endpoint_hostname(&server.endpoint)?,"provider":server.provider,"manager_url":public_url(a),"expires_at":expiry,"address":server.address,"port":reqwest::Url::parse(&server.endpoint).map_err(|_|bad("Invalid endpoint"))?.port().unwrap_or(636),"control_port":server.control_port});
+    let ca = std::fs::read("/run/secrets/ca.crt").map_err(anyhow::Error::from)?;
+    a.db.lock().unwrap().execute("UPDATE directory_servers SET enrollment_hash=?,enrollment_expires=?,state='pending',last_error=NULL WHERE id=?",params![digest(&raw),expiry,id]).map_err(anyhow::Error::from)?;
+    audit(a, who, "issue replica enrollment", id)?;
+    Ok((server, enrollment, ca, expiry))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct JoinRequest {
+    acknowledge: bool,
+    manager_ca: Option<String>,
+}
+pub(super) async fn deployment(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(p): Json<JoinRequest>,
+) -> Result<Json<Value>> {
+    let who = admin(&a, &h, true).await?;
+    https_required(&a)?;
+    if !p.acknowledge {
+        return Err(bad(
+            "Acknowledge that the join configuration contains a short-lived enrollment secret",
+        ));
+    }
+    if let Some(ca) = &p.manager_ca {
+        if ca.len() > 65536
+            || ca.contains("PRIVATE KEY")
+            || ca
+                .replace("-----BEGIN CERTIFICATE-----", "")
+                .contains("-----BEGIN")
+        {
+            return Err(bad(
+                "Supply only public HTTPS CA certificates, without private keys",
+            ));
+        }
+        let certs = openssl::x509::X509::stack_from_pem(ca.as_bytes())
+            .map_err(|_| bad("Invalid HTTPS CA certificate"))?;
+        if certs.is_empty() {
+            return Err(bad(
+                "Supply a public HTTPS CA certificate or leave it blank",
+            ));
+        }
+    }
+    let _guard = a.gate.lock().await;
+    let (_, enrollment, ca, expiry) = issue_enrollment(&a, &id, &who)?;
+    let provider_ca = String::from_utf8(ca).map_err(anyhow::Error::from)?;
+    let envelope = json!({"version":1,"enrollment":enrollment,"provider_ca":provider_ca,"manager_ca":p.manager_ca});
+    let encoded =
+        openssl::base64::encode_block(&serde_json::to_vec(&envelope).map_err(anyhow::Error::from)?);
+    Ok(Json(
+        json!({"join_config":format!("FORKLIFT_REPLICA_JOIN={encoded}"),"expires_at":expiry,"directory_id":id}),
+    ))
+}
+
 fn validate_certificate(pem: &str, hostname: &str) -> Result<()> {
     let trimmed = pem.trim();
     if !trimmed.starts_with("-----BEGIN CERTIFICATE-----")

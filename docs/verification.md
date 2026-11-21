@@ -20,6 +20,10 @@ Validated on Linux/amd64 with Docker Engine, native OpenLDAP 2.6.10 and isolated
 
 The extended recovery suite also passed wrong-key and trusted-checksum rejection, crafted archive-path rejection, unauthorized/CSRF maintenance rejection, readiness/new-operation rejection while metadata is closed, verified-stage interruption, changed-stage detection, coherent rollback, and local-only emergency account recovery. Recovery identities were checked absent from persistent job records and metadata. Initial staging interruption and refusal of schema4 startup are exercised by the core suite. The Ubuntu 24.04 client run passed 101 HTTP checks plus actual SSH/PAM/NSS and Ansible idempotence; the latest core-only run separately includes the breaking schema guard.
 
+## Copyable replica enrollment
+
+The standalone `deploy/replica/compose.yaml` stack was built and exercised without transferring an archive. Tests passed for authenticated/CSRF-protected join generation, private-key input rejection, local and server-side expiration, superseded/consumed-token rejection, private HTTPS CA validation before redemption, and absence of plaintext enrollment tokens from SQLite. Native Syncrepl, credential/certificate lifecycle and provider changes passed. The replica was recreated with an empty join setting while both primary and manager were stopped and still authenticated a directory user. Chromium verified generation, public-trust packaging, clipboard copy and mobile layout.
+
 ## Run the suites
 
 Build all images with `docker compose build`, then run `python3 tests/integration.py`, `python3 tests/hardening.py`, and `python3 tests/replication.py`. No local installer or installation-secret files are required.

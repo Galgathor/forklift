@@ -577,7 +577,6 @@ function App() {
               {page === "Directory Servers" && (
                 <Servers
                   health={data.directory_servers}
-                  csrf={session.csrf}
                   busy={busy}
                   readOnly={data.read_only}
                   api={api}

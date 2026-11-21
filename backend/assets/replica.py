@@ -1,5 +1,6 @@
 """Replica-only lifecycle. Native Syncrepl owns synchronization; no command API."""
 import json
+import base64
 import hashlib
 import hmac
 import ipaddress
@@ -95,8 +96,28 @@ def is_ip(hostname):
     except ValueError:return False
 
 
+def enrollment_settings():
+    joined=os.environ.get('FORKLIFT_REPLICA_JOIN','')
+    if not joined:
+        legacy=Path('/enrollment/enrollment.json')
+        if not legacy.is_file():raise ValueError('Paste the join configuration from Forklift into this stack’s deployment settings before starting')
+        return json.loads(legacy.read_text()),'/enrollment/provider-ca.crt',None
+    try:
+        if len(joined)>131072:raise ValueError('oversized')
+        envelope=json.loads(base64.b64decode(joined,validate=True))
+        if envelope['version']!=1:raise ValueError('version')
+        settings=envelope['enrollment'];ca=envelope['provider_ca'];manager_ca=envelope.get('manager_ca')
+        if not isinstance(settings,dict) or not isinstance(ca,str) or len(ca)>65536:raise ValueError('shape')
+        if manager_ca is not None and (not isinstance(manager_ca,str) or len(manager_ca)>65536 or 'PRIVATE KEY' in manager_ca):raise ValueError('trust')
+        if type(settings['expires_at']) is not int or settings['expires_at']<=int(time.time()):raise ValueError('expired')
+        atomic(ROOT/'provider-ca.crt',ca.encode())
+        return settings,str(ROOT/'provider-ca.crt'),manager_ca
+    except Exception:
+        raise ValueError('The join configuration is invalid or expired. Generate a new configuration in Forklift and replace the deployment setting.') from None
+
+
 def enroll():
-    p = json.loads(Path('/enrollment/enrollment.json').read_text())
+    p,provider_ca,manager_ca = enrollment_settings()
     if not re.fullmatch(r'[a-f0-9]{32}', p['id']):
         raise ValueError('Invalid enrollment ID')
     address=ipaddress.IPv4Address(p['address'])
@@ -110,7 +131,7 @@ def enroll():
     from urllib.parse import urlsplit
     provider=urlsplit(p['provider'])
     try:
-        context=ssl.create_default_context(cafile='/enrollment/provider-ca.crt')
+        context=ssl.create_default_context(cafile=provider_ca)
         with socket.create_connection((provider.hostname,provider.port or 636),timeout=5) as connection:
             with context.wrap_socket(connection,server_hostname=provider.hostname):pass
     except Exception:
@@ -119,11 +140,15 @@ def enroll():
     url = p['manager_url']
     if not url.startswith('https://'):
         raise ValueError('Enrollment requires manager HTTPS')
+    parsed=urlsplit(url)
+    if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:raise ValueError('Use a plain HTTPS manager origin')
     payload = json.dumps({'token': p['token'], 'certificate': (ROOT/'server.crt').read_text()}).encode()
     request = urllib.request.Request(url+'/api/replicas/'+p['id']+'/enroll', data=payload, headers={'Content-Type': 'application/json'}, method='POST')
     # System roots validate the manager/NPM certificate; optional private PKI is explicit.
     trust = '/enrollment/manager-ca.crt'
     context = ssl.create_default_context(cafile=trust if Path(trust).exists() else None)
+    if manager_ca:
+        context=ssl.create_default_context(cadata=manager_ca)
     with urllib.request.urlopen(request, context=context, timeout=30) as response:
         result = json.load(response)
     if not re.fullmatch(r'dc=[a-z0-9-]+(?:,dc=[a-z0-9-]+)+', result['base']):
@@ -135,7 +160,7 @@ def enroll():
     # Save the one-time response before configuration work so local failures can retry safely.
     if not re.fullmatch(r'[a-f0-9]{64}',result.get('control_token','')):raise ValueError('Invalid node control credential')
     atomic(ROOT/'replica.json', json.dumps({**result,'id':p['id'],'hostname':p['hostname'],'address':p['address'],'port':p['port'],'control_port':p['control_port']}).encode())
-    (ROOT/'provider-ca.crt').write_bytes(Path('/enrollment/provider-ca.crt').read_bytes())
+    if provider_ca!=str(ROOT/'provider-ca.crt'):atomic(ROOT/'provider-ca.crt',Path(provider_ca).read_bytes())
 
 
 def configure():

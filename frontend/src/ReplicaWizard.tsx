@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { Download, X, CheckCircle2 } from "lucide-react";
+import { Copy, X, CheckCircle2 } from "lucide-react";
 import type { DirectoryHealth, DirectoryNode } from "./Servers";
 type Props = {
   existing?: DirectoryNode;
   health: DirectoryHealth;
-  csrf: string;
   readOnly: boolean;
   api: (path: string, method?: string, body?: unknown) => Promise<any>;
   refresh: () => Promise<void>;
@@ -18,7 +17,6 @@ type Setup = {
 export function ReplicaWizard({
   existing,
   health,
-  csrf,
   readOnly,
   api,
   refresh,
@@ -35,7 +33,12 @@ export function ReplicaWizard({
     ),
     [controlPort, setControlPort] = useState(existing?.control_port || 9443),
     [created, setCreated] = useState(existing),
-    [downloaded, setDownloaded] = useState(false),
+    [join, setJoin] = useState<{
+      join_config: string;
+      expires_at: number;
+    } | null>(null),
+    [managerCa, setManagerCa] = useState(""),
+    [copied, setCopied] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   useEffect(() => {
@@ -43,7 +46,7 @@ export function ReplicaWizard({
       .then(setSetup)
       .catch((e) => setError(e.message));
   }, []);
-  async function download() {
+  async function generate() {
     setBusy(true);
     setError("");
     try {
@@ -58,22 +61,12 @@ export function ReplicaWizard({
         })) as DirectoryNode;
         setCreated(node);
       }
-      const r = await fetch(`/api/replicas/${node.id}/bundle`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-        body: JSON.stringify({ acknowledge: true }),
+      const value = await api(`replicas/${node.id}/deployment`, "POST", {
+        acknowledge: true,
+        manager_ca: managerCa.trim() || null,
       });
-      if (!r.ok) {
-        const v = await r.json();
-        throw Error(v.error);
-      }
-      const url = URL.createObjectURL(await r.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `forklift-replica-${node.id}.tar.gz`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setDownloaded(true);
+      setJoin(value);
+      setCopied(false);
       await refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -125,7 +118,7 @@ export function ReplicaWizard({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void download();
+            void generate();
           }}
         >
           <label>
@@ -186,6 +179,24 @@ export function ReplicaWizard({
               />
             </label>
           </details>
+          <details>
+            <summary>Private HTTPS certificate authority (optional)</summary>
+            <label>
+              WebUI HTTPS CA certificate
+              <textarea
+                value={managerCa}
+                onChange={(e) => setManagerCa(e.target.value)}
+                rows={4}
+                placeholder="-----BEGIN CERTIFICATE-----"
+                spellCheck={false}
+              />
+            </label>
+            <p className="hint">
+              Leave blank for a publicly trusted WebUI certificate. For private
+              PKI, paste its public CA certificate here. Never paste a private
+              key.
+            </p>
+          </details>
           <p className="hint">
             Allow the manager to reach both private ports and Linux clients to
             reach the directory port. The new machine must reach the primary and
@@ -196,46 +207,78 @@ export function ReplicaWizard({
             className="primary"
             disabled={busy || readOnly || !setup?.https_ready}
           >
-            <Download size={16} />
             {busy
-              ? "Preparing deployment…"
-              : downloaded
-                ? "Download fresh enrollment"
-                : "Download deployment"}
+              ? "Generating…"
+              : join
+                ? "Generate new join configuration"
+                : "Generate join configuration"}
           </button>
         </form>
-        {downloaded && (
+        {join && (
           <>
-            <h3>Install the new machine</h3>
+            <h3>Deploy the replica</h3>
             <ol className="steps">
               <li>
-                Transfer the private archive and extract it on the new Docker
-                host.
+                Clone the Forklift repository on the new machine, using the same
+                release as this manager. Open <code>deploy/replica</code>. A
+                Docker hosting UI can also deploy this repository’s replica
+                Compose file.
               </li>
               <li>
-                Start the included Compose stack using Docker Compose or your
-                Docker hosting UI. Permission preparation and enrollment run
-                automatically.
+                Paste the configuration below into{" "}
+                <code>deploy/replica/.env</code>, or set{" "}
+                <code>FORKLIFT_REPLICA_JOIN</code> in your Docker hosting UI. It
+                contains a temporary secret; do not commit it.
               </li>
               <li>
-                Return here and wait for confirmed synchronization. The machine
-                is already registered in Hosts; SSH access remains unconfigured
-                until you explicitly choose login groups and deploy its client
-                configuration.
+                Start the replica Compose stack and wait here for confirmed
+                synchronization. No archive or certificate transfer is required.
               </li>
             </ol>
+            <label>
+              Join configuration
+              <textarea
+                aria-label="Join configuration"
+                readOnly
+                value={join.join_config}
+                rows={4}
+                spellCheck={false}
+                onFocus={(e) => e.currentTarget.select()}
+              />
+            </label>
+            <button
+              className="secondary"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(join.join_config);
+                  setCopied(true);
+                } catch {
+                  setError(
+                    "Clipboard is unavailable. Select and copy the join configuration above.",
+                  );
+                }
+              }}
+            >
+              <Copy size={16} />
+              {copied ? "Copied" : "Copy join configuration"}
+            </button>
+            <p className="hint">
+              Expires {new Date(join.expires_at * 1000).toLocaleString()}.
+              Generating a new configuration invalidates the previous one.
+            </p>
             <details>
               <summary>Docker Compose installation command</summary>
               <pre>
-                <code>docker compose up -d --build</code>
+                <code>{"cd deploy/replica\ndocker compose up -d --build"}</code>
               </pre>
             </details>
             <p className="hint">
-              This is initial stack deployment. All subsequent directory
-              credentials, certificates and reconnect/restart actions are
-              managed in Forklift. The one-use enrollment expires 15 minutes
-              after generation. For private WebUI PKI, place its public CA at
-              enrollment/manager-ca.crt before starting.
+              The primary’s public CA is included. The replica generates its
+              private key locally and enrolls over verified HTTPS. After
+              enrollment, you can remove the temporary join setting; future
+              restarts use persistent configuration. SSH access still requires
+              choosing login groups and deploying the host’s client
+              configuration.
             </p>
             <span
               className={current?.state === "synchronized" ? "pill" : "badge"}

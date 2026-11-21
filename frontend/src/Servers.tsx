@@ -37,7 +37,6 @@ export type DirectoryHealth = {
 };
 type Props = {
   health: DirectoryHealth;
-  csrf: string;
   busy: boolean;
   readOnly: boolean;
   api: (path: string, method?: string, body?: unknown) => Promise<unknown>;
@@ -62,7 +61,6 @@ const date = (timestamp?: number | null) =>
   timestamp ? new Date(timestamp * 1000).toLocaleString() : "Not confirmed";
 export function Servers({
   health,
-  csrf,
   busy,
   readOnly,
   api,
@@ -132,7 +130,7 @@ export function Servers({
                   <div className="actions">
                     {["pending", "failed", "expired"].includes(node.state) && (
                       <button
-                        title="Generate deployment bundle"
+                        title="Generate join configuration"
                         aria-label="Generate replica deployment"
                         disabled={busy || readOnly}
                         onClick={() => {
@@ -360,9 +358,8 @@ export function Servers({
             Docker; Forklift creates the new directory and its TLS certificate.
           </li>
           <li>
-            Download the preconfigured bundle, transfer it to the new machine
-            and start its Compose stack. Enrollment and permissions are
-            automatic.
+            Generate a join configuration, paste it into the standalone replica
+            stack in deploy/replica, and start that Compose stack.
           </li>
           <li>
             Wait for confirmed synchronization here, then update your Linux
@@ -379,7 +376,6 @@ export function Servers({
         <ReplicaWizard
           existing={resuming}
           health={health}
-          csrf={csrf}
           readOnly={readOnly}
           api={api}
           refresh={refresh}
