@@ -13,6 +13,10 @@ pub(super) struct Server {
     pub last_checked_at: Option<i64>,
     pub last_sync_at: Option<i64>,
     pub last_error: Option<String>,
+    pub next_certificate: Option<String>,
+    pub certificate_staged_at: Option<i64>,
+    pub credential_rotated_at: Option<i64>,
+    pub credential_epoch: i64,
 }
 pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
     db.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS directory_servers(id TEXT PRIMARY KEY,name TEXT NOT NULL,endpoint TEXT NOT NULL UNIQUE,provider TEXT NOT NULL,state TEXT NOT NULL,certificate TEXT,enrollment_hash TEXT,enrollment_expires INTEGER NOT NULL,last_checked_at INTEGER,last_sync_at INTEGER,last_error TEXT); PRAGMA user_version=3; COMMIT;")?;
@@ -20,7 +24,7 @@ pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
 }
 pub(super) fn records(a: &App) -> Result<Vec<Server>> {
     let db = a.db.lock().unwrap();
-    let mut q=db.prepare("SELECT id,name,endpoint,provider,state,certificate,enrollment_expires,last_checked_at,last_sync_at,last_error FROM directory_servers ORDER BY name").map_err(anyhow::Error::from)?;
+    let mut q=db.prepare("SELECT id,name,endpoint,provider,state,certificate,enrollment_expires,last_checked_at,last_sync_at,last_error,next_certificate,certificate_staged_at,credential_rotated_at,credential_epoch FROM directory_servers ORDER BY name").map_err(anyhow::Error::from)?;
     Ok(q.query_map([], |r| {
         Ok(Server {
             id: r.get(0)?,
@@ -33,6 +37,10 @@ pub(super) fn records(a: &App) -> Result<Vec<Server>> {
             last_checked_at: r.get(7)?,
             last_sync_at: r.get(8)?,
             last_error: r.get(9)?,
+            next_certificate: r.get(10)?,
+            certificate_staged_at: r.get(11)?,
+            credential_rotated_at: r.get(12)?,
+            credential_epoch: r.get(13)?,
         })
     })
     .map_err(anyhow::Error::from)?
@@ -147,6 +155,16 @@ pub(super) async fn bundle(
     );
     let prepare = include_bytes!("../assets/replica.prepare.sh");
     let bytes = archive(vec![
+        (
+            ".gitignore",
+            b".env\nenrollment/\ncredential-update.json\n".to_vec(),
+            0o600,
+        ),
+        (
+            ".dockerignore",
+            b".env\nenrollment/\ncredential-update.json\n".to_vec(),
+            0o600,
+        ),
         ("compose.yaml", COMPOSE.as_bytes().to_vec(), 0o600),
         ("Dockerfile", DOCKERFILE.as_bytes().to_vec(), 0o600),
         (
@@ -179,6 +197,15 @@ pub(super) async fn bundle(
         .into_response())
 }
 fn validate_certificate(pem: &str, hostname: &str) -> Result<()> {
+    let trimmed = pem.trim();
+    if !trimmed.starts_with("-----BEGIN CERTIFICATE-----")
+        || !trimmed.ends_with("-----END CERTIFICATE-----")
+        || trimmed.matches("-----BEGIN").count() != 1
+    {
+        return Err(bad(
+            "Provide one public certificate, without private keys or additional PEM blocks",
+        ));
+    }
     if pem.len() > 16384 {
         return Err(bad("Replica certificate is too large"));
     }
@@ -246,20 +273,20 @@ pub(super) async fn enroll(
         ));
     }
     validate_certificate(&p.certificate, &hosts::endpoint_hostname(&server.endpoint)?)?;
-    a.db.lock()
-        .unwrap()
-        .execute(
-            "UPDATE directory_servers SET state='redeeming',enrollment_hash=NULL WHERE id=?",
-            [&id],
-        )
-        .map_err(anyhow::Error::from)?;
+    let consumed=a.db.lock().unwrap().execute("UPDATE directory_servers SET state='redeeming',enrollment_hash=NULL WHERE id=? AND state='pending' AND enrollment_hash=? AND enrollment_expires>?",params![id,digest(&p.token),now()]).map_err(anyhow::Error::from)?;
+    if consumed != 1 {
+        return Err(Error(
+            StatusCode::FORBIDDEN,
+            "Invalid or expired enrollment".into(),
+        ));
+    }
     let result = provision_reader(&a, &id).await;
     match result {
         Ok(credential) => {
-            a.db.lock().unwrap().execute("UPDATE directory_servers SET state='enrolled',certificate=?,last_error=NULL WHERE id=?",params![p.certificate,id]).map_err(anyhow::Error::from)?;
+            a.db.lock().unwrap().execute("UPDATE directory_servers SET state='enrolled',certificate=?,credential_epoch=1,last_error=NULL WHERE id=?",params![p.certificate,id]).map_err(anyhow::Error::from)?;
             audit(&a, "enrollment", "enroll replica", &id)?;
             Ok(Json(
-                json!({"base":base(&a)?,"provider":server.provider,"credential":credential}),
+                json!({"base":base(&a)?,"provider":server.provider,"credential":credential,"credential_epoch":1}),
             ))
         }
         Err(e) => {
@@ -337,6 +364,9 @@ pub(super) async fn connection(a: &App, s: &Server) -> anyhow::Result<Ldap> {
     let mut tls = native_tls::TlsConnector::builder();
     tls.disable_built_in_roots(true);
     tls.add_root_certificate(native_tls::Certificate::from_pem(cert.as_bytes())?);
+    if let Some(next) = &s.next_certificate {
+        tls.add_root_certificate(native_tls::Certificate::from_pem(next.as_bytes())?);
+    }
     let settings = ldap3::LdapConnSettings::new()
         .set_conn_timeout(std::time::Duration::from_secs(3))
         .set_connector(tls.build()?);
@@ -459,7 +489,7 @@ async fn probe(a: App, s: Server, primary_csn: Option<Vec<String>>) -> Result<Va
         error = error.or(s.last_error);
     }
     Ok(
-        json!({"id":s.id,"name":s.name,"endpoint":s.endpoint,"provider":s.provider,"role":"replica","state":state,"enrollment_state":s.state,"reachable":reachable,"checked_at":if s.state=="enrolled"{Some(now())}else{None},"last_sync_at":sync,"context_csn":observed,"expires_at":s.expires_at,"error":error}),
+        json!({"id":s.id,"name":s.name,"endpoint":s.endpoint,"provider":s.provider,"role":"replica","state":state,"enrollment_state":s.state,"reachable":reachable,"checked_at":if s.state=="enrolled"{Some(now())}else{None},"last_sync_at":sync,"context_csn":observed,"expires_at":s.expires_at,"certificate_rotation_pending":s.next_certificate.is_some(),"certificate_staged_at":s.certificate_staged_at,"credential_rotated_at":s.credential_rotated_at,"credential_epoch":s.credential_epoch,"error":error}),
     )
 }
 pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
@@ -507,8 +537,193 @@ pub(super) fn client_trust(a: &App, endpoints: &[String]) -> Result<Vec<u8>> {
             ca.push(b'\n');
             ca.extend_from_slice(cert.as_bytes());
         }
+        if let Some(cert) = s.next_certificate {
+            ca.push(b'\n');
+            ca.extend_from_slice(cert.as_bytes());
+        }
     }
     Ok(ca)
+}
+
+#[derive(Deserialize)]
+pub(super) struct CertificateUpdate {
+    certificate: String,
+    acknowledge: bool,
+}
+fn fingerprint(pem: &str) -> Result<Vec<u8>> {
+    openssl::x509::X509::from_pem(pem.as_bytes())
+        .and_then(|c| c.to_der())
+        .map_err(anyhow::Error::from)
+        .map_err(Error::from)
+}
+fn host_trust_updates(a: &App, endpoint: &str) -> Result<Vec<(String, String)>> {
+    let mut updates = Vec::new();
+    for mut host in hosts::list(a)? {
+        if host
+            .draft
+            .endpoints
+            .iter()
+            .any(|e| same_endpoint(e, endpoint))
+        {
+            host.revision += 1;
+            host.updated_at = now();
+            updates.push((
+                host.id.clone(),
+                serde_json::to_string(&host).map_err(anyhow::Error::from)?,
+            ));
+        }
+    }
+    Ok(updates)
+}
+pub(super) async fn stage_certificate(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(p): Json<CertificateUpdate>,
+) -> Result<Json<Value>> {
+    let who = admin(&a, &h, true).await?;
+    if !p.acknowledge {
+        return Err(bad(
+            "Acknowledge redeploying client trust before activating the staged certificate",
+        ));
+    }
+    let _guard = a.gate.lock().await;
+    let server = load(&a, &id)?;
+    if server.state != "enrolled" || server.next_certificate.is_some() {
+        return Err(bad(
+            "Use an enrolled server without an existing certificate transition",
+        ));
+    }
+    validate_certificate(&p.certificate, &hosts::endpoint_hostname(&server.endpoint)?)?;
+    if fingerprint(&p.certificate)? == fingerprint(server.certificate.as_deref().unwrap_or(""))? {
+        return Err(bad("Certificate is already active"));
+    }
+    let updates = host_trust_updates(&a, &server.endpoint)?;
+    let mut db = a.db.lock().unwrap();
+    let tx = db.transaction().map_err(anyhow::Error::from)?;
+    tx.execute(
+        "UPDATE directory_servers SET next_certificate=?,certificate_staged_at=? WHERE id=?",
+        params![p.certificate, now(), id],
+    )
+    .map_err(anyhow::Error::from)?;
+    for (host, data) in &updates {
+        tx.execute("UPDATE hosts SET data=? WHERE id=?", params![data, host])
+            .map_err(anyhow::Error::from)?;
+    }
+    tx.execute(
+        "INSERT INTO audit(at,actor,action,target) VALUES(?,?,?,?)",
+        params![now(), who, "stage replica certificate", id],
+    )
+    .map_err(anyhow::Error::from)?;
+    tx.commit().map_err(anyhow::Error::from)?;
+    Ok(Json(
+        json!({"staged":true,"hosts_requiring_export":updates.len()}),
+    ))
+}
+pub(super) async fn finalize_certificate(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(p): Json<operations::Acknowledgment>,
+) -> Result<Json<Value>> {
+    let who = admin(&a, &h, true).await?;
+    if !p.acknowledge {
+        return Err(bad(
+            "Acknowledge client trust deployment and retiring the old pin",
+        ));
+    }
+    let _guard = a.gate.lock().await;
+    let server = load(&a, &id)?;
+    let next = server
+        .next_certificate
+        .as_deref()
+        .ok_or(bad("No staged certificate"))?;
+    let mut l = connection(&a, &server).await?;
+    let presented = l
+        .get_peer_certificate()
+        .await?
+        .ok_or(bad("No TLS peer certificate"))?;
+    if presented != fingerprint(next)? {
+        return Err(Error(StatusCode::CONFLICT,"Replica still presents a different certificate; activate the staged certificate and restart it first".into()));
+    }
+    let updates = host_trust_updates(&a, &server.endpoint)?;
+    let mut db = a.db.lock().unwrap();
+    let tx = db.transaction().map_err(anyhow::Error::from)?;
+    tx.execute("UPDATE directory_servers SET certificate=next_certificate,next_certificate=NULL,certificate_staged_at=NULL WHERE id=?",[&id]).map_err(anyhow::Error::from)?;
+    for (host, data) in &updates {
+        tx.execute("UPDATE hosts SET data=? WHERE id=?", params![data, host])
+            .map_err(anyhow::Error::from)?;
+    }
+    tx.execute(
+        "INSERT INTO audit(at,actor,action,target) VALUES(?,?,?,?)",
+        params![now(), who, "finalize replica certificate", id],
+    )
+    .map_err(anyhow::Error::from)?;
+    tx.commit().map_err(anyhow::Error::from)?;
+    Ok(Json(
+        json!({"finalized":true,"hosts_requiring_export":updates.len()}),
+    ))
+}
+pub(super) async fn rotate_credential(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(p): Json<operations::Acknowledgment>,
+) -> Result<Response> {
+    let who = admin(&a, &h, true).await?;
+    https_required(&a)?;
+    if !p.acknowledge {
+        return Err(bad(
+            "Acknowledge applying the credential update to the replica and restarting it",
+        ));
+    }
+    let _guard = a.gate.lock().await;
+    let server = load(&a, &id)?;
+    if server.state != "enrolled" {
+        return Err(bad("Replica is not enrolled"));
+    }
+    let raw = token();
+    let b = base(&a)?;
+    let epoch = server.credential_epoch + 1;
+    let mut l = service(&a).await?;
+    audit(&a, &who, "attempt rotate replication credential", &id)?;
+    password(&mut l, &format!("cn=replica-{id},{b}"), &raw).await?;
+    a.db.lock()
+        .unwrap()
+        .execute(
+            "UPDATE directory_servers SET credential_rotated_at=?,credential_epoch=? WHERE id=?",
+            params![now(), epoch, id],
+        )
+        .map_err(anyhow::Error::from)?;
+    let update = json!({"id":id,"base":b,"provider":server.provider,"credential":raw,"credential_epoch":epoch,"issued_at":now()});
+    let instructions=b"Private credential update. Replace the deployment context replica.py with the included current runtime, then run docker compose build replica. Pipe credential-update.json into: docker compose run --rm -T --no-deps replica apply-credential < credential-update.json . Then recreate/restart the normal replica and confirm a new directory change synchronizes. Do not commit this JSON file. Existing bound LDAP connections may outlive credential replacement; the issued timestamp is not a remote deployment receipt. Older update epochs are refused by the runtime.\n";
+    let bytes = archive(vec![
+        (
+            "credential-update.json",
+            serde_json::to_vec_pretty(&update).map_err(anyhow::Error::from)?,
+            0o600,
+        ),
+        (
+            "replica.py",
+            include_bytes!("../assets/replica.py").to_vec(),
+            0o600,
+        ),
+        ("README.txt", instructions.to_vec(), 0o600),
+        (".gitignore", b"credential-update.json\n".to_vec(), 0o600),
+        (".dockerignore", b"credential-update.json\n".to_vec(), 0o600),
+    ])?;
+    audit(&a, &who, "issue replication credential update", &id)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/gzip".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"forklift-replica-credential-{id}.tar.gz\""),
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 #[cfg(test)]
 mod tests {

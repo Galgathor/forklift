@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
 import re
 import socket
 import ssl
@@ -17,7 +18,8 @@ import time
 import urllib.request
 from urllib.error import HTTPError,URLError
 
-os.chdir(Path(__file__).resolve().parents[1])
+SOURCE=Path(__file__).resolve().parents[1]
+os.chdir(SOURCE)
 PROJECT='forklift-repl-test-'+secrets.token_hex(4)
 PASSWORD=secrets.token_urlsafe(32)
 BASE='dc=replication,dc=test'
@@ -43,10 +45,16 @@ def run(*args,input=None,check=True,cwd=None,env=None):
 
 URL='https://localhost:'+str(port())
 ENV={**os.environ,'FORKLIFT_PORT':str(port()),'FORKLIFT_PUBLIC_URL':URL,'FORKLIFT_BIND':'127.0.0.1'}
+PRIMARY_ROOT=ROOT/'primary';PRIMARY_ROOT.mkdir()
+shutil.copy2(SOURCE/'compose.yaml',PRIMARY_ROOT/'compose.yaml')
+shutil.copy2(SOURCE/'.env.example',PRIMARY_ROOT/'.env.example')
+(PRIMARY_ROOT/'scripts').mkdir();shutil.copy2(SOURCE/'scripts/install.sh',PRIMARY_ROOT/'scripts/install.sh')
+run('sh','scripts/install.sh',cwd=PRIMARY_ROOT)
+(PRIMARY_ROOT/'.env').write_text('FORKLIFT_PUBLIC_URL='+URL+'\nFORKLIFT_PORT='+ENV['FORKLIFT_PORT']+'\nFORKLIFT_BIND=127.0.0.1\n')
 override=ROOT/'primary.yaml'
 override.write_text('services:\n  ldap:\n    image: forklift-ldap:latest\n    networks: [directory, web]\n  manager:\n    image: forklift-manager:latest\n')
 def compose(*args):
-    return run('docker','compose','-p',PROJECT,'-f',str(Path('compose.yaml').resolve()),'-f',str(override),*args,env=ENV)
+    return run('docker','compose','--project-directory',str(PRIMARY_ROOT),'-p',PROJECT,'-f',str(PRIMARY_ROOT/'compose.yaml'),'-f',str(override),*args,env=ENV)
 
 def certs():
     run('openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','2','-subj','/CN=Forklift disposable proxy CA','-addext','basicConstraints=critical,CA:TRUE','-addext','keyUsage=critical,keyCertSign,cRLSign','-keyout',str(ROOT/'ca.key'),'-out',str(ROOT/'ca.crt'))
@@ -123,7 +131,7 @@ try:
     compose('up','-d','--no-build','--wait')
     run('docker','run','-d','--name',PROJECT+'-proxy','--user',str(os.getuid())+':'+str(os.getgid()),'--network',PROJECT+'_web','--network-alias','enrollment','-p','127.0.0.1:'+URL.rsplit(':',1)[1]+':8443','-v',str(ROOT)+':/fixture:ro','-v',str(Path('tests/tls_proxy.py').resolve())+':/proxy.py:ro','--entrypoint','python3','forklift-ldap:latest','/proxy.py')
     wait_ready()
-    bootstrap=run('docker','run','--rm','-v',str(Path('.secrets').resolve())+':/secrets:ro','alpine:3.22.2','cat','/secrets/bootstrap').stdout.decode().strip()
+    bootstrap=run('docker','run','--rm','-v',str(PRIMARY_ROOT/'.secrets')+':/secrets:ro','alpine:3.22.2','cat','/secrets/bootstrap').stdout.decode().strip()
     request('/api/setup','POST',dict(token=bootstrap,name='Replication test',base=BASE,username='admin',password=PASSWORD))
     csrf=request('/api/login','POST',dict(username='admin',password=PASSWORD))['csrf']
     assert any(c.secure for c in jar),'HTTPS sessions did not receive Secure cookies'
@@ -186,7 +194,7 @@ assert r.returncode==0 and b'uid: deleted' not in r.stdout
 """
     replica_exec('python3','-c',check_ldap,input=json.dumps(dict(dn=bind_dn,pw=bind,base=BASE)).encode())
     # Readonly rejects even the primary write identity, not just an ordinary user's ACL.
-    service=run('docker','run','--rm','-v',str(Path('.secrets').resolve())+':/secrets:ro','alpine:3.22.2','cat','/secrets/service').stdout.decode().strip()
+    service=run('docker','run','--rm','-v',str(PRIMARY_ROOT/'.secrets')+':/secrets:ro','alpine:3.22.2','cat','/secrets/service').stdout.decode().strip()
     readonly="""import sys,os,json,subprocess
 p=json.load(sys.stdin);rfd,wfd=os.pipe();os.write(wfd,p['pw'].encode());os.close(wfd)
 ldif=('dn: uid=firstlogin,ou=people,'+p['base']+'\\nchangetype: modify\\nreplace: description\\ndescription: forbidden\\n').encode()
@@ -262,10 +270,63 @@ os.close(rfd);assert r.returncode==53
     replica_exec('sh','-c','cp /directory/server.crt.good /directory/server.crt; cp /directory/server.key.good /directory/server.key')
     replica('restart','replica');recovered=synchronized(node['id'])
     assert recovered['error'] is None, 'Recovered node retained an obsolete connection error'
+    print('Testing staged replica certificate rotation and dual client trust…',flush=True)
+    candidate=replica_exec('python3','/replica.py','stage-certificate').stdout.decode()
+    assert candidate.startswith('-----BEGIN CERTIFICATE-----') and candidate != certificate
+    request('/api/replicas/'+node['id']+'/certificate','POST',dict(certificate=candidate,acknowledge=True),use_csrf=False,expect=403)
+    request('/api/replicas/'+node['id']+'/certificate','POST',dict(certificate=candidate,acknowledge=False),expect=400)
+    request('/api/replicas/'+node['id']+'/certificate','POST',dict(certificate=candidate,acknowledge=True))
+    request('/api/replicas/'+node['id']+'/certificate/finalize','POST',dict(acknowledge=True),expect=409)
+    def redeploy_host():
+        current=next(h for h in request('/api/hosts') if h['id']==host['id'])
+        unpack(request('/api/hosts/'+host['id']+'/bundle','POST',dict(revision=current['revision'],rotate=True),raw=True),host_bundle)
+        run('docker','cp',str(host_bundle)+'/.',ubuntu+':/bundle')
+        client_command('ansible-playbook','-i','/tmp/inventory','/workspace/ansible/playbook.yml','-e','forklift_bundle_dir=/bundle','-e','forklift_manage_services=false')
+        return current
+    staged=redeploy_host()
+    assert staged['revision']==2
+    trust=(host_bundle/'ca.crt').read_text();assert certificate.strip() in trust and candidate.strip() in trust
+    replica_exec('python3','/replica.py','activate-certificate')
+    replica('restart','replica');synchronized(node['id'])
+    request('/api/replicas/'+node['id']+'/certificate/finalize','POST',dict(acknowledge=True))
+    final=redeploy_host();assert final['revision']==3
+    trust=(host_bundle/'ca.crt').read_text();assert candidate.strip() in trust and certificate.strip() not in trust
+    replica_exec('python3','/replica.py','retire-certificate')
+    assert replica_exec('test','!','-e','/directory/server.key.previous',check=False).returncode==0
+    print('Testing replication credential epochs and actual new provider binds…',flush=True)
+    old_replication=json.loads(replica_exec('cat','/directory/replica.json').stdout)
+    request('/api/replicas/'+node['id']+'/credential','POST',dict(acknowledge=True),use_csrf=False,expect=403)
+    update_archive=request('/api/replicas/'+node['id']+'/credential','POST',dict(acknowledge=True),raw=True)
+    with tarfile.open(fileobj=io.BytesIO(update_archive),mode='r:gz') as archive:
+        update=archive.extractfile('credential-update.json').read()
+    updated=json.loads(update);assert updated['credential_epoch']>old_replication.get('credential_epoch',0)
+    def primary_bind(dn,password,expected):
+        code="import os,sys,json,subprocess;p=json.load(sys.stdin);r=subprocess.run(['ldapwhoami','-x','-H','ldaps://ldap:636','-D',p['dn'],'-y','/dev/stdin'],input=p['pw'].encode(),env={**os.environ,'LDAPTLS_CACERT':'/run/secrets/ca.crt'},capture_output=True);assert r.returncode==p['expected']"
+        cid=compose('ps','-q','ldap').stdout.decode().strip()
+        run('docker','exec','-i',cid,'python3','-c',code,input=json.dumps(dict(dn=dn,pw=password,expected=expected)).encode())
+    primary_bind('cn=replica-'+node['id']+','+BASE,old_replication['credential'],49)
+    primary_bind('cn=replica-'+node['id']+','+BASE,updated['credential'],0)
+    wrong=dict(updated,id='0'*32)
+    assert replica_exec('python3','/replica.py','apply-credential',input=json.dumps(wrong).encode(),check=False).returncode
+    replica_exec('python3','/replica.py','apply-credential',input=update)
+    assert replica_exec('python3','/replica.py','apply-credential',input=update,check=False).returncode
+    replica('restart','replica')
+    request('/api/users','POST',user('afterrotation'));synchronized(node['id'])
+    print('Testing primary service/monitor credential rotation with an active replica…',flush=True)
+    run('python3',str(SOURCE/'scripts/forklift-admin.py'),'--root',str(PRIMARY_ROOT),'--project',PROJECT,'--file',str(PRIMARY_ROOT/'compose.yaml'),'--file',str(override),'rotate-service')
+    primary_bind('cn=manager,'+BASE,service,49)
+    request('/api/me',expect=401)
+    csrf=request('/api/login','POST',dict(username='admin',password=PASSWORD))['csrf']
+    synchronized(node['id'])
+    request('/api/users','POST',user('afterservice'));synchronized(node['id'])
+    compose('stop','ldap')
+    client_command('sh','-c','if [ -f /run/sssd.pid ]; then kill "$(cat /run/sssd.pid)"; fi; sleep 1; sssd -D')
+    ssh('firstlogin',updated_password)
+    compose('start','ldap');wait_ready();synchronized(node['id'])
     # A removed identity cannot make a new provider bind; stop the replica before decommission.
     replica('stop','replica');request('/api/replicas/'+node['id'],'DELETE')
     assert len(request('/api/directory-servers')['servers'])==1
-    print(f'PASS: {checks} HTTPS API checks, one-use/expired enrollment, native Syncrepl changes/deletes/passwords, independent storage, readonly enforcement, interrupted recovery, real fresh Ubuntu SSH failover, replica-backed read-only administration and certificate-pin rejection.',flush=True)
+    print(f'PASS: {checks} HTTPS API checks, one-use/expired enrollment, native Syncrepl changes/deletes/passwords, independent storage, readonly enforcement, interrupted recovery, real fresh Ubuntu SSH failover, replica-backed read-only administration, certificate-pin rejection, staged certificate renewal, dual/final client trust, replication credential epochs and primary service/monitor rotation.',flush=True)
 except Exception:
     if (replica_dir/'compose.yaml').exists() and (ROOT/'replica-override.yaml').exists():
         diagnostic=replica('logs','--tail','50','replica',check=False).stdout.decode(errors='replace')

@@ -182,6 +182,8 @@ def supervise():
 
 if __name__ == '__main__':
     os.umask(0o077)
+    if any((ROOT/name).exists() for name in ['restore-incomplete','service-rotation-incomplete']):
+        raise RuntimeError('Offline maintenance is incomplete; use the local recovery command')
     if (ROOT/'complete').exists():
         suffix = (ROOT/'complete').read_text().strip()
         if not valid_base(suffix):

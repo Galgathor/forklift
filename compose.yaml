@@ -4,6 +4,9 @@ services:
       context: .
       dockerfile: docker/openldap/Dockerfile
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
     volumes:
       - directory:/directory
       - ./.secrets/ca.crt:/run/secrets/ca.crt:ro
@@ -26,6 +29,9 @@ services:
       context: .
       dockerfile: docker/manager/Dockerfile
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
     environment:
       FORKLIFT_PUBLIC_URL: ${FORKLIFT_PUBLIC_URL:-http://localhost:8080}
       LDAPTLS_CACERT: /run/secrets/ca.crt
@@ -34,6 +40,7 @@ services:
       - '${FORKLIFT_BIND:-127.0.0.1}:${FORKLIFT_PORT:-8080}:8080'
     volumes:
       - metadata:/data
+      - ./.secrets/ldap.crt:/run/secrets/ldap.crt:ro
       - ./.secrets/bootstrap:/run/secrets/bootstrap:ro
       - ./.secrets/provision:/run/secrets/provision:ro
       - ./.secrets/service:/run/secrets/service:ro

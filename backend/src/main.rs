@@ -1,4 +1,5 @@
 mod hosts;
+mod operations;
 mod replicas;
 use axum::{
     Json, Router,
@@ -196,6 +197,12 @@ async fn admin(a: &App, h: &HeaderMap, write: bool) -> Result<String> {
             return Err(Error(StatusCode::FORBIDDEN, "CSRF token rejected".into()));
         }
     }
+    if write && operations::recovery(a)? {
+        return Err(Error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Recovery review is required before administrative writes".into(),
+        ));
+    }
     let mut l = if write {
         service(a).await?
     } else {
@@ -251,7 +258,7 @@ async fn ready(State(a): State<App>) -> Result<Json<Value>> {
     ))
 }
 async fn status(State(a): State<App>) -> Json<Value> {
-    Json(json!({"configured":config(&a).is_some()}))
+    Json(json!({"configured":config(&a).is_some(),"version":env!("CARGO_PKG_VERSION")}))
 }
 #[derive(Deserialize)]
 struct Setup {
@@ -348,8 +355,24 @@ async fn login(State(a): State<App>, h: HeaderMap, Json(p): Json<Login>) -> Resu
                 "Login rate limit reached; wait five minutes".into(),
             ));
         }
-        db.execute("INSERT INTO attempts(at) VALUES(?)", [now()])
+        let account: i64 = db
+            .query_row(
+                "SELECT count(*) FROM attempts WHERE at>? AND username=?",
+                params![now() - 300, p.username],
+                |r| r.get(0),
+            )
             .map_err(anyhow::Error::from)?;
+        if account >= 10 {
+            return Err(Error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Account login rate limit reached; wait five minutes".into(),
+            ));
+        }
+        db.execute(
+            "INSERT INTO attempts(at,username) VALUES(?,?)",
+            params![now(), p.username],
+        )
+        .map_err(anyhow::Error::from)?;
         db.execute("DELETE FROM attempts WHERE at<?", [now() - 300])
             .map_err(anyhow::Error::from)?;
     }
@@ -361,6 +384,7 @@ async fn login(State(a): State<App>, h: HeaderMap, Json(p): Json<Login>) -> Resu
         .success()
         .is_err()
     {
+        audit(&a, &p.username, "failed login", "credentials")?;
         return Err(unauthorized());
     }
     let u = search(
@@ -376,6 +400,7 @@ async fn login(State(a): State<App>, h: HeaderMap, Json(p): Json<Login>) -> Resu
     )
     .await?;
     if u.is_empty() || g.is_empty() || attrs(&u[0], "shadowExpire") == "1" {
+        audit(&a, &p.username, "failed login", "authorization")?;
         return Err(unauthorized());
     }
     let raw = token();
@@ -496,7 +521,7 @@ async fn overview(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
         stmt.query_map([],|r|Ok(json!({"at":r.get::<_,i64>(0)?,"actor":r.get::<_,String>(1)?,"action":r.get::<_,String>(2)?,"target":r.get::<_,String>(3)?}))).map_err(anyhow::Error::from)?.collect::<std::result::Result<Vec<_>,_>>().map_err(anyhow::Error::from)?
     };
     Ok(Json(
-        json!({"directory":config(&a),"users":users,"groups":groups,"events":events,"ldap":"connected","read_only":!primary_available,"directory_servers":replicas::health(&a).await?,"hosts":hosts::list(&a)?}),
+        json!({"directory":config(&a),"users":users,"groups":groups,"events":events,"ldap":"connected","read_only":!primary_available||operations::recovery(&a)?,"read_only_reason":if operations::recovery(&a)?{Some("recovery_review")}else if !primary_available{Some("primary_unavailable")}else{None},"directory_source":if primary_available{"primary"}else{"replica"},"directory_servers":replicas::health(&a).await?,"hosts":hosts::list(&a)?}),
     ))
 }
 #[derive(Deserialize)]
@@ -812,15 +837,21 @@ async fn delete_group(
 }
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !std::path::Path::new("/data/restore-incomplete").exists()
+            && !std::path::Path::new("/data/service-rotation-incomplete").exists(),
+        "Offline maintenance is incomplete; use the local recovery command"
+    );
     let db = Connection::open("/data/forklift.db")?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     anyhow::ensure!(
-        version <= 3,
+        version <= 4,
         "Metadata was created by a newer Forklift release; refusing downgrade"
     );
     db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,username TEXT NOT NULL,csrf TEXT NOT NULL,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempts(at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL); CREATE TABLE IF NOT EXISTS allocator(value INTEGER NOT NULL); INSERT INTO allocator SELECT 10000 WHERE NOT EXISTS(SELECT 1 FROM allocator);")?;
     hosts::migrate(&db)?;
     replicas::migrate(&db)?;
+    operations::migrate(&db)?;
     let url = std::env::var("FORKLIFT_PUBLIC_URL")
         .unwrap_or("http://localhost:8080".into())
         .trim_end_matches('/')
@@ -832,7 +863,8 @@ async fn main() -> anyhow::Result<()> {
             && parsed.path() == "/"
             && parsed.query().is_none()
             && parsed.fragment().is_none()
-            && parsed.username().is_empty(),
+            && parsed.username().is_empty()
+            && parsed.password().is_none(),
         "FORKLIFT_PUBLIC_URL must be an HTTP(S) origin without a path or credentials"
     );
     let a = App {
@@ -850,9 +882,17 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/me", get(me))
         .route("/api/logout", post(logout))
         .route("/api/overview", get(overview))
+        .route("/api/operations", get(operations::status))
+        .route("/api/audit", get(operations::audit_page))
+        .route("/api/audit/export", get(operations::audit_export))
+        .route("/api/sessions/revoke", post(operations::revoke_sessions))
+        .route("/api/recovery/complete", post(operations::complete_recovery))
         .route("/api/directory-servers", get(replicas::index).post(replicas::create))
         .route("/api/replicas/{id}/bundle", post(replicas::bundle))
         .route("/api/replicas/{id}/enroll", post(replicas::enroll))
+        .route("/api/replicas/{id}/certificate", post(replicas::stage_certificate))
+        .route("/api/replicas/{id}/certificate/finalize", post(replicas::finalize_certificate))
+        .route("/api/replicas/{id}/credential", post(replicas::rotate_credential))
         .route("/api/replicas/{id}", axum::routing::delete(replicas::delete))
         .route("/api/hosts", get(hosts::index).post(hosts::create))
         .route("/api/hosts/{id}", put(hosts::update).delete(hosts::delete))

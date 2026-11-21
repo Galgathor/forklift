@@ -1,5 +1,6 @@
 """Replica-only lifecycle. Native Syncrepl owns synchronization; no command API."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -14,14 +15,91 @@ import urllib.request
 ROOT = Path('/directory')
 
 
-def generate_certificate(hostname):
+def atomic(path, data):
+    temporary = path.with_name(path.name + '.new')
+    with open(temporary, 'wb') as output:
+        output.write(data)
+        output.flush()
+        os.fsync(output.fileno())
+    temporary.replace(path)
+    descriptor = os.open(path.parent, os.O_DIRECTORY)
+    os.fsync(descriptor)
+    os.close(descriptor)
+
+
+def certificate_der(path):
+    return subprocess.check_output(['openssl', 'x509', '-in', str(path), '-outform', 'DER'], stderr=subprocess.DEVNULL)
+
+
+def matching_pair(key, cert):
+    public = subprocess.check_output(['openssl', 'pkey', '-in', str(key), '-pubout', '-outform', 'DER'], stderr=subprocess.DEVNULL)
+    certificate_public = subprocess.check_output(['openssl', 'x509', '-in', str(cert), '-pubkey', '-noout'], stderr=subprocess.DEVNULL)
+    certificate_public = subprocess.run(['openssl', 'pkey', '-pubin', '-outform', 'DER'], input=certificate_public, capture_output=True, check=True).stdout
+    return public == certificate_public
+
+
+def generate_certificate(hostname, prefix='server'):
     if not re.fullmatch(r'[a-z0-9]+(?:[a-z0-9.-]*[a-z0-9])?', hostname) or len(hostname) > 253:
         raise ValueError('Invalid hostname')
-    if not (ROOT/'server.key').exists():
+    key, cert = ROOT/(prefix+'.key'), ROOT/(prefix+'.crt')
+    if key.exists() != cert.exists():
+        raise ValueError('Incomplete certificate pair; preserve and inspect the volume')
+    if not key.exists():
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-days', '365', '-subj', '/CN='+hostname,
             '-addext', 'basicConstraints=critical,CA:FALSE', '-addext', 'keyUsage=critical,digitalSignature,keyEncipherment',
             '-addext', 'extendedKeyUsage=serverAuth', '-addext', 'subjectAltName=DNS:'+hostname,
-            '-keyout', str(ROOT/'server.key'), '-out', str(ROOT/'server.crt')], check=True, capture_output=True)
+            '-keyout', str(key), '-out', str(cert)], check=True, capture_output=True)
+    if not matching_pair(key, cert):
+        raise ValueError('Certificate and private key do not match')
+
+
+def activate_certificate():
+    journal = ROOT/'certificate-activation.json'
+    key, cert = ROOT/'server-next.key', ROOT/'server-next.crt'
+    if journal.exists():
+        state = json.loads(journal.read_text())
+    else:
+        if not key.exists() or not cert.exists() or not matching_pair(key, cert):
+            raise ValueError('No complete staged certificate')
+        state = {'fingerprint': hashlib.sha256(certificate_der(cert)).hexdigest()}
+        atomic(journal, json.dumps(state).encode())
+    active = False
+    try:
+        active = matching_pair(ROOT/'server.key', ROOT/'server.crt') and hashlib.sha256(certificate_der(ROOT/'server.crt')).hexdigest() == state['fingerprint']
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    if not active:
+        if not key.exists() or not cert.exists() or not matching_pair(key, cert):
+            raise ValueError('Interrupted activation lacks its staged pair; restore from backup')
+        if not (ROOT/'server.key.previous').exists():
+            atomic(ROOT/'server.key.previous', (ROOT/'server.key').read_bytes())
+            atomic(ROOT/'server.crt.previous', (ROOT/'server.crt').read_bytes())
+        atomic(ROOT/'server.key', key.read_bytes())
+        atomic(ROOT/'server.crt', cert.read_bytes())
+        if not matching_pair(ROOT/'server.key', ROOT/'server.crt'):
+            raise ValueError('Certificate activation did not produce a matching pair')
+    key.unlink(missing_ok=True)
+    cert.unlink(missing_ok=True)
+    journal.unlink()
+
+
+def apply_credential():
+    data = sys.stdin.buffer.read(8193)
+    if len(data) > 8192:
+        raise ValueError('Credential update exceeds its size limit')
+    incoming = json.loads(data)
+    current = json.loads((ROOT/'replica.json').read_text())
+    if any(incoming.get(k) != current.get(k) for k in ['id', 'base', 'provider']):
+        raise ValueError('Credential update belongs to another replica')
+    if not isinstance(incoming.get('credential'), str) or not re.fullmatch(r'[a-f0-9]{64}', incoming['credential']):
+        raise ValueError('Invalid credential update')
+    if not isinstance(incoming.get('credential_epoch'), int) or incoming['credential_epoch'] <= current.get('credential_epoch', 0):
+        raise ValueError('Credential update is stale or has already been applied')
+    current['credential'] = incoming['credential']
+    current['credential_epoch'] = incoming['credential_epoch']
+    atomic(ROOT/'replica.json', json.dumps(current).encode())
+    configure()
+
 
 
 def enroll():
@@ -46,7 +124,7 @@ def enroll():
     if result['provider'] != p['provider']:
         raise ValueError('Provider changed during enrollment')
     # Save the one-time response before configuration work so local failures can retry safely.
-    (ROOT/'replica.json').write_text(json.dumps({**result, 'id': p['id'], 'hostname': p['hostname']}))
+    atomic(ROOT/'replica.json', json.dumps({**result, 'id': p['id'], 'hostname': p['hostname']}).encode())
     (ROOT/'provider-ca.crt').write_bytes(Path('/enrollment/provider-ca.crt').read_bytes())
 
 
@@ -86,7 +164,7 @@ access to attrs=userPassword by anonymous auth by * none
 access to * by users read by * none
 syncrepl rid=001 provider="{p['provider']}" searchbase="{p['base']}" type=refreshAndPersist retry="5 5 30 +" timeout=5 bindmethod=simple binddn="cn=replica-{p['id']},{p['base']}" credentials="{p['credential']}" tls_reqcert=demand tls_cacert=/directory/provider-ca.crt
 '''
-    (ROOT/'slapd.conf').write_text(config)
+    atomic(ROOT/'slapd.conf', config.encode())
     check = subprocess.run(['slaptest', '-u', '-f', str(ROOT/'slapd.conf')], capture_output=True)
     if check.returncode:
         print('Replica configuration check failed: ' + check.stderr.decode(errors='replace').replace(p['credential'], '[redacted]')[:1200], file=sys.stderr)
@@ -106,6 +184,29 @@ def health():
 
 if __name__ == '__main__':
     os.umask(0o077)
+    action = sys.argv[1:]
+    if action in [['stage-certificate'], ['activate-certificate'], ['retire-certificate'], ['apply-credential']]:
+        try:
+            if action == ['stage-certificate']:
+                p = json.loads((ROOT/'replica.json').read_text())
+                generate_certificate(p['hostname'], 'server-next')
+                print((ROOT/'server-next.crt').read_text(), end='')
+            elif action == ['activate-certificate']:
+                activate_certificate()
+                print('Certificate activated on disk; restart the replica to load it')
+            elif action == ['retire-certificate']:
+                if not matching_pair(ROOT/'server.key', ROOT/'server.crt'):
+                    raise ValueError('Active certificate is invalid')
+                (ROOT/'server.key.previous').unlink(missing_ok=True)
+                (ROOT/'server.crt.previous').unlink(missing_ok=True)
+                print('Previous local certificate/key retired')
+            else:
+                apply_credential()
+                print('Credential update written; restart the replica and verify new changes synchronize')
+        except Exception as exc:
+            print(str(exc) if isinstance(exc, ValueError) else type(exc).__name__, file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
     if sys.argv[1:] == ['health']:
         sys.exit(health())
     if not (ROOT/'replica.json').exists():
@@ -115,8 +216,9 @@ if __name__ == '__main__':
             # Do not log response bodies or credentials. Tokens are never command arguments.
             print('Enrollment failed: '+type(exc).__name__+'. Check expiry, manager HTTPS and enrollment status.', file=sys.stderr)
             sys.exit(1)
-    if not (ROOT/'complete').exists():
-        configure()
+    if (ROOT/'certificate-activation.json').exists():
+        activate_certificate()
+    configure()
     child = subprocess.Popen(['slapd', '-f', str(ROOT/'slapd.conf'), '-h', 'ldaps://0.0.0.0:636', '-d', '256'])
     def shutdown(*args):
         child.terminate()

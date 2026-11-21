@@ -4,6 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
     entrypoint: [python3, /replica.py]
     user: "10001:10001"
     ports:

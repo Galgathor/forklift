@@ -7,3 +7,7 @@ frontend/dist/
 __pycache__/
 
 *.tsbuildinfo
+
+.forklift-maintenance.*
+
+.forklift-restore-*
