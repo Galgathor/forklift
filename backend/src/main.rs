@@ -1,4 +1,5 @@
 mod hosts;
+mod replicas;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -124,7 +125,14 @@ async fn service(a: &App) -> anyhow::Result<Ldap> {
         .success()?;
     Ok(l)
 }
+async fn read_service(a: &App) -> anyhow::Result<(Ldap, bool)> {
+    match service(a).await {
+        Ok(l) => Ok((l, true)),
+        Err(_) => Ok((replicas::fallback(a).await?, false)),
+    }
+}
 async fn search(l: &mut Ldap, b: &str, f: &str) -> anyhow::Result<Vec<Value>> {
+    l.with_timeout(std::time::Duration::from_secs(5));
     let (rs, _) = l
         .search(
             b,
@@ -188,7 +196,11 @@ async fn admin(a: &App, h: &HeaderMap, write: bool) -> Result<String> {
             return Err(Error(StatusCode::FORBIDDEN, "CSRF token rejected".into()));
         }
     }
-    let mut l = service(a).await?;
+    let mut l = if write {
+        service(a).await?
+    } else {
+        read_service(a).await?.0
+    };
     let b = base(a)?;
     let groups = search(
         &mut l,
@@ -342,7 +354,8 @@ async fn login(State(a): State<App>, h: HeaderMap, Json(p): Json<Login>) -> Resu
             .map_err(anyhow::Error::from)?;
     }
     let b = base(&a)?;
-    let mut l = connect().await?;
+    let (mut l, primary_available) = read_service(&a).await?;
+    l.with_timeout(std::time::Duration::from_secs(5));
     if l.simple_bind(&format!("uid={},ou=people,{b}", p.username), &p.password)
         .await?
         .success()
@@ -350,7 +363,6 @@ async fn login(State(a): State<App>, h: HeaderMap, Json(p): Json<Login>) -> Resu
     {
         return Err(unauthorized());
     }
-    let mut l = service(&a).await?;
     let u = search(
         &mut l,
         &format!("ou=people,{b}"),
@@ -389,7 +401,7 @@ async fn login(State(a): State<App>, h: HeaderMap, Json(p): Json<Login>) -> Resu
     );
     Ok((
         [(header::SET_COOKIE, cookie)],
-        Json(json!({"csrf":csrf,"username":p.username})),
+        Json(json!({"csrf":csrf,"username":p.username,"read_only":!primary_available})),
     )
         .into_response())
 }
@@ -417,7 +429,27 @@ async fn me(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
     Ok(Json(json!({"username":u,"csrf":csrf})))
 }
 async fn logout(State(a): State<App>, h: HeaderMap) -> Result<Response> {
-    admin(&a, &h, true).await?;
+    origin(&a, &h)?;
+    let raw_session = h
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.split(';')
+                .find_map(|s| s.trim().strip_prefix("forklift_session="))
+        })
+        .ok_or(unauthorized())?;
+    let csrf =
+        a.db.lock()
+            .unwrap()
+            .query_row(
+                "SELECT csrf FROM sessions WHERE id=? AND expires>?",
+                params![digest(raw_session), now()],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(|_| unauthorized())?;
+    if h.get("x-csrf-token").and_then(|v| v.to_str().ok()) != Some(csrf.as_str()) {
+        return Err(Error(StatusCode::FORBIDDEN, "CSRF token rejected".into()));
+    }
     if let Some(raw) = h
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
@@ -442,7 +474,7 @@ async fn logout(State(a): State<App>, h: HeaderMap) -> Result<Response> {
 }
 async fn overview(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
     admin(&a, &h, false).await?;
-    let mut l = service(&a).await?;
+    let (mut l, primary_available) = read_service(&a).await?;
     let b = base(&a)?;
     let users = search(
         &mut l,
@@ -464,7 +496,7 @@ async fn overview(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
         stmt.query_map([],|r|Ok(json!({"at":r.get::<_,i64>(0)?,"actor":r.get::<_,String>(1)?,"action":r.get::<_,String>(2)?,"target":r.get::<_,String>(3)?}))).map_err(anyhow::Error::from)?.collect::<std::result::Result<Vec<_>,_>>().map_err(anyhow::Error::from)?
     };
     Ok(Json(
-        json!({"directory":config(&a),"users":users,"groups":groups,"events":events,"ldap":"connected","hosts":hosts::list(&a)?}),
+        json!({"directory":config(&a),"users":users,"groups":groups,"events":events,"ldap":"connected","read_only":!primary_available,"directory_servers":replicas::health(&a).await?,"hosts":hosts::list(&a)?}),
     ))
 }
 #[derive(Deserialize)]
@@ -783,11 +815,12 @@ async fn main() -> anyhow::Result<()> {
     let db = Connection::open("/data/forklift.db")?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     anyhow::ensure!(
-        version <= 2,
+        version <= 3,
         "Metadata was created by a newer Forklift release; refusing downgrade"
     );
     db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,username TEXT NOT NULL,csrf TEXT NOT NULL,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempts(at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL); CREATE TABLE IF NOT EXISTS allocator(value INTEGER NOT NULL); INSERT INTO allocator SELECT 10000 WHERE NOT EXISTS(SELECT 1 FROM allocator);")?;
     hosts::migrate(&db)?;
+    replicas::migrate(&db)?;
     let url = std::env::var("FORKLIFT_PUBLIC_URL")
         .unwrap_or("http://localhost:8080".into())
         .trim_end_matches('/')
@@ -817,6 +850,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/me", get(me))
         .route("/api/logout", post(logout))
         .route("/api/overview", get(overview))
+        .route("/api/directory-servers", get(replicas::index).post(replicas::create))
+        .route("/api/replicas/{id}/bundle", post(replicas::bundle))
+        .route("/api/replicas/{id}/enroll", post(replicas::enroll))
+        .route("/api/replicas/{id}", axum::routing::delete(replicas::delete))
         .route("/api/hosts", get(hosts::index).post(hosts::create))
         .route("/api/hosts/{id}", put(hosts::update).delete(hosts::delete))
         .route("/api/hosts/{id}/bundle", post(hosts::bundle))

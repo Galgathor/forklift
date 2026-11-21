@@ -1,0 +1,24 @@
+services:
+  replica:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    entrypoint: [python3, /replica.py]
+    user: "10001:10001"
+    ports:
+      - "${FORKLIFT_REPLICA_BIND:?Set a private host IP}:${FORKLIFT_REPLICA_PORT:-636}:636"
+    volumes:
+      - replica_data:/directory
+      - ./enrollment:/enrollment:ro
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, python3, /replica.py, health]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+volumes:
+  replica_data:

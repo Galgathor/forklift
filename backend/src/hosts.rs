@@ -49,24 +49,29 @@ fn validate(p: &HostDraft) -> Result<()> {
         ));
     }
     for endpoint in &p.endpoints {
-        let uri = reqwest::Url::parse(endpoint).map_err(|_| bad("Invalid LDAPS endpoint"))?;
-        if uri.scheme() != "ldaps"
-            || !uri.username().is_empty()
-            || uri.password().is_some()
-            || !uri.host_str().is_some_and(hostname)
-            || uri.query().is_some()
-            || uri.fragment().is_some()
-            || uri.path() != ""
-            || uri.port() == Some(0)
-            || endpoint.len() > 300
-            || endpoint.bytes().any(|c| c.is_ascii_whitespace())
-        {
-            return Err(bad(
-                "Use ldaps://dns-name[:port] endpoints without paths, credentials or query parameters",
-            ));
-        }
+        endpoint_hostname(endpoint)?;
     }
+
     Ok(())
+}
+pub(super) fn endpoint_hostname(endpoint: &str) -> Result<String> {
+    let uri = reqwest::Url::parse(endpoint).map_err(|_| bad("Invalid LDAPS endpoint"))?;
+    if uri.scheme() != "ldaps"
+        || !uri.username().is_empty()
+        || uri.password().is_some()
+        || !uri.host_str().is_some_and(hostname)
+        || uri.query().is_some()
+        || uri.fragment().is_some()
+        || uri.path() != ""
+        || uri.port() == Some(0)
+        || endpoint.len() > 300
+        || endpoint.bytes().any(|c| c.is_ascii_whitespace())
+    {
+        return Err(bad(
+            "Use ldaps://dns-name[:port] endpoints without paths, credentials or query parameters",
+        ));
+    }
+    Ok(uri.host_str().unwrap().to_string())
 }
 fn valid_id(s: &str) -> Result<()> {
     if s.len() != 32 || !s.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -265,7 +270,7 @@ pub(super) async fn bundle(
         ));
     }
     check_groups(&a, &host.draft).await?;
-    let ca = std::fs::read("/run/secrets/ca.crt").map_err(anyhow::Error::from)?;
+    let ca = replicas::client_trust(&a, &host.draft.endpoints)?;
     let credential = token();
     let b = base(&a)?;
     let dn = format!("cn=host-{id},{b}");
