@@ -2,7 +2,7 @@
 
 Self-hosted OpenLDAP management for homelabs. A Rust/Axum API, React/TypeScript interface, SQLite metadata store, and a real OpenLDAP 2.6 directory deployed with Docker Compose.
 
-**Development release: Milestone 1.** Setup, administrator login, user and POSIX group management are implemented. Host enrollment, SSSD generation, SSH-key schema support, replication, automated backup/restore, and credential rotation are not implemented. Do not rely on this release as your only path into critical infrastructure. Keep an independently managed local recovery account on Linux hosts.
+**Development release: Milestone 2.** Setup, administrator login, user/POSIX group management, host registration, SSSD/PAM/NSS configuration exports and an Ubuntu Ansible role are implemented. SSH-key schema support, replica provisioning, automated backup/restore and service-credential rotation are not implemented. Host configuration export is not remote deployment or liveness monitoring. Do not rely on this release as your only path into critical infrastructure. Keep an independently managed local recovery account on Linux hosts.
 
 ## Quick start
 
@@ -60,7 +60,7 @@ docker compose logs --tail=100 manager ldap
 
 Forklift derives security decisions from the configured public URL and **does not trust any forwarded headers**. `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Proto` cannot change the request origin, cookie policy or rate-limit identity. No trusted-proxy configuration is needed in this release because no such headers are consumed. Login throttling is global, persisted in SQLite (20 attempts per five minutes), not client-IP based; this avoids proxy spoofing but permits temporary denial of login by a hostile caller. Restrict access to your management network.
 
-Never send LDAP authentication traffic through NPM's HTTP Proxy Host. LDAPS is a separate protocol and certificate. This milestone intentionally publishes no directory ports to the host.
+Never send LDAP authentication traffic through NPM's HTTP Proxy Host. LDAPS is a separate protocol and certificate. The default stack publishes no directory ports. The optional client Compose override publishes LDAPS on an explicitly configured private address; see [Linux clients](docs/linux-clients.md).
 
 ## Users and groups
 
@@ -76,11 +76,11 @@ Password modifications use the LDAP Password Modify extended operation; OpenLDAP
 
 ## Linux authentication and SSH
 
-Milestone 1 provides POSIX directory data, but does **not** enroll hosts or deliver tested client configurations. Milestone 2 will provide conventional SSSD/PAM/NSS and Ansible integration. A normal LDAP account password will be used for `ssh username@host`; there is no proprietary authentication agent or protocol.
+Register Linux hosts with friendly names, DNS hostnames, permitted login groups and ordered LDAPS endpoints. Generate a protected configuration archive containing a dedicated read-only host bind credential, certificate authority, SSSD identity/password settings and SSH/PAM group access rules. Deploy with the Ubuntu Ansible role or manual instructions. Every export rotates the host credential; edits require redeployment. Referenced groups are protected against rename/deletion.
 
-The host must enforce login groups in SSSD/PAM/OpenSSH. A group displayed in Forklift does not itself grant or restrict SSH access. Sudo authorization is a separate policy. Future client configuration must use encrypted LDAP with certificate validation, dedicated read-only bind identities, and multiple directory endpoints when replicas exist. Do not put the manager's write credential on Linux clients. The supplied certificate currently covers Docker's `ldap` hostname only; external client endpoints need certificates with their actual DNS names.
+Users authenticate through conventional SSH password prompts using their LDAP password. Destination PAM enforces login groups and SSSD checks account expiration. Local recovery accounts retain their existing policy, and sudo remains separate. Offline password caching is disabled in generated configurations; group/identity data has a 60-second cache interval.
 
-SSSD offline caching, when enabled on a client, can permit previously authenticated users to log in during an LDAP outage. Disabling an LDAP account cannot revoke an offline cache immediately; cache expiry, offline credential expiration and host access controls determine that window. Forklift does not configure those policies yet. Keep local recovery access.
+Complete private LDAPS publication, DNS/certificate setup, Ansible deployment, manual setup, authorization and outage guidance: [Linux clients](docs/linux-clients.md).
 
 ## Replication
 
@@ -92,7 +92,7 @@ The management application is not in the LDAP authentication path. Stopping it l
 
 See [operations](docs/operations.md) for offline backup/restore, partial initialization and TLS recovery. This release has no online backup scheduler, restore UI or automatic certificate/service-credential rotation. Back up directory data/configuration, metadata **and** installation secrets together. Keep archives encrypted and offline. The CA private key is retained on the installation host but is never mounted into either service.
 
-Before upgrading: stop services, make a matching backup, build the new revision and run the integration suite on a separate test project. Recreate services with `docker compose up -d --build`. Metadata schema is versioned; a newer schema is refused by older code. Only the initial schema exists so far. Rollback requires restoring a matching complete backup, not just an older image.
+Before upgrading: stop services, make a matching backup, build the new revision and run the integration suite on a separate test project. Recreate services with `docker compose up -d --build`. Milestone 2 automatically migrates metadata schema 1 to 2 while preserving identities, sessions and the ID allocator. Metadata schema is versioned; a newer schema is refused by older code. Rollback requires restoring a matching complete backup, not just an older image.
 
 ## Development and verification
 
@@ -107,9 +107,13 @@ cargo clippy --locked -- -D warnings
 cd ..
 docker compose build
 python3 tests/integration.py
+# Optional, comprehensive Ubuntu client checks:
+docker build -t forklift-ubuntu-client -f tests/ubuntu/Dockerfile .
+FORKLIFT_TEST_UBUNTU=1 python3 tests/integration.py
+python3 tests/certificates.py
 ```
 
-The integration suite requires the installer-created secret files and built `forklift-manager:latest` / `forklift-ldap:latest` images. It creates a randomly named Compose project with fresh volumes and a temporary loopback port, then removes **only its test volumes**. It does not initialize or delete your default installation. Test credentials are random and never printed. Checks include bootstrap replay/origin rejection, authenticated and unauthenticated authorization, CSRF, LDAP bind/password/disable behavior, group CRUD, administrator revocation, non-reused IDs, container recreation, independent LDAP operation, directory outages, certificate rejection and login throttling.
+The integration suite requires the installer-created secret files and built `forklift-manager:latest` / `forklift-ldap:latest` images. It creates a randomly named Compose project with fresh volumes and a temporary loopback port, then removes **only its test volumes**. It does not initialize or delete your default installation. Test credentials are random and never printed. Ubuntu mode also runs the Ansible role twice and actual NSS/PAM/SSH password and access-policy checks. Checks include bootstrap replay/origin rejection, authenticated and unauthenticated authorization, CSRF, LDAP bind/password/disable behavior, group CRUD, administrator revocation, non-reused IDs, container recreation, independent LDAP operation, directory outages, certificate rejection and login throttling.
 
 Vite development mode proxies `/api` to localhost:8080; configure `FORKLIFT_PUBLIC_URL` to the actual development browser origin (usually `http://localhost:5173`). The production UI is embedded in the manager image. No external fonts, CDNs, runtime mock records or WebSockets are required.
 

@@ -34,7 +34,7 @@ docker run --rm -v forklift_metadata:/target -v "$PWD/backup:/backup:ro" alpine:
 docker compose up -d
 ```
 
-Use the actual project-specific volume names. Verify `/ready`, login, user/group counts, Unix IDs and a test account bind before returning to service. Restored sessions may be usable until expiry; invalidate them offline if the backup crossed a trust boundary. A supported session/credential rotation command is planned. Offline file backup instructions are a recovery procedure, not a claim of a tested automatic restore product.
+Use the actual project-specific volume names. Verify `/ready`, login, user/group counts, Unix IDs and a test account bind before returning to service. Restored sessions may be usable until expiry; invalidate them offline if the backup crossed a trust boundary. A supported manager-session/service-credential rotation command is planned; host read credentials can be rotated by exporting a new host bundle. Offline file backup instructions are a recovery procedure, not a claim of a tested automatic restore product.
 
 ## Partial setup
 
@@ -48,7 +48,7 @@ Use the actual project-specific volume names. Verify `/ready`, login, user/group
 
 `docker compose logs --tail=100 manager ldap` shows operational failures. API errors intentionally omit raw LDAP diagnostics and user input. Check service health with `/ready`; `/health` alone does not prove LDAP is reachable. Authentication fails closed if LDAP cannot be reached or administrator membership cannot be verified.
 
-If LDAP reports certificate verification failure, check expiry, certificate SAN `ldap`, CA trust, mounted permissions and the clock. The directory certificate lasts 365 days; the CA lasts ten years. Do not disable verification. Renew certificates offline using the existing CA and the same SAN and restart services. The installer preserves certificates and does not renew them. A signed certificate and its private key must be replaced together; keep file ownership UID/GID 10001 and mode 0600 for the key. Changing the public UI certificate in NPM has no effect on LDAPS trust.
+If LDAP reports certificate verification failure, check expiry, certificate SAN `ldap`, CA trust, mounted permissions and the clock. The directory certificate lasts 365 days; the CA lasts ten years. Do not disable verification. For a directory hostname change or renewal, use `scripts/renew-ldap-certificate.sh your-directory-dns-name` with the existing CA, then restart LDAP. See [Linux clients](linux-clients.md) for private publication and deployment. The installer preserves certificates and does not renew them. A signed certificate and its private key must be replaced together; keep file ownership UID/GID 10001 and mode 0600 for the key. Changing the public UI certificate in NPM has no effect on LDAPS trust.
 
 If login returns Origin rejected, ensure the browser scheme, hostname and port match `FORKLIFT_PUBLIC_URL` exactly, then recreate the manager. HTTPS configuration sets Secure cookies, so use the HTTPS proxy URL rather than the direct HTTP port for browser login. A global login throttle can block new sessions for five minutes; existing sessions continue to work. Restarting the manager does not clear throttling.
 
