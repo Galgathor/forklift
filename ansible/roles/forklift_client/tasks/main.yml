@@ -1,0 +1,113 @@
+---
+- name: Require a supported Ubuntu host and a bundle
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Ubuntu'
+      - ansible_distribution_version in ['22.04', '24.04']
+      - forklift_bundle_dir | length > 0
+      - forklift_bundle_dir is match('^/')
+    fail_msg: Use Ubuntu 22.04/24.04 and an absolute forklift_bundle_dir on the controller.
+
+- name: Install LDAP, PAM, NSS and SSH integration
+  ansible.builtin.apt:
+    name:
+      - sssd-ldap
+      - sssd-tools
+      - libnss-sss
+      - libpam-sss
+      - openssh-server
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create private SSSD configuration directory
+  ansible.builtin.file:
+    path: /etc/sssd
+    state: directory
+    owner: root
+    group: root
+    mode: "0711"
+
+- name: Install the read-only host bind credential and SSSD configuration
+  ansible.builtin.copy:
+    src: "{{ forklift_bundle_dir }}/sssd.conf"
+    dest: /etc/sssd/sssd.conf
+    owner: root
+    group: root
+    mode: "0600"
+    backup: true
+  no_log: true
+  notify: Restart SSSD
+
+- name: Install the directory CA and SSH group policy
+  ansible.builtin.copy:
+    src: "{{ forklift_bundle_dir }}/{{ item.source }}"
+    dest: "{{ item.destination }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { source: ca.crt, destination: /etc/sssd/forklift-ca.crt }
+    - { source: access.conf, destination: /etc/security/forklift-access.conf }
+  notify: Restart SSSD
+
+- name: Add SSSD to NSS identity lookups
+  ansible.builtin.lineinfile:
+    path: /etc/nsswitch.conf
+    regexp: '^({{ item }}:[^\n]*?)(?:\s+sss)?$'
+    line: '\1 sss'
+    backrefs: true
+    backup: true
+  loop: [passwd, group, shadow]
+
+- name: Check whether SSSD and home directory PAM profiles are enabled
+  ansible.builtin.command: grep -q '{{ item }}' /etc/pam.d/common-{{ 'session' if item == 'pam_mkhomedir.so' else 'auth' }}
+  loop: [pam_sss.so, pam_mkhomedir.so]
+  register: forklift_pam_profiles
+  changed_when: false
+  failed_when: forklift_pam_profiles.rc not in [0, 1]
+
+- name: Enable standard SSSD PAM and automatic home directories
+  ansible.builtin.command: pam-auth-update --enable sss --enable mkhomedir
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  when: forklift_pam_profiles.results | selectattr('rc', 'equalto', 1) | list | length > 0
+  changed_when: true
+
+- name: Require the standard Ubuntu SSH PAM account include
+  ansible.builtin.command: grep -q '^@include common-account' /etc/pam.d/sshd
+  changed_when: false
+
+- name: Enforce permitted groups for LDAP SSH users and preserve local recovery users
+  ansible.builtin.blockinfile:
+    path: /etc/pam.d/sshd
+    insertbefore: "^@include common-account"
+    marker: "# {mark} FORKLIFT SSH GROUP ACCESS"
+    block: "{{ lookup('ansible.builtin.file', forklift_bundle_dir + '/sshd-pam.conf') }}"
+    backup: true
+
+- name: Install PAM-enabled SSH password authentication
+  ansible.builtin.copy:
+    src: "{{ forklift_bundle_dir }}/sshd.conf"
+    dest: /etc/ssh/sshd_config.d/00-forklift.conf
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  notify: Reload SSH
+
+- name: Validate SSSD configuration before service changes
+  ansible.builtin.command: sssctl config-check
+  changed_when: false
+
+- name: Validate complete SSH configuration before service changes
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+
+- name: Ensure client services are enabled and running
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [sssd, ssh]
+  when: forklift_manage_services | bool

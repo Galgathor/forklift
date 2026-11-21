@@ -1,0 +1,4 @@
+---
+# Absolute directory on the Ansible controller containing an extracted host bundle.
+forklift_bundle_dir: ""
+forklift_manage_services: true

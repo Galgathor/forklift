@@ -1,0 +1,6 @@
+# Optional: publish LDAPS separately from the management WebUI.
+# Use a private LAN address and restrict port access to your Linux clients.
+services:
+  ldap:
+    ports:
+      - '${FORKLIFT_LDAPS_BIND:?Set FORKLIFT_LDAPS_BIND to a private host address}:${FORKLIFT_LDAPS_PORT:-636}:636'

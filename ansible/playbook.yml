@@ -1,0 +1,6 @@
+---
+- name: Configure Forklift Linux authentication
+  hosts: forklift_clients
+  become: true
+  roles:
+    - forklift_client

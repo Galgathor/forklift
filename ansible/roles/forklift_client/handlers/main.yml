@@ -1,0 +1,12 @@
+---
+- name: Restart SSSD
+  ansible.builtin.service:
+    name: sssd
+    state: restarted
+  when: forklift_manage_services | bool
+
+- name: Reload SSH
+  ansible.builtin.service:
+    name: ssh
+    state: reloaded
+  when: forklift_manage_services | bool

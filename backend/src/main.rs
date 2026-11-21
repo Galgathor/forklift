@@ -1,3 +1,4 @@
+mod hosts;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -463,7 +464,7 @@ async fn overview(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
         stmt.query_map([],|r|Ok(json!({"at":r.get::<_,i64>(0)?,"actor":r.get::<_,String>(1)?,"action":r.get::<_,String>(2)?,"target":r.get::<_,String>(3)?}))).map_err(anyhow::Error::from)?.collect::<std::result::Result<Vec<_>,_>>().map_err(anyhow::Error::from)?
     };
     Ok(Json(
-        json!({"directory":config(&a),"users":users,"groups":groups,"events":events,"ldap":"connected"}),
+        json!({"directory":config(&a),"users":users,"groups":groups,"events":events,"ldap":"connected","hosts":hosts::list(&a)?}),
     ))
 }
 #[derive(Deserialize)]
@@ -698,6 +699,11 @@ async fn save_group(
             return Err(bad("Unknown group member"));
         }
     }
+    if old != p.name && hosts::group_in_use(&a, &old)? {
+        return Err(bad(
+            "Group is referenced by host access rules; update the hosts before renaming it",
+        ));
+    }
     let dn = format!("cn={old},ou=groups,{b}");
     let exists = search(&mut l, &format!("ou=groups,{b}"), &format!("(cn={old})")).await?;
     audit(&a, &who, "attempt save group", &p.name)?;
@@ -762,6 +768,9 @@ async fn delete_group(
     {
         return Err(bad("Group is a primary group for existing users"));
     }
+    if hosts::group_in_use(&a, &id)? {
+        return Err(bad("Group is referenced by host access rules"));
+    }
     audit(&a, &who, "attempt delete group", &id)?;
     l.delete(&format!("cn={id},ou=groups,{b}"))
         .await?
@@ -774,10 +783,11 @@ async fn main() -> anyhow::Result<()> {
     let db = Connection::open("/data/forklift.db")?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     anyhow::ensure!(
-        version <= 1,
+        version <= 2,
         "Metadata was created by a newer Forklift release; refusing downgrade"
     );
-    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,username TEXT NOT NULL,csrf TEXT NOT NULL,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempts(at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL); CREATE TABLE IF NOT EXISTS allocator(value INTEGER NOT NULL); INSERT INTO allocator SELECT 10000 WHERE NOT EXISTS(SELECT 1 FROM allocator); PRAGMA user_version=1;")?;
+    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,username TEXT NOT NULL,csrf TEXT NOT NULL,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempts(at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL); CREATE TABLE IF NOT EXISTS allocator(value INTEGER NOT NULL); INSERT INTO allocator SELECT 10000 WHERE NOT EXISTS(SELECT 1 FROM allocator);")?;
+    hosts::migrate(&db)?;
     let url = std::env::var("FORKLIFT_PUBLIC_URL")
         .unwrap_or("http://localhost:8080".into())
         .trim_end_matches('/')
@@ -807,6 +817,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/me", get(me))
         .route("/api/logout", post(logout))
         .route("/api/overview", get(overview))
+        .route("/api/hosts", get(hosts::index).post(hosts::create))
+        .route("/api/hosts/{id}", put(hosts::update).delete(hosts::delete))
+        .route("/api/hosts/{id}/bundle", post(hosts::bundle))
         .route("/api/users", post(save_user))
         .route("/api/users/{id}", axum::routing::delete(delete_user))
         .route("/api/groups/{id}", put(save_group).delete(delete_group))
