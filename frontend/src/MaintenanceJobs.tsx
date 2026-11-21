@@ -1,3 +1,4 @@
+import { Help } from "./Help";
 import {
   createContext,
   useContext,
@@ -136,20 +137,23 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
         aria-label="Directory maintenance"
       >
         <div className="panel-title">
-          <h2>
-            {completed
-              ? "Maintenance complete"
-              : recovery
-                ? "Maintenance needs recovery"
-                : "Directory maintenance"}
-          </h2>
+          <div className="heading-help">
+            <h2>
+              {completed
+                ? "Maintenance complete"
+                : recovery
+                  ? "Maintenance needs recovery"
+                  : "Directory maintenance"}
+            </h2>
+            <Help label="Maintenance availability">
+              Forklift coordinates directory writes and consistent storage
+              snapshots. The management interface stays available. Configured
+              replicas continue authentication independently.
+            </Help>
+          </div>
           {completed ? <CheckCircle2 /> : <Activity />}
         </div>
-        <p className="hint">
-          Forklift coordinates directory writes and consistent storage
-          snapshots. The management interface stays available. Configured
-          replicas continue authentication independently.
-        </p>
+
         <div className={completed ? "pill" : "badge"} role="status">
           {job?.action?.replaceAll("-", " ") || "Preparing operation"} ·{" "}
           {job?.status.replaceAll("_", " ") || "Connecting"}
@@ -187,10 +191,10 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
         {job?.result?.sha256 && (
           <div className="recovery-review">
             <strong>Trusted backup receipt</strong>
-            <p className="hint">
+            <Help label="Trusted backup receipts">
               Save this checksum separately from the encrypted archive. You will
               need it to verify a future recovery.
-            </p>
+            </Help>
             <code>{job.result.sha256}</code>
             <button
               className="secondary"

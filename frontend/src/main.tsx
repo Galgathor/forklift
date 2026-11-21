@@ -1,3 +1,4 @@
+import { Help, FieldHelp } from "./Help";
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -406,10 +407,10 @@ function App() {
                           <dd>Certificate-verified TLS</dd>
                         </div>
                       </dl>
-                      <p className="hint">
+                      <Help label="Directory health checks">
                         LDAP connectivity and replication context are checked on
                         refresh and every 30 seconds while viewing this page.
-                      </p>
+                      </Help>
                     </section>
                     <section className="panel">
                       <div className="panel-title">
@@ -682,10 +683,10 @@ function App() {
                     modal.entry ? attr(modal.entry, "uid") : "",
                   )}
                   {modal.entry && (
-                    <p className="hint">
+                    <Help label="Usernames">
                       Keep the username unchanged. Renaming Unix accounts is not
                       supported.
-                    </p>
+                    </Help>
                   )}
                   {field(
                     "display_name",
@@ -732,29 +733,37 @@ function App() {
                       </select>
                     </label>
                   </div>
-                  <label>
-                    Primary group
-                    <select
-                      name="gid"
-                      required
-                      defaultValue={
-                        modal.entry ? attr(modal.entry, "gidNumber") : ""
-                      }
-                    >
-                      <option value="" disabled>
-                        Select a primary group
-                      </option>
-                      {data?.groups.map((g) => (
-                        <option key={g.dn} value={attr(g, "gidNumber")}>
-                          {attr(g, "cn")} · {attr(g, "gidNumber")}
+                  <FieldHelp
+                    label="Primary and supplemental groups"
+                    help={
+                      <>
+                        Primary and supplemental groups both count for SSH
+                        access. Choose a general user group for ordinary
+                        accounts.
+                      </>
+                    }
+                  >
+                    <label>
+                      <span className="field-name">Primary group</span>
+                      <select
+                        name="gid"
+                        required
+                        defaultValue={
+                          modal.entry ? attr(modal.entry, "gidNumber") : ""
+                        }
+                      >
+                        <option value="" disabled>
+                          Select a primary group
                         </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="hint">
-                    Primary and supplemental groups both count for SSH access.
-                    Choose a general user group for ordinary accounts.
-                  </p>
+                        {data?.groups.map((g) => (
+                          <option key={g.dn} value={attr(g, "gidNumber")}>
+                            {attr(g, "cn")} · {attr(g, "gidNumber")}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </FieldHelp>
+
                   {field(
                     "password",
                     modal.entry
@@ -764,11 +773,11 @@ function App() {
                     "password",
                     !modal.entry,
                   )}
-                  <p className="hint">
+                  <Help label="Disabling accounts and Unix IDs">
                     Disabling removes the password and expires the account. Set
                     a new password when enabling it again. Unix IDs are
                     allocated automatically and never reused.
-                  </p>
+                  </Help>
                   <label className="checkbox">
                     <input
                       name="disabled"
@@ -803,11 +812,11 @@ function App() {
                     "text",
                     false,
                   )}
-                  <p className="hint">
+                  <Help label="Group membership">
                     Add existing usernames. POSIX GIDs are allocated
                     automatically. Host access policies are managed in the Hosts
                     section.
-                  </p>
+                  </Help>
                 </>
               )}
               <button className="primary" disabled={busy || data?.read_only}>

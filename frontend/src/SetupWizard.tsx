@@ -1,3 +1,4 @@
+import { Help, FieldHelp } from "./Help";
 import { useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { useMaintenance } from "./MaintenanceJobs";
@@ -46,10 +47,13 @@ export function SetupWizard({ api, completed }: Props) {
           />
           forklift
         </div>
-        <h1>{restore ? "Restore your directory" : "Set up Forklift"}</h1>
-        <p className="hint">
-          Configure the primary directory or restore a backup.
-        </p>
+        <div className="heading-help">
+          <h1>{restore ? "Restore your directory" : "Set up Forklift"}</h1>
+          <Help label="Initial setup">
+            Configure the primary directory or restore a backup.
+          </Help>
+        </div>
+
         {error && (
           <div className="error" role="alert">
             {error}
@@ -68,21 +72,28 @@ export function SetupWizard({ api, completed }: Props) {
               });
             }}
           >
-            <label>
-              One-time installation key
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                required
-                autoComplete="current-password"
-              />
-            </label>
-            <p className="hint">
-              Use the key chosen in your Docker deployment settings. If you left
-              it blank, the initializer generated a key in its local container
-              log.
-            </p>
+            <FieldHelp
+              label="Installation key"
+              help={
+                <>
+                  Use the key chosen in your Docker deployment settings. If you
+                  left it blank, the initializer generated a key in its local
+                  container log.
+                </>
+              }
+            >
+              <label>
+                <span className="field-name">One-time installation key</span>
+                <input
+                  type="password"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
+              </label>
+            </FieldHelp>
+
             <button className="primary" disabled={busy}>
               {busy
                 ? "Checking storage and directory readiness…"
@@ -95,13 +106,16 @@ export function SetupWizard({ api, completed }: Props) {
             <div className="pill">
               <CheckCircle2 size={15} /> Storage and supervisor ready
             </div>
-            <h2>Your primary directory server</h2>
-            <p className="hint">
-              Select the private address of this Docker host. Linux clients and
-              future replicas will connect here. Its encrypted listener and
-              certificate are configured automatically; you do not need an
-              existing LDAP endpoint.
-            </p>
+            <div className="heading-help">
+              <h2>Your primary directory server</h2>
+              <Help label="Primary directory server">
+                Select the private address of this Docker host. Linux clients
+                and future replicas will connect here. Its encrypted listener
+                and certificate are configured automatically; you do not need an
+                existing LDAP endpoint.
+              </Help>
+            </div>
+
             <label>
               Private interface
               <select
@@ -121,39 +135,54 @@ export function SetupWizard({ api, completed }: Props) {
                 ))}
               </select>
             </label>
-            <label>
-              Server address (IP or optional DNS name)
-              <input
-                value={network.hostname}
-                onChange={(e) =>
-                  setNetwork({ ...network, hostname: e.target.value.trim() })
-                }
-                required
-              />
-            </label>
-            <p className="hint">
-              The private IP needs no DNS changes. If you choose a DNS name,
-              point it to this interface in your network DNS.
-            </p>
-            <details>
-              <summary>Advanced: encrypted directory port</summary>
+            <FieldHelp
+              label="Directory server address"
+              help={
+                <>
+                  The private IP needs no DNS changes. If you choose a DNS name,
+                  point it to this interface in your network DNS.
+                </>
+              }
+            >
               <label>
-                Directory port
+                <span className="field-name">
+                  Server address (IP or optional DNS name)
+                </span>
                 <input
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={network.port}
+                  value={network.hostname}
                   onChange={(e) =>
-                    setNetwork({ ...network, port: Number(e.target.value) })
+                    setNetwork({ ...network, hostname: e.target.value.trim() })
                   }
+                  required
                 />
               </label>
-              <p className="hint">
-                Default 1636 avoids privileged host ports. Keep this port
-                reachable on your private network; LDAP traffic does not use
-                NPM’s HTTP proxy.
-              </p>
+            </FieldHelp>
+
+            <details>
+              <summary>Advanced: encrypted directory port</summary>
+              <FieldHelp
+                label="Directory port"
+                help={
+                  <>
+                    Default 1636 avoids privileged host ports. Keep this port
+                    reachable on your private network; LDAP traffic does not use
+                    NPM’s HTTP proxy.
+                  </>
+                }
+              >
+                <label>
+                  <span className="field-name">Directory port</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={network.port}
+                    onChange={(e) =>
+                      setNetwork({ ...network, port: Number(e.target.value) })
+                    }
+                  />
+                </label>
+              </FieldHelp>
             </details>
             <div className="wizard-actions">
               <button className="secondary" onClick={() => setStep(0)}>
@@ -214,21 +243,30 @@ export function SetupWizard({ api, completed }: Props) {
                     maxLength={100}
                   />
                 </label>
-                <label>
-                  Directory base DN
-                  <input
-                    name="base"
-                    defaultValue="dc=homelab,dc=internal"
-                    required
-                  />
-                  <small>The base DN cannot be changed after setup.</small>
-                </label>
+                <FieldHelp
+                  label="Directory base DN"
+                  help={
+                    <>
+                      The base DN identifies the root of your directory, such as
+                      dc=example,dc=test. It cannot be changed after setup.
+                    </>
+                  }
+                >
+                  <label>
+                    <span className="field-name">Directory base DN</span>
+                    <input
+                      name="base"
+                      defaultValue="dc=homelab,dc=internal"
+                      required
+                    />
+                  </label>
+                </FieldHelp>
                 <label>
                   Administrator username
                   <input name="username" required autoComplete="username" />
                 </label>
                 <label>
-                  Administrator password
+                  <span className="field-name">Administrator password</span>
                   <input
                     name="password"
                     type="password"
@@ -237,11 +275,12 @@ export function SetupWizard({ api, completed }: Props) {
                     autoComplete="new-password"
                   />
                 </label>
-                <p className="hint">
+                <Help label="Primary host registration">
                   Primary: {network.hostname}:{network.port}. It will
                   automatically appear in Hosts. Registration does not install
                   SSH authentication or grant login privileges.
-                </p>
+                </Help>
+
                 <button className="primary" disabled={busy || jobs.active}>
                   {busy ? "Creating your directory…" : "Initialize directory"}
                 </button>

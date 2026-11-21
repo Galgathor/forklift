@@ -1,3 +1,4 @@
+import { Help } from "./Help";
 import { useEffect, useState } from "react";
 import { StorageControls, type DirectoryNetwork } from "./StorageControls";
 import { Download, RefreshCw, ShieldCheck } from "lucide-react";
@@ -150,13 +151,16 @@ export function Operations({
       </section>
       <StorageControls csrf={csrf} api={api} network={directory.network} />
       <section className="panel">
-        <h2>Certificate lifecycle</h2>
-        <p className="hint">
-          Configured public certificates and stored replica pins. These expiry
-          dates do not prove a remote node has deployed a certificate. Primary
-          renewal preserves the CA; replica changes require staged trust and
-          client redeployment.
-        </p>
+        <div className="heading-help">
+          <h2>Certificate lifecycle</h2>
+          <Help label="Certificate lifecycle">
+            Configured public certificates and stored replica pins. These expiry
+            dates do not prove a remote node has deployed a certificate. Primary
+            renewal preserves the CA; replica changes require staged trust and
+            client redeployment.
+          </Help>
+        </div>
+
         <div className="table-scroll">
           <table>
             <thead>
@@ -193,12 +197,15 @@ export function Operations({
         </div>
       </section>
       <section className="panel">
-        <h2>Maintenance history</h2>
-        <p className="hint">
-          Maintenance results recorded in this installation. Keep backup
-          receipts outside the host; restoring a snapshot also restores its
-          historical audit records.
-        </p>
+        <div className="heading-help">
+          <h2>Maintenance history</h2>
+          <Help label="Maintenance history">
+            Maintenance results recorded in this installation. Keep backup
+            receipts outside the host; restoring a snapshot also restores its
+            historical audit records.
+          </Help>
+        </div>
+
         {!status?.maintenance.length ? (
           <p className="muted">No maintenance operations recorded.</p>
         ) : (
@@ -247,11 +254,11 @@ export function Operations({
             </button>
           </form>
         </div>
-        <p className="hint">
+        <Help label="Audit exports">
           Newest first. Exports contain up to 5,000 matching events; use the
           X-Next-Cursor response header to retrieve older export pages through
           the API.
-        </p>
+        </Help>
         <a
           className="secondary download-link"
           href={"/api/audit/export?q=" + encodeURIComponent(search)}

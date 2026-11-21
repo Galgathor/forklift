@@ -1,3 +1,4 @@
+import { Help, FieldHelp } from "./Help";
 import { useState } from "react";
 import { X } from "lucide-react";
 type Set = {
@@ -42,17 +43,20 @@ export function DnsImport({
         aria-label="Import DNS records"
       >
         <div className="panel-title">
-          <h2>Import DNS records</h2>
+          <div className="heading-help">
+            <h2>Import DNS records</h2>
+            <Help label="Supported import files">
+              Import Forklift JSON exports or PowerDNS zone JSON containing
+              name/zone and rrsets. BIND text and server configuration
+              directives are not imported. SOA is preserved; edit its settings
+              separately. Maximum file size: 240 KiB.
+            </Help>
+          </div>
           <button disabled={busy} aria-label="Close DNS import" onClick={close}>
             <X />
           </button>
         </div>
-        <p className="hint">
-          Import Forklift JSON exports or PowerDNS zone JSON containing
-          name/zone and rrsets. BIND text and server configuration directives
-          are not imported. SOA is preserved; edit its settings separately.
-          Maximum file size: 240 KiB.
-        </p>
+
         {error && (
           <div className="error" role="alert">
             {error}
@@ -97,29 +101,36 @@ export function DnsImport({
               }}
             />
           </label>
-          <label>
-            Import behavior
-            <select
-              aria-label="Import behavior"
-              disabled={busy}
-              value={mode}
-              onChange={(e) => {
-                setMode(e.target.value);
-                setPreview(null);
-              }}
-            >
-              <option value="merge">
-                Merge values; preserve existing TTLs and disabled flags
-              </option>
-              <option value="replace">Replace listed record sets</option>
-            </select>
-          </label>
-          <p className="hint">
-            Unlisted record sets remain. Replacing a listed set can remove
-            values. Forward and reverse imports are separate; no PTRs are
-            created automatically. Changed sets release automatic PTR/host
-            ownership and may need review in Hosts.
-          </p>
+          <FieldHelp
+            label="Import behavior"
+            help={
+              <>
+                Unlisted record sets remain. Replacing a listed set can remove
+                values. Forward and reverse imports are separate; no PTRs are
+                created automatically. Changed sets release automatic PTR/host
+                ownership and may need review in Hosts.
+              </>
+            }
+          >
+            <label>
+              <span className="field-name">Import behavior</span>
+              <select
+                aria-label="Import behavior"
+                disabled={busy}
+                value={mode}
+                onChange={(e) => {
+                  setMode(e.target.value);
+                  setPreview(null);
+                }}
+              >
+                <option value="merge">
+                  Merge values; preserve existing TTLs and disabled flags
+                </option>
+                <option value="replace">Replace listed record sets</option>
+              </select>
+            </label>
+          </FieldHelp>
+
           <button className="secondary" disabled={busy || !file}>
             {busy ? "Checking…" : "Preview DNS import"}
           </button>
@@ -215,11 +226,11 @@ export function DnsImport({
                 />
                 I reviewed these DNS record changes.
               </label>
-              <p className="hint">
+              <Help label="Interrupted imports">
                 Changes across record sets can partially succeed. Pending DNS
                 changes provide safe retry or explicit retention of
                 already-applied values.
-              </p>
+              </Help>
               <button
                 className="primary"
                 disabled={

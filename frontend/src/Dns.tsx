@@ -1,3 +1,4 @@
+import { Help, FieldHelp } from "./Help";
 import { useEffect, useState } from "react";
 import { DnsServers } from "./DnsServers";
 import { DnsImport } from "./DnsImport";
@@ -106,7 +107,14 @@ export function Dns({ api }: { api: Api }) {
       )}
       <section className="panel">
         <div className="panel-title">
-          <h2>DNS overview</h2>
+          <div className="heading-help">
+            <h2>DNS overview</h2>
+            <Help label="DNS service checks">
+              The probe queries PowerDNS inside its container. Client network
+              reachability depends on the published DNS address, port and
+              firewall. DNS continues serving if Forklift is offline.
+            </Help>
+          </div>
           <button
             aria-label="Refresh DNS"
             disabled={busy}
@@ -168,11 +176,7 @@ export function Dns({ api }: { api: Api }) {
                 </dd>
               </div>
             </dl>
-            <p className="hint">
-              The probe queries PowerDNS inside its container. Client network
-              reachability depends on the published DNS address, port and
-              firewall. DNS continues serving if Forklift is offline.
-            </p>
+
             <button
               className="secondary"
               disabled={busy || !overview.available}
@@ -251,10 +255,10 @@ export function Dns({ api }: { api: Api }) {
                     Keep records; close cleanup
                   </button>
                 ) : (
-                  <p className="hint">
+                  <Help label="Retrying host DNS">
                     Review desired names, addresses and pending changes in Hosts
                     before retrying.
-                  </p>
+                  </Help>
                 )}
               </div>
             </div>
@@ -263,12 +267,15 @@ export function Dns({ api }: { api: Api }) {
       )}
       {!!overview?.changes.length && (
         <section className="panel">
-          <h2>Pending DNS changes</h2>
-          <p className="hint">
-            Forward and reverse changes can partially succeed. Retry checks
-            current record sets before applying missing steps. Review and keep
-            applied steps if you need to resolve a conflict manually.
-          </p>
+          <div className="heading-help">
+            <h2>Pending DNS changes</h2>
+            <Help label="Pending DNS changes">
+              Forward and reverse changes can partially succeed. Retry checks
+              current record sets before applying missing steps. Review and keep
+              applied steps if you need to resolve a conflict manually.
+            </Help>
+          </div>
+
           {overview.changes.map((c) => (
             <div className="event" key={c.id}>
               <div>
@@ -710,24 +717,31 @@ function ZoneForm({
           />
         </label>
         {kind === "reverse4" && (
-          <p className="hint">
+          <Help label="Reverse DNS networks">
             Use aligned /8, /16 or /24 RFC1918 networks. 192.168.1.0/24 becomes
             1.168.192.in-addr.arpa.
-          </p>
+          </Help>
         )}
         <label>
           Primary nameserver
           <input name="nameserver" required placeholder="ns1.example.test." />
         </label>
-        <label>
-          Nameserver address
-          <input name="nameserver_address" placeholder="192.168.1.2" />
-        </label>
-        <p className="hint">
-          An in-zone nameserver requires an address. This creates its A or AAAA
-          record. Additional nameservers can be added by editing the NS record
-          set.
-        </p>
+        <FieldHelp
+          label="Nameserver addresses"
+          help={
+            <>
+              An in-zone nameserver requires an address. This creates its A or
+              AAAA record. Additional nameservers can be added by editing the NS
+              record set.
+            </>
+          }
+        >
+          <label>
+            <span className="field-name">Nameserver address</span>
+            <input name="nameserver_address" placeholder="192.168.1.2" />
+          </label>
+        </FieldHelp>
+
         <label>
           Initial TTL (seconds)
           <input
@@ -785,19 +799,26 @@ function RecordForm({
           });
         }}
       >
-        <label>
-          Record name
-          <input
-            name="name"
-            defaultValue={record?.name || ""}
-            readOnly={!!record}
-            placeholder="monolith or @"
-          />
-        </label>
-        <p className="hint">
-          Relative names belong to {zone.name} Use @ for the zone apex. A fully
-          qualified name must end in this zone.
-        </p>
+        <FieldHelp
+          label="DNS record names"
+          help={
+            <>
+              Relative names belong to {zone.name} Use @ for the zone apex. A
+              fully qualified name must end in this zone.
+            </>
+          }
+        >
+          <label>
+            <span className="field-name">Record name</span>
+            <input
+              name="name"
+              defaultValue={record?.name || ""}
+              readOnly={!!record}
+              placeholder="monolith or @"
+            />
+          </label>
+        </FieldHelp>
+
         <label>
           Record type
           <select
@@ -824,23 +845,30 @@ function RecordForm({
             required
           />
         </label>
-        <label>
-          Record values
-          <textarea
-            aria-label="Record values"
-            name="values"
-            rows={5}
-            defaultValue={
-              record?.records.map((r) => r.content).join("\n") || ""
-            }
-            required
-          />
-        </label>
-        <p className="hint">
-          One value per line. This edits the complete record set; retain values
-          you want to keep. TXT: "text". MX: 10 mail.example. SRV: 0 5 389
-          ldap.example. Targets use full DNS names.
-        </p>
+        <FieldHelp
+          label="DNS record values"
+          help={
+            <>
+              One value per line. This edits the complete record set; retain
+              values you want to keep. TXT: "text". MX: 10 mail.example. SRV: 0
+              5 389 ldap.example. Targets use full DNS names.
+            </>
+          }
+        >
+          <label>
+            <span className="field-name">Record values</span>
+            <textarea
+              aria-label="Record values"
+              name="values"
+              rows={5}
+              defaultValue={
+                record?.records.map((r) => r.content).join("\n") || ""
+              }
+              required
+            />
+          </label>
+        </FieldHelp>
+
         {(type === "A" || type === "AAAA") && (
           <label className="checkbox">
             <input
@@ -851,11 +879,11 @@ function RecordForm({
             Manage matching PTR records
           </label>
         )}
-        <p className="hint">
+        <Help label="Automatic PTR records">
           Automatic PTR requires a matching managed reverse zone.
           Forward/reverse writes can partially succeed; pending changes provide
           safe retries. Manually edited PTR values are preserved.
-        </p>
+        </Help>
         <button className="primary" disabled={busy}>
           Save record set
         </button>
@@ -882,10 +910,10 @@ function SoaForm({
   const parts = record?.records[0]?.content.split(/\s+/) || [];
   return (
     <Dialog title="DNS zone settings" close={close} error={error}>
-      <p className="hint">
+      <Help label="Zone serials and replication">
         SOA serials increase automatically on API changes. Assign this zone to a
         DNS secondary in DNS servers to enable authenticated transfers.
-      </p>
+      </Help>
       <form
         onSubmit={(e) => {
           e.preventDefault();

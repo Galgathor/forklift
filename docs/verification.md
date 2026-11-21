@@ -80,3 +80,7 @@ This host's firewall blocks Docker-bridge-to-host listeners. HTTPS/replica/clien
 ## Limits
 
 Single Docker host tests simulate independent machines with separate storage and processes. Physically separate hosts/VMs, Ubuntu 22.04, full systemd boots, multiple simultaneous replicas, multi-architecture builds, large/load testing, long partitions, CA-root rotation and independent security auditing remain unverified. Metadata schema5 remains a deliberate break from 0.4 storage. New backups use archive3; archive2 is verification-only in the current full-installation restore flow. No production certification or automatic primary promotion is implied.
+
+## Contextual WebUI help
+
+Supporting explanations and deployment instructions use shared information popovers beside headings and fields. Field labels, operational data, errors, import warnings and destructive confirmations remain visible. The TypeScript/Vite build and Chromium suite verify click/keyboard opening, Escape and focus return, outside dismissal, one-open-at-a-time behavior, mobile viewport bounds, dark/light themes and existing setup/DNS/host/backup flows. The popovers use the browser's native Popover API and require a current browser.

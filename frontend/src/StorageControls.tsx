@@ -1,3 +1,4 @@
+import { Help, FieldHelp } from "./Help";
 import { useEffect, useState } from "react";
 import { Download, KeyRound, RefreshCw } from "lucide-react";
 import { useMaintenance } from "./MaintenanceJobs";
@@ -62,14 +63,17 @@ export function StorageControls({
   return (
     <>
       <section className="panel">
-        <h2>Backups & recovery</h2>
-        <p className="hint">
-          Backups contain LDAP data, primary DNS data, matching metadata and
-          installation secrets. Forklift pauses directory writes and drains
-          application requests. DNS keeps serving while its SQLite online
-          snapshot is captured into the encrypted archive. Keep the recovery key
-          and trusted checksum in separate protected storage.
-        </p>
+        <div className="heading-help">
+          <h2>Backups & recovery</h2>
+          <Help label="Backup scope">
+            Backups contain LDAP data, primary DNS data, matching metadata and
+            installation secrets. Forklift pauses directory writes and drains
+            application requests. DNS keeps serving while its SQLite online
+            snapshot is captured into the encrypted archive. Keep the recovery
+            key and trusted checksum in separate protected storage.
+          </Help>
+        </div>
+
         {error && (
           <div className="error" role="alert">
             {error}
@@ -184,12 +188,15 @@ export function StorageControls({
         <BackupRestore csrf={csrf} network={network} />
       </section>
       <section className="panel">
-        <h2>WebUI address</h2>
-        <p className="hint">
-          Configure DNS and your NPM HTTPS Proxy Host first. Applying a new
-          public origin revokes sessions and opens the new address. The
-          management port mapping is part of initial Docker deployment.
-        </p>
+        <div className="heading-help">
+          <h2>WebUI address</h2>
+          <Help label="WebUI address">
+            Configure DNS and your NPM HTTPS Proxy Host first. Applying a new
+            public origin revokes sessions and opens the new address. The
+            management port mapping is part of initial Docker deployment.
+          </Help>
+        </div>
+
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -223,13 +230,16 @@ export function StorageControls({
         </form>
       </section>
       <section className="panel">
-        <h2>Directory credentials & network</h2>
-        <p className="hint">
-          These actions run through the constrained maintenance service. No
-          Docker or shell access is granted to the manager. Credential rotation
-          revokes all administrator sessions and verifies the new LDAP bind
-          before completing.
-        </p>
+        <div className="heading-help">
+          <h2>Directory credentials & network</h2>
+          <Help label="Directory maintenance">
+            These actions run through the constrained maintenance service. No
+            Docker or shell access is granted to the manager. Credential
+            rotation revokes all administrator sessions and verifies the new
+            LDAP bind before completing.
+          </Help>
+        </div>
+
         <button
           className="secondary"
           disabled={busy}
@@ -443,14 +453,18 @@ export function BackupRestore({
   }
   return (
     <>
-      <h2>Verify or restore a backup</h2>
-      <p className="hint">
-        Verification checks age authentication, file hashes, SQLite integrity,
-        native LDAP readability and the supported DNS schema before replacement.
-        Legacy LDAP-only archives can be verified; a full installation restore
-        requires an archive that includes primary DNS. The private recovery key
-        is held only for this operation and never saved to the metadata or logs.
-      </p>
+      <div className="heading-help">
+        <h2>Verify or restore a backup</h2>
+        <Help label="Backup verification">
+          Verification checks age authentication, file hashes, SQLite integrity,
+          native LDAP readability and the supported DNS schema before
+          replacement. Legacy LDAP-only archives can be verified; a full
+          installation restore requires an archive that includes primary DNS.
+          The private recovery key is held only for this operation and never
+          saved to the metadata or logs.
+        </Help>
+      </div>
+
       {error && (
         <div className="error" role="alert">
           {error}
@@ -498,27 +512,34 @@ export function BackupRestore({
       </button>
       <details>
         <summary>Restore and replace this installation</summary>
-        <p className="hint">
+        <Help label="Restoring an installation">
           The current installation is snapshotted for rollback before
           replacement. Fence the original LDAP/DNS primary services and every
           old directory/DNS replica before starting a recovered installation.
           Archived passwords may restore access revoked after the backup.
-        </p>
-        <label>
-          Future UID/GID floor
-          <input
-            type="number"
-            min={10001}
-            max={2147483647}
-            value={floor}
-            onChange={(e) => setFloor(Number(e.target.value))}
-          />
-        </label>
-        <p className="hint">
-          Choose a value above every ID ever allocated, including accounts
-          created and deleted after this snapshot. Forklift cannot reconstruct
-          missing allocation history.
-        </p>
+        </Help>
+        <FieldHelp
+          label="Future UID and GID floor"
+          help={
+            <>
+              Choose a value above every ID ever allocated, including accounts
+              created and deleted after this snapshot. Forklift cannot
+              reconstruct missing allocation history.
+            </>
+          }
+        >
+          <label>
+            <span className="field-name">Future UID/GID floor</span>
+            <input
+              type="number"
+              min={10001}
+              max={2147483647}
+              value={floor}
+              onChange={(e) => setFloor(Number(e.target.value))}
+            />
+          </label>
+        </FieldHelp>
+
         <label className="checkbox">
           <input
             type="checkbox"

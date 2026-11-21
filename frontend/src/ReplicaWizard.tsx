@@ -1,3 +1,4 @@
+import { Help, FieldHelp } from "./Help";
 import { useEffect, useState } from "react";
 import { Copy, X, CheckCircle2 } from "lucide-react";
 import type { DirectoryHealth, DirectoryNode } from "./Servers";
@@ -87,26 +88,29 @@ export function ReplicaWizard({
       >
         <div className="panel-title">
           <div>
-            <h2>Add a replica</h2>
+            <div className="heading-help">
+              <h2>Add a replica</h2>
+              <Help label="Replica prerequisites">
+                The new machine needs Linux and Docker. Its primary connection
+                is inherited from setup.
+              </Help>
+            </div>
           </div>
           <button aria-label="Close setup" onClick={close}>
             <X />
           </button>
         </div>
-        <p className="setup-intro">
-          The new machine needs Linux and Docker. Its primary connection is
-          inherited from setup.
-        </p>
+
         {error && (
           <div className="error" role="alert">
             {error}
           </div>
         )}
         {setup && (
-          <p className="hint">
+          <Help label="Inherited replica settings">
             Copies from {setup.primary.endpoint}. Enrolls through{" "}
             {setup.manager_url}. These settings are inherited automatically.
-          </p>
+          </Help>
         )}
         {setup && !setup.https_ready && (
           <div className="error" role="status">
@@ -143,19 +147,26 @@ export function ReplicaWizard({
           </label>
           <details>
             <summary>Advanced: DNS name and ports</summary>
-            <label>
-              Stable DNS name (optional)
-              <input
-                value={hostname}
-                onChange={(e) => setHostname(e.target.value.trim())}
-                placeholder="Leave blank to use the private IP"
-                readOnly={!!created}
-              />
-            </label>
-            <p className="hint">
-              A private IP needs no DNS record. If you choose a name, make it
-              resolve to this private address.
-            </p>
+            <FieldHelp
+              label="Replica DNS names"
+              help={
+                <>
+                  A private IP needs no DNS record. If you choose a name, make
+                  it resolve to this private address.
+                </>
+              }
+            >
+              <label>
+                <span className="field-name">Stable DNS name (optional)</span>
+                <input
+                  value={hostname}
+                  onChange={(e) => setHostname(e.target.value.trim())}
+                  placeholder="Leave blank to use the private IP"
+                  readOnly={!!created}
+                />
+              </label>
+            </FieldHelp>
+
             <label>
               Encrypted directory port
               <input
@@ -181,28 +192,34 @@ export function ReplicaWizard({
           </details>
           <details>
             <summary>Private HTTPS certificate authority (optional)</summary>
-            <label>
-              WebUI HTTPS CA certificate
-              <textarea
-                value={managerCa}
-                onChange={(e) => setManagerCa(e.target.value)}
-                rows={4}
-                placeholder="-----BEGIN CERTIFICATE-----"
-                spellCheck={false}
-              />
-            </label>
-            <p className="hint">
-              Leave blank for a publicly trusted WebUI certificate. For private
-              PKI, paste its public CA certificate here. Never paste a private
-              key.
-            </p>
+            <FieldHelp
+              label="Private HTTPS trust"
+              help={
+                <>
+                  Leave blank for a publicly trusted WebUI certificate. For
+                  private PKI, paste its public CA certificate here. Never paste
+                  a private key.
+                </>
+              }
+            >
+              <label>
+                <span className="field-name">WebUI HTTPS CA certificate</span>
+                <textarea
+                  value={managerCa}
+                  onChange={(e) => setManagerCa(e.target.value)}
+                  rows={4}
+                  placeholder="-----BEGIN CERTIFICATE-----"
+                  spellCheck={false}
+                />
+              </label>
+            </FieldHelp>
           </details>
-          <p className="hint">
+          <Help label="Replica network access">
             Allow the manager to reach both private ports and Linux clients to
             reach the directory port. The new machine must reach the primary and
             the WebUI HTTPS address. No existing LDAP installation, manual
             certificate generation or administrator script is needed.
-          </p>
+          </Help>
           <button
             className="primary"
             disabled={busy || readOnly || !setup?.https_ready}
@@ -216,25 +233,36 @@ export function ReplicaWizard({
         </form>
         {join && (
           <>
-            <h3>Deploy the replica</h3>
-            <ol className="steps">
-              <li>
-                Clone the Forklift repository on the new machine, using the same
-                release as this manager. Open <code>deploy/replica</code>. A
-                Docker hosting UI can also deploy this repository’s replica
-                Compose file.
-              </li>
-              <li>
-                Paste the configuration below into{" "}
-                <code>deploy/replica/.env</code>, or set{" "}
-                <code>FORKLIFT_REPLICA_JOIN</code> in your Docker hosting UI. It
-                contains a temporary secret; do not commit it.
-              </li>
-              <li>
-                Start the replica Compose stack and wait here for confirmed
-                synchronization. No archive or certificate transfer is required.
-              </li>
-            </ol>
+            <div className="heading-help">
+              <h3>Deploy the replica</h3>
+              <Help label="Deploy the replica">
+                <ol className="steps">
+                  <li>
+                    Clone the Forklift repository on the new machine, using the
+                    same release as this manager. Open{" "}
+                    <code>deploy/replica</code>. A Docker hosting UI can also
+                    deploy this repository’s replica Compose file.
+                  </li>
+                  <li>
+                    Paste the configuration below into{" "}
+                    <code>deploy/replica/.env</code>, or set{" "}
+                    <code>FORKLIFT_REPLICA_JOIN</code> in your Docker hosting
+                    UI. It contains a temporary secret; do not commit it.
+                  </li>
+                  <li>
+                    Start the replica Compose stack and wait here for confirmed
+                    synchronization. No archive or certificate transfer is
+                    required.
+                  </li>
+                </ol>
+                <pre>
+                  <code>
+                    {"cd deploy/replica\ndocker compose up -d --build"}
+                  </code>
+                </pre>
+              </Help>
+            </div>
+
             <label>
               Join configuration
               <textarea
@@ -266,20 +294,15 @@ export function ReplicaWizard({
               Expires {new Date(join.expires_at * 1000).toLocaleString()}.
               Generating a new configuration invalidates the previous one.
             </p>
-            <details>
-              <summary>Docker Compose installation command</summary>
-              <pre>
-                <code>{"cd deploy/replica\ndocker compose up -d --build"}</code>
-              </pre>
-            </details>
-            <p className="hint">
+
+            <Help label="Replica trust and restarts">
               The primary’s public CA is included. The replica generates its
               private key locally and enrolls over verified HTTPS. After
               enrollment, you can remove the temporary join setting; future
               restarts use persistent configuration. SSH access still requires
               choosing login groups and deploying the host’s client
               configuration.
-            </p>
+            </Help>
             <span
               className={current?.state === "synchronized" ? "pill" : "badge"}
               role="status"

@@ -1,3 +1,4 @@
+import { Help, FieldHelp } from "./Help";
 import { useEffect, useState } from "react";
 import { Copy, Plus, RefreshCw, X } from "lucide-react";
 type Api = (path: string, method?: string, body?: unknown) => Promise<any>;
@@ -76,7 +77,23 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
   return (
     <section className="panel">
       <div className="panel-title">
-        <h2>DNS servers</h2>
+        <div className="heading-help">
+          <h2>DNS servers</h2>
+          <Help label="DNS replication">
+            The primary accepts changes. Secondaries answer synchronized zones
+            independently of Forklift and LDAP. Checks compare authoritative SOA
+            responses; a connected management service alone does not confirm
+            synchronization.
+            <h3>Network security</h3>
+            <p>
+              Transfers use per-node TSIG authentication over your trusted
+              private network or VPN. TSIG does not encrypt zone contents.
+              Restrict the private HTTPS management port to the Forklift host.
+              DNS traffic uses TCP/UDP directly; the management WebUI remains
+              the only service behind your HTTP reverse proxy.
+            </p>
+          </Help>
+        </div>
         <button
           disabled={busy}
           aria-label="Refresh DNS servers"
@@ -95,12 +112,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
           {notice}
         </p>
       )}
-      <p className="hint">
-        The primary accepts changes. Secondaries answer synchronized zones
-        independently of Forklift and LDAP. Checks compare authoritative SOA
-        responses; a connected management service alone does not confirm
-        synchronization.
-      </p>
+
       {inventory && (
         <details open={!inventory.primary}>
           <summary>Primary DNS endpoint</summary>
@@ -132,26 +144,34 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                 required
               />
             </label>
-            <label>
-              Published primary DNS port
-              <input
-                aria-label="Published primary DNS port"
-                name="dns_port"
-                type="number"
-                min="1"
-                max="65535"
-                defaultValue={inventory.primary?.dns_port || 53}
-                required
-              />
-            </label>
-            <p className="hint">
-              This is the existing PowerDNS container on the Forklift host. In
-              your Docker deployment settings, publish its DNS port on a private
-              interface using FORKLIFT_DNS_BIND and FORKLIFT_DNS_PORT. The
-              default localhost binding cannot accept transfers from another
-              machine. Do not use the LDAP or WebUI port. If another resolver
-              owns port 53, choose a separate address or port.
-            </p>
+            <FieldHelp
+              label="Primary DNS endpoint"
+              help={
+                <>
+                  This is the existing PowerDNS container on the Forklift host.
+                  In your Docker deployment settings, publish its DNS port on a
+                  private interface using FORKLIFT_DNS_BIND and
+                  FORKLIFT_DNS_PORT. The default localhost binding cannot accept
+                  transfers from another machine. Do not use the LDAP or WebUI
+                  port. If another resolver owns port 53, choose a separate
+                  address or port.
+                </>
+              }
+            >
+              <label>
+                <span className="field-name">Published primary DNS port</span>
+                <input
+                  aria-label="Published primary DNS port"
+                  name="dns_port"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  defaultValue={inventory.primary?.dns_port || 53}
+                  required
+                />
+              </label>
+            </FieldHelp>
+
             <label className="checkbox">
               <input name="acknowledge" type="checkbox" required />
               This endpoint is reachable from the secondary over TCP and UDP.
@@ -179,10 +199,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
       {!inventory ? (
         <p className="hint">Loading servers…</p>
       ) : !inventory.servers.length ? (
-        <p className="hint">
-          No secondaries enrolled. Save the reachable primary endpoint, then add
-          a machine and deploy its join configuration.
-        </p>
+        <p className="hint">No secondaries enrolled.</p>
       ) : (
         <div className="table-scroll">
           <table>
@@ -473,13 +490,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
           </table>
         </div>
       )}
-      <p className="hint">
-        Transfers use per-node TSIG authentication over your trusted private
-        network or VPN. TSIG does not encrypt zone contents. Restrict the
-        private HTTPS management port to the Forklift host. DNS traffic uses
-        TCP/UDP directly; the management WebUI remains the only service behind
-        your HTTP reverse proxy.
-      </p>
+
       {editing !== undefined && (
         <div className="overlay">
           <section
@@ -567,24 +578,32 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                       required
                     />
                   </label>
-                  <label>
-                    Private DNS management port
-                    <input
-                      aria-label="Private DNS management port"
-                      name="control_port"
-                      type="number"
-                      min="1"
-                      max="65535"
-                      defaultValue={9544}
-                      required
-                    />
-                  </label>
-                  <p className="hint">
-                    Use the second Docker host’s private interface. Forklift
-                    creates its PowerDNS database, transfer keys and HTTPS
-                    certificate automatically. No preexisting DNS service is
-                    required. Both ports must be available on that machine.
-                  </p>
+                  <FieldHelp
+                    label="Secondary DNS deployment"
+                    help={
+                      <>
+                        Use the second Docker host’s private interface. Forklift
+                        creates its PowerDNS database, transfer keys and HTTPS
+                        certificate automatically. No preexisting DNS service is
+                        required. Both ports must be available on that machine.
+                      </>
+                    }
+                  >
+                    <label>
+                      <span className="field-name">
+                        Private DNS management port
+                      </span>
+                      <input
+                        aria-label="Private DNS management port"
+                        name="control_port"
+                        type="number"
+                        min="1"
+                        max="65535"
+                        defaultValue={9544}
+                        required
+                      />
+                    </label>
+                  </FieldHelp>
                 </>
               )}
               <fieldset className="host-groups">
@@ -607,13 +626,13 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                   ),
                 )}
               </fieldset>
-              <p className="hint">
+              <Help label="DNS zone assignments">
                 Assign up to 32 zones. Removing an assignment deletes only that
                 enrollment’s secondary copy. New zones need an assignment here.
                 Primary records are unchanged. Publish appropriate NS records
                 through DNS and configure your resolver to use both
                 authoritative endpoints.
-              </p>
+              </Help>
               <button className="primary" disabled={busy}>
                 Save DNS server
               </button>
@@ -665,12 +684,12 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                   });
                 }}
               >
-                <p className="hint">
+                <Help label="Manager HTTPS trust">
                   The new machine must reach Forklift’s public HTTPS URL with
                   certificate validation. For private HTTPS PKI, supply its
                   public CA certificate. Leave blank for a publicly trusted
                   HTTPS certificate.
-                </p>
+                </Help>
                 <label>
                   Manager HTTPS CA (optional)
                   <textarea
@@ -689,30 +708,33 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
               </form>
             ) : (
               <>
-                <ol>
-                  <li>
-                    On the second Docker host, open a checkout of this
-                    repository and deploy{" "}
-                    <code>deploy/dns-secondary/compose.yaml</code> with your
-                    Docker Compose hosting tool.
-                  </li>
-                  <li>
-                    Paste the following environment setting into that stack
-                    before starting it. The stack builds the pinned PowerDNS
-                    image from the repository; no archive transfer or LDAP
-                    configuration is needed.
-                  </li>
-                  <li>
-                    Start the stack before {date(join.expires_at)}. Keep its
-                    independent persistent volume. Returning containers use
-                    saved credentials and do not need a new join.
-                  </li>
-                  <li>
-                    Return here and choose{" "}
-                    <strong>Check synchronization</strong>. Only use the new DNS
-                    endpoint after the assigned zones are confirmed in sync.
-                  </li>
-                </ol>
+                <Help label="Deploy the DNS secondary">
+                  <ol>
+                    <li>
+                      On the second Docker host, open a checkout of this
+                      repository and deploy{" "}
+                      <code>deploy/dns-secondary/compose.yaml</code> with your
+                      Docker Compose hosting tool.
+                    </li>
+                    <li>
+                      Paste the following environment setting into that stack
+                      before starting it. The stack builds the pinned PowerDNS
+                      image from the repository; no archive transfer or LDAP
+                      configuration is needed.
+                    </li>
+                    <li>
+                      Start the stack before {date(join.expires_at)}. Keep its
+                      independent persistent volume. Returning containers use
+                      saved credentials and do not need a new join.
+                    </li>
+                    <li>
+                      Return here and choose{" "}
+                      <strong>Check synchronization</strong>. Only use the new
+                      DNS endpoint after the assigned zones are confirmed in
+                      sync.
+                    </li>
+                  </ol>
+                </Help>
                 <label>
                   DNS join configuration
                   <textarea

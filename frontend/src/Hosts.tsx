@@ -1,13 +1,6 @@
+import { Help, FieldHelp } from "./Help";
 import { useState } from "react";
-import {
-  Server,
-  Plus,
-  Pencil,
-  Trash2,
-  Download,
-  X,
-  ShieldCheck,
-} from "lucide-react";
+import { Server, Plus, Pencil, Trash2, Download, X } from "lucide-react";
 type DnsConfig = {
   zone: string;
   fqdn: string;
@@ -123,9 +116,24 @@ export function Hosts({
       )}
       <section className="panel">
         <div className="table-toolbar">
-          <h2>
-            Hosts <span className="muted">{hosts.length}</span>
-          </h2>
+          <div className="heading-help">
+            <h2>
+              Hosts <span className="muted">{hosts.length}</span>
+            </h2>
+            <Help label="Host inventory and access">
+              Directory machines appear automatically, including the primary.
+              These inventory records do not grant SSH access. Select login
+              groups and deploy client configuration only when you want
+              centralized Linux login.
+              <h3>Client configuration</h3>
+              <p>
+                Deploy the complete bundle with the Ansible role or manual guide
+                in docs/linux-clients.md. Group membership updates follow
+                LDAP/NSS cache expiry; changes to permitted groups require
+                redeployment. Local recovery accounts remain available.
+              </p>
+            </Help>
+          </div>
           <button
             className="primary"
             onClick={() => {
@@ -136,12 +144,7 @@ export function Hosts({
             Register host
           </button>
         </div>
-        <p className="hint">
-          Directory machines appear automatically, including the primary. These
-          inventory records do not grant SSH access. Select login groups and
-          deploy client configuration only when you want centralized Linux
-          login.
-        </p>
+
         <input
           aria-label="Search hosts"
           placeholder="Search hostnames or login groups…"
@@ -307,18 +310,7 @@ export function Hosts({
           </div>
         )}
       </section>
-      <section className="callout">
-        <ShieldCheck size={24} />
-        <div>
-          <h3>Client configuration</h3>
-          <p>
-            Deploy the complete bundle with the Ansible role or manual guide in
-            docs/linux-clients.md. Group membership updates follow LDAP/NSS
-            cache expiry; changes to permitted groups require redeployment.
-            Local recovery accounts remain available.
-          </p>
-        </div>
-      </section>
+
       {editing !== undefined && (
         <div className="overlay">
           <section
@@ -407,26 +399,35 @@ export function Hosts({
                   required
                 />
               </label>
-              <label>
-                LDAPS endpoints (comma separated, in failover order)
-                <input
-                  name="endpoints"
-                  defaultValue={
-                    editing?.endpoints.join(", ") ||
-                    hosts
-                      .find((h) => h.directory_id === "primary")
-                      ?.endpoints.join(", ") ||
-                    ""
-                  }
-                  placeholder="ldaps://ldap.homelab.internal:1636"
-                  required
-                />
-              </label>
-              <p className="hint">
-                Use addresses reachable from this host, with certificate DNS
-                names signed by your installation CA. The internal Docker
-                hostname “ldap” usually cannot be used by other machines.
-              </p>
+              <FieldHelp
+                label="LDAP endpoints"
+                help={
+                  <>
+                    Use addresses reachable from this host, with certificate DNS
+                    names signed by your installation CA. The internal Docker
+                    hostname “ldap” usually cannot be used by other machines.
+                  </>
+                }
+              >
+                <label>
+                  <span className="field-name">
+                    LDAPS endpoints (comma separated, in failover order)
+                  </span>
+                  <input
+                    name="endpoints"
+                    defaultValue={
+                      editing?.endpoints.join(", ") ||
+                      hosts
+                        .find((h) => h.directory_id === "primary")
+                        ?.endpoints.join(", ") ||
+                      ""
+                    }
+                    placeholder="ldaps://ldap.homelab.internal:1636"
+                    required
+                  />
+                </label>
+              </FieldHelp>
+
               <fieldset className="host-groups">
                 <legend>Permitted login groups</legend>
                 {groups.map((g) => (
@@ -441,13 +442,13 @@ export function Hosts({
                   </label>
                 ))}
               </fieldset>
-              <p className="hint">
+              <Help label="Permitted login groups">
                 Choose login groups to configure SSH access. Hosts managed only
                 in DNS can leave these empty. Exported policy applies to LDAP
                 users signing in through SSH/PAM; local accounts retain their
                 existing policy. Each export rotates the host’s read-only bind
                 credential.
-              </p>
+              </Help>
               <fieldset>
                 <legend>DNS registration</legend>
                 <label className="checkbox">
@@ -487,10 +488,10 @@ export function Hosts({
                       </select>
                     </label>
                     {!zones.length && (
-                      <p className="hint">
+                      <Help label="Choosing a DNS zone">
                         Create a forward zone in DNS before registering a new
                         name.
-                      </p>
+                      </Help>
                     )}
                     <label>
                       DNS name
@@ -531,13 +532,13 @@ export function Hosts({
                       />
                       Create matching reverse DNS
                     </label>
-                    <p className="hint">
+                    <Help label="Host DNS registration">
                       Every address needs a matching managed reverse zone when
                       reverse DNS is enabled. Unrelated records are preserved.
                       DNS registration does not grant SSH access. Changing the
                       inventory hostname does not change this DNS name; review
                       both fields.
-                    </p>
+                    </Help>
                   </>
                 )}
                 {!dnsEnabled && (editing?.dns || editing?.dns_status) && (
@@ -561,11 +562,11 @@ export function Hosts({
                   <input type="checkbox" name="dns_apply" defaultChecked />
                   Apply DNS changes after saving
                 </label>
-                <p className="hint">
+                <Help label="Applying host DNS changes">
                   You can save settings without applying DNS, then use Reconcile
                   DNS. If DNS is unavailable, the host remains saved and can be
                   retried.
-                </p>
+                </Help>
               </fieldset>
               <button className="primary" disabled={saving}>
                 {saving ? "Saving…" : "Save host"}

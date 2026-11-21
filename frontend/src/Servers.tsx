@@ -1,13 +1,7 @@
+import { Help } from "./Help";
 import { useState } from "react";
 import { ReplicaWizard } from "./ReplicaWizard";
-import {
-  Database,
-  Plus,
-  Download,
-  Trash2,
-  ShieldCheck,
-  Activity,
-} from "lucide-react";
+import { Database, Plus, Download, Trash2 } from "lucide-react";
 export type DirectoryNode = {
   id: string;
   name: string;
@@ -89,10 +83,48 @@ export function Servers({
       <section className="panel">
         <div className="table-toolbar">
           <div>
-            <h2>
-              Directory servers{" "}
-              <span className="muted">{health.servers.length}</span>
-            </h2>
+            <div className="heading-help">
+              <h2>
+                Directory servers{" "}
+                <span className="muted">{health.servers.length}</span>
+              </h2>
+              <Help label="Directory server enrollment">
+                <ol className="steps">
+                  <li>
+                    Open Add server. The primary address comes from your initial
+                    setup.
+                  </li>
+                  <li>
+                    Enter the new machine’s name and private address. It only
+                    needs Docker; Forklift creates the new directory and its TLS
+                    certificate.
+                  </li>
+                  <li>
+                    Generate a join configuration, paste it into the standalone
+                    replica stack in deploy/replica, and start that Compose
+                    stack.
+                  </li>
+                  <li>
+                    Wait for confirmed synchronization here, then update your
+                    Linux client configurations.
+                  </li>
+                </ol>
+                <p>
+                  Manager HTTPS is required for enrollment. Replicas generate
+                  private keys locally; no CA signing key is copied. See
+                  docs/replication.md for network, trust, recovery and
+                  certificate-lifecycle details.
+                </p>
+                <h3>Client failover</h3>
+                <p>
+                  After synchronization is confirmed, add the replica to each
+                  Linux host’s endpoints and deploy a new host bundle to include
+                  its pinned certificate. Synchronization status is sampled;
+                  revocations made during an outage cannot reach an isolated
+                  replica.
+                </p>
+              </Help>
+            </div>
             <small>
               Checked {date(health.checked_at)} · verified LDAP connections
             </small>
@@ -264,14 +296,14 @@ export function Servers({
                     </button>
                     {node.certificate_rotation_pending ? (
                       <>
-                        <p className="hint">
+                        <Help label="Activating a replica certificate">
                           The candidate certificate is already trusted by
                           Forklift. Deploy updated trust bundles to affected
                           Linux clients before activation. Activation verifies
                           the actual new certificate, retires the previous
                           private pair and marks client bundles for final trust
                           export.
-                        </p>
+                        </Help>
                         <button
                           className="secondary"
                           disabled={busy || readOnly || !!node.pending_epoch}
@@ -296,11 +328,11 @@ export function Servers({
                       </>
                     ) : (
                       <>
-                        <p className="hint">
+                        <Help label="Staging a replica certificate">
                           Forklift generates the candidate directly on this
                           server. Its private key stays there; no command or
                           certificate upload is required.
-                        </p>
+                        </Help>
                         <button
                           className="secondary"
                           disabled={busy || readOnly || !!node.pending_epoch}
@@ -332,46 +364,7 @@ export function Servers({
           ))}
         </div>
       </section>
-      <section className="callout">
-        <ShieldCheck size={24} />
-        <div>
-          <h3>Client failover</h3>
-          <p>
-            After synchronization is confirmed, add the replica to each Linux
-            host’s endpoints and deploy a new host bundle to include its pinned
-            certificate. Synchronization status is sampled; revocations made
-            during an outage cannot reach an isolated replica.
-          </p>
-        </div>
-      </section>
-      <section className="panel">
-        <div className="panel-title">
-          <h2>Enroll a second Docker host</h2>
-          <Activity size={18} />
-        </div>
-        <ol className="steps">
-          <li>
-            Open Add server. The primary address comes from your initial setup.
-          </li>
-          <li>
-            Enter the new machine’s name and private address. It only needs
-            Docker; Forklift creates the new directory and its TLS certificate.
-          </li>
-          <li>
-            Generate a join configuration, paste it into the standalone replica
-            stack in deploy/replica, and start that Compose stack.
-          </li>
-          <li>
-            Wait for confirmed synchronization here, then update your Linux
-            client configurations.
-          </li>
-        </ol>
-        <p className="hint">
-          Manager HTTPS is required for enrollment. Replicas generate private
-          keys locally; no CA signing key is copied. See docs/replication.md for
-          network, trust, recovery and certificate-lifecycle details.
-        </p>
-      </section>
+
       {adding && (
         <ReplicaWizard
           existing={resuming}
