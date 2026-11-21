@@ -1,0 +1,38 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+
+- `backend/src/`: Rust/Axum API, LDAP operations, host inventory, replication and maintenance coordination.
+- `frontend/src/`: React/TypeScript views and styles; `frontend/public/` contains branding assets.
+- `backend/assets/`: replica deployment templates embedded in the manager binary.
+- `docker/`: manager, OpenLDAP supervisor and maintenance images; `compose.yaml` defines the primary deployment.
+- `tests/`: Python integration harnesses, Playwright browser checks and Ubuntu client fixtures.
+- `ansible/`: Ubuntu SSSD/PAM/NSS client role. `docs/` covers architecture, security and operations.
+
+## Build, Test, and Development Commands
+
+From the repository root:
+
+- `npm ci --prefix frontend`: install locked frontend dependencies.
+- `npm run dev --prefix frontend`: start Vite; `/api` proxies to localhost:8080. Use the development browser origin during setup.
+- `npm run build --prefix frontend`: check TypeScript and build production assets.
+- In `backend/`, run `cargo fmt --check`, `cargo test --locked` and `cargo clippy --locked -- -D warnings`.
+- `docker compose build`: build all runtime images.
+- `docker compose up -d --build`: launch the Linux deployment after configuring `.env` from `.env.example`.
+- `python3 tests/integration.py`, `python3 tests/hardening.py`, `python3 tests/replication.py`: exercise real LDAP, recovery and replication.
+
+## Coding Style & Naming Conventions
+
+Use rustfmt for Rust, four-space Python indentation and Prettier for TypeScript/TSX/CSS. React components use PascalCase filenames, such as `SetupWizard.tsx`; Rust modules and Python functions use snake_case. Keep abstractions small. WebUI text should use direct labels and actionable instructions; avoid promotional slogans.
+
+## Testing Guidelines
+
+Rust unit tests live in inline `#[cfg(test)]` modules. Python suites use assertions against disposable Compose projects; browser checks use Playwright. Add meaningful coverage for changed authentication, authorization, TLS, persistence and failure behavior. No numerical coverage threshold is configured. Build images before integration suites; never reset default installation volumes. See `docs/verification.md` for browser dependencies and optional Ubuntu checks. Report passed, failed and unavailable checks.
+
+## Commit & Pull Request Guidelines
+
+Use concise imperative subjects, matching history: `Remove promotional WebUI copy and redundant visual clutter`. Keep commits cohesive. PR descriptions should explain behavior, validation and operational risks; link relevant issues and include screenshots for visual changes. Document breaking storage or deployment changes explicitly. Do not force-push shared history.
+
+## Security & Configuration
+
+Never commit `.env`, private keys, credentials, recovery bundles or LDAP data. Preserve verified TLS, server-side authorization and CSRF protections. Keep privileged provisioning behind fixed operations; do not expose Docker sockets or command endpoints. Routine directory administration belongs in the WebUI; console recovery is reserved for administrator lockout.
