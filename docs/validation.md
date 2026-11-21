@@ -1,6 +1,38 @@
 # Validation
 
-## Milestone 2 — Linux integration
+## Milestone 3 — Primary/replica replication
+
+Verified locally on 2026-11-20, Linux/amd64, Docker Engine 29.1.3, Forklift 0.3.0, OpenLDAP 2.6.10 and Ubuntu 24.04.
+
+| Check                                                                      | Result                                                                            |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Rust formatting, locked unit tests, Clippy with warnings denied            | Passed; six tests                                                                 |
+| Strict TypeScript/Vite production build                                    | Passed                                                                            |
+| Manager, primary and generated standalone replica Docker builds            | Passed                                                                            |
+| Frontend/documentation/Ansible/template formatting                         | Passed                                                                            |
+| Python compilation, prepare-script syntax, main/replica Compose validation | Passed                                                                            |
+| `python3 tests/replication.py`                                             | Passed; 55 HTTPS API checks plus native LDAP and fresh Ubuntu SSH failover checks |
+| `FORKLIFT_TEST_UBUNTU=1 python3 tests/integration.py`                      | Passed; 103 HTTP checks plus actual Ansible/NSS/PAM/SSH regression checks         |
+| `python3 tests/upgrade.py`                                                 | Passed; 96 HTTP checks across actual Milestone 2 images and the upgraded stack    |
+| `python3 tests/certificates.py`                                            | Passed with a disposable CA                                                       |
+
+The replication fixture uses actual HTTPS termination with a disposable CA, Secure session cookies, an independent primary Compose project, a generated/built standalone replica Compose stack and an Ubuntu client. The enrollment request itself traverses verified HTTPS, including explicit private-PKI trust. No HTTP enrollment bypass is enabled or required. All directory and replica volumes are independent; no copied/shared MDB data is used for replication.
+
+Verified enrollment boundaries: administrator authorization and CSRF for registration/bundle generation, token scope/expiry/replay, duplicate endpoints, invalid provider schemes, CA-certificate rejection, wrong-host certificate rejection and refusal to issue another token for an enrolled node. Successful enrollment generates a local private key, pins the non-CA certificate and provisions a separate replication read identity. The fixture inspects the generated archive, its ownership preparation and the built standalone container rather than substituting a fake provisioning service.
+
+Native Syncrepl checks cover user/group changes, deletion, password reset, disabled-account state, nonempty contextCSN equality, independent storage, consumer write rejection even when bound as the primary management identity, interrupted replication, catch-up and container recreation. Unreachable nodes retain their last confirmed synchronization time; a primary outage does not advance it. Replacing a replica certificate with another key for the same DNS name is rejected by the manager's actual TLS connector. Restoring the enrolled certificate recovers synchronization and clears obsolete errors in that successful response.
+
+For failover, the Ubuntu client had no running SSSD, prior identity lookup or cached password when the primary stopped. It resolved and authenticated a fresh user via the real replica, accepted the replicated new password, rejected the old password and denied an unauthorized/disabled user. Verified LDAP reads, administrator login and local logout continued in explicit read-only mode; privileged writes/configuration exports failed with 503. The test then stopped the manager too, restarted the replica using its persisted configuration, restarted SSSD and authenticated a second previously unseen user. Restarting the manager alone retained read-only access; bringing back the primary restored normal writes and confirmed synchronization. The test harness deliberately starts only the existing manager container during that phase because Compose can otherwise restart its primary dependency.
+
+The upgrade fixture builds committed Milestone 2 source (`264ea25`), populates its real schema-2 metadata and pre-syncprov directory, then recreates both services with Milestone 3 images. It verifies schema 3, offline syncprov/index upgrade, unchanged users/groups/numeric IDs/host configurations, existing-session preservation and real contextCSN availability before completing the ordinary failure/security regression checks. This verifies more than an empty-schema migration.
+
+Still unverified: browser rendering/interactions, physically separate Docker hosts/VMs, full systemd boot/service handlers, Ubuntu 22.04, multi-architecture builds, large directories/load, multiple concurrent replicas, extended partition-duration behavior, backup/restore drills and automatic certificate/credential rotation. Tests simulate separate hosts using independent Compose projects, volumes and containers on one Docker engine. SSSD/sshd run as real processes in Ubuntu; no claim of VM boot validation or production certification is made. Asynchronous replication and cache/connection revocation limits are explicit in [replication operations](replication.md).
+
+Historical results below remain useful for context. Milestone 3 supersedes earlier statements that native replication or replica failure authentication was unimplemented/unverified.
+
+---
+
+## Milestone 2 — Linux integration (historical)
 
 Verified locally on 2026-11-20, Linux/amd64, Docker Engine 29.1.3, Forklift 0.2.0 and OpenLDAP 2.6.10.
 
@@ -27,7 +59,7 @@ Tests create and clean up isolated Compose projects, a disposable Ubuntu contain
 
 ---
 
-# Milestone 1 validation (historical)
+## Milestone 1 validation (historical)
 
 Verified locally on 2026-11-20 using Docker Engine 29.1.3 on Linux/amd64.
 

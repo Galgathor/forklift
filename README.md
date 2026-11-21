@@ -2,7 +2,7 @@
 
 Self-hosted OpenLDAP management for homelabs. A Rust/Axum API, React/TypeScript interface, SQLite metadata store, and a real OpenLDAP 2.6 directory deployed with Docker Compose.
 
-**Development release: Milestone 2.** Setup, administrator login, user/POSIX group management, host registration, SSSD/PAM/NSS configuration exports and an Ubuntu Ansible role are implemented. SSH-key schema support, replica provisioning, automated backup/restore and service-credential rotation are not implemented. Host configuration export is not remote deployment or liveness monitoring. Do not rely on this release as your only path into critical infrastructure. Keep an independently managed local recovery account on Linux hosts.
+**Development release: Milestone 3.** Setup, administrator login, user/POSIX group management, host registration, SSSD/PAM/NSS configuration exports and an Ubuntu Ansible role are implemented. Native primary/replica Syncrepl, HTTPS enrollment, real replication monitoring and replica-backed read-only management are implemented. SSH-key schema support, automated backup/restore and service-credential rotation remain planned. Host configuration export is not remote deployment or liveness monitoring. Do not rely on this release as your only path into critical infrastructure. Keep an independently managed local recovery account on Linux hosts.
 
 ## Quick start
 
@@ -84,15 +84,17 @@ Complete private LDAPS publication, DNS/certificate setup, Ansible deployment, m
 
 ## Replication
 
-Planned for Milestone 3: one writable primary plus read/authentication replicas using native Syncrepl, short-lived enrollment credentials, per-host persistent storage, synchronization monitoring and SSSD endpoint failover. No replica Compose stack is provided because enrollment and trust provisioning are not implemented. Administrative writes will remain unavailable during a primary outage. Automatic primary promotion and multi-provider writes are out of scope for the first release.
+Open **Directory Servers → Add server** to register a read-only replica. Generate a private deployment archive with a 15-minute one-use enrollment token, transfer it to the second Docker host, run `./prepare.sh`, configure its private bind address and run `docker compose up -d --build`. Native Syncrepl synchronizes the directory over verified LDAPS into independent persistent storage. No second management UI, shared database, Docker socket or manager-to-host SSH is required.
 
-The management application is not in the LDAP authentication path. Stopping it leaves slapd running. Independent replica authentication during primary failure will require Milestone 3 and is not claimed in this release.
+Monitoring compares actual nonempty OpenLDAP `contextCSN` sets and records last-confirmed synchronization. The manager can serve replica-backed read-only data during a primary outage; all writes wait for the primary. There is no automatic promotion or multi-provider mode. Linux clients use ordered endpoints and pinned replica certificate trust from regenerated host bundles. Asynchronous replication cannot apply revocations while disconnected.
+
+Prerequisites, private networking, certificate trust, deployment, monitoring semantics, upgrade/recovery and limitations: [Replication guide](docs/replication.md).
 
 ## Backups, recovery and upgrades
 
 See [operations](docs/operations.md) for offline backup/restore, partial initialization and TLS recovery. This release has no online backup scheduler, restore UI or automatic certificate/service-credential rotation. Back up directory data/configuration, metadata **and** installation secrets together. Keep archives encrypted and offline. The CA private key is retained on the installation host but is never mounted into either service.
 
-Before upgrading: stop services, make a matching backup, build the new revision and run the integration suite on a separate test project. Recreate services with `docker compose up -d --build`. Milestone 2 automatically migrates metadata schema 1 to 2 while preserving identities, sessions and the ID allocator. Metadata schema is versioned; a newer schema is refused by older code. Rollback requires restoring a matching complete backup, not just an older image.
+Before upgrading: stop services, make a matching backup, build the new revision and run the integration suite on a separate test project. Recreate services with `docker compose up -d --build`. Milestone 3 automatically migrates metadata through schema 3 while preserving identities, sessions and the ID allocator. Metadata schema is versioned; a newer schema is refused by older code. Rollback requires restoring a matching complete backup, not just an older image.
 
 ## Development and verification
 
@@ -111,6 +113,10 @@ python3 tests/integration.py
 docker build -t forklift-ubuntu-client -f tests/ubuntu/Dockerfile .
 FORKLIFT_TEST_UBUNTU=1 python3 tests/integration.py
 python3 tests/certificates.py
+# Real HTTPS enrollment, Syncrepl, and fresh Ubuntu SSH failover:
+python3 tests/replication.py
+# Actual Milestone 2 image/data upgrade (requires Git history):
+python3 tests/upgrade.py
 ```
 
 The integration suite requires the installer-created secret files and built `forklift-manager:latest` / `forklift-ldap:latest` images. It creates a randomly named Compose project with fresh volumes and a temporary loopback port, then removes **only its test volumes**. It does not initialize or delete your default installation. Test credentials are random and never printed. Ubuntu mode also runs the Ansible role twice and actual NSS/PAM/SSH password and access-policy checks. Checks include bootstrap replay/origin rejection, authenticated and unauthenticated authorization, CSRF, LDAP bind/password/disable behavior, group CRUD, administrator revocation, non-reused IDs, container recreation, independent LDAP operation, directory outages, certificate rejection and login throttling.

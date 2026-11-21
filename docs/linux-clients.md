@@ -27,7 +27,7 @@ The WebUI's Nginx Proxy Manager HTTPS endpoint cannot carry LDAP. Linux clients 
 3. Apply with `docker compose up -d`. Retain `COMPOSE_FILE` for subsequent operations so the published directory port is preserved. Do not expose port 8090 (the provisioner) or the manager's service bind credential.
 4. Host configuration should use `ldaps://ldap.homelab.internal:636`, never an IP address that is absent from the certificate. Distribute the archive's `ca.crt` through your authenticated deployment channel. Do not disable TLS verification.
 
-Additional endpoint URIs are accepted for SSSD failover in listed order. Every endpoint must hold the same directory data, host read identity and trusted CA chain, with a matching DNS certificate. Provisioning and monitoring replicated servers is still Milestone 3. An endpoint list does not create a replica.
+Additional endpoint URIs are accepted for SSSD failover in listed order. Every endpoint must hold the same directory data and host read identity and present a matching DNS certificate. Regenerated bundles trust the primary CA plus the pinned leaf certificates of enrolled replicas in the endpoint list. Provision and monitor replicas through Directory Servers; see [replication](replication.md). An endpoint list alone does not create a replica.
 
 ## Register and generate a host bundle
 
@@ -120,7 +120,7 @@ Confirm both an allowed user's login and a disallowed user's rejection before cl
 - The generated policy applies to SSH. Other PAM services retain their existing Ubuntu configuration; apply equivalent account rules separately if you also want to restrict console or other services. It does not control applications that bypass PAM.
 - SSSD identity/group caching is set to 60 seconds. Membership changes can take that long to take effect; existing SSH sessions are not terminated. For a diagnostic refresh, `sudo sss_cache -E` expires identity caches.
 - Offline password caching is disabled by default (`cache_credentials=false`). Uncached authentication fails closed when all LDAP endpoints are unavailable. Existing installations that previously enabled credential caching should explicitly review/clear old caches and set their own offline policy. No management operation can instantly revoke an offline credential or existing session.
-- The manager can be stopped without interrupting LDAP authentication. Endpoint fallback is native SSSD behavior; one reachable correctly provisioned directory is sufficient. Actual replicated-directory data/failover remains the next milestone.
+- The manager can be stopped without interrupting LDAP authentication. Endpoint fallback is native SSSD behavior; one reachable correctly provisioned directory is sufficient. Actual primary/replica data synchronization and first-login failover are covered by the replication integration test.
 - Each user has one centrally managed password. Password resets happen in Forklift; the generated client disables self-service password changes because the server currently reserves password writes for its management identity.
 - No sudo provider/rule is generated. Configure privilege escalation independently and review any existing local sudo groups.
 

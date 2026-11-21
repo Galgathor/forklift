@@ -6,7 +6,7 @@ A separate, unexposed one-shot provisioning HTTP helper in the directory contain
 
 Implementation sequence: provision TLS and deployment files; implement setup and LDAP authentication; implement user/group API and persistent metadata; implement responsive setup/login/dashboard and CRUD; run formatting, builds and integration tests against the real Compose stack; document recovery limits. Commit each working stage.
 
-Milestone 2 adds host/SSSD/Ansible workflows as described below. Milestones 3–4 remain planned: replication/enrollment, supported backup/restore and credential rotation. No synthetic host or replication data will be presented as working features. Milestone 1 is a development release until security and failure checks pass. Setup uses a single instance; active/active managers are unsupported.
+Milestone 2 adds host/SSSD/Ansible workflows as described below. Milestone 3 adds primary/replica replication and enrollment below. Milestone 4 remains planned: supported backup/restore, credential/certificate lifecycle and production hardening. No synthetic host or replication data will be presented as working features. Milestone 1 is a development release until security and failure checks pass. Setup uses a single instance; active/active managers are unsupported.
 
 ## Milestone 2 implementation plan
 
