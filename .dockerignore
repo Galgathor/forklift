@@ -4,3 +4,7 @@
 **/node_modules
 **/target
 frontend/dist
+.forklift-maintenance.*
+.forklift-restore-*
+.data
+**/__pycache__

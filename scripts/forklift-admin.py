@@ -50,6 +50,8 @@ def toolbox(action,payload=None,mounts=None,*,raw=False):
     args=['docker','run','--rm','-i','--network','none','--read-only','--cap-drop','ALL',
           '--cap-add','DAC_OVERRIDE','--cap-add','CHOWN','--cap-add','FOWNER','--cap-add','SETUID','--cap-add','SETGID',
           '--security-opt','no-new-privileges:true','--memory','512m','--pids-limit','128','--tmpfs','/tmp:rw,noexec,nosuid,size=64m']
+    if (payload or {}).get('operation_id'):
+        args+=['--label','io.forklift.operation-id='+payload['operation_id']]
     for source,target,readonly in mounts or []:
         args+=['-v',str(source)+':'+target+(':ro' if readonly else '')]
     args += [TOOL,action]
@@ -119,7 +121,15 @@ class Installation:
                 if status.get('OOMKilled') or status.get('ExitCode')==137:
                     raise ValueError('Unclean forced shutdown; inspect the installation before snapshotting')
 
+    def quiescent(self,state):
+        ids=command(['docker','ps','-a','-q','--filter','label=io.forklift.operation-id='+state['operation_id']]).stdout.decode().split()
+        for cid in ids:
+            status=json.loads(command(['docker','inspect',cid]).stdout)[0]['State']['Status']
+            if status not in ['exited','dead']:
+                raise ValueError('A helper from this operation is still active; keep services stopped and retry resume after it finishes')
+
     def start(self,state):
+        self.quiescent(state)
         for service in ['ldap','manager']:
             info=state['containers'][service]
             if not info['running']:continue
@@ -306,6 +316,8 @@ def main():
         command(['docker','volume','rm',stage]);print(json.dumps(result));return
     installation=Installation(args)
     with locked(installation):
+        if installation.state_file.exists():
+            installation.quiescent(json.loads(installation.state_file.read_text()))
         {'backup':backup,'restore':restore,'rotate-service':rotate,'resume':resume}[args.action](installation,args)
 
 

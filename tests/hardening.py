@@ -182,6 +182,13 @@ for root in ['/directory','/metadata']:pathlib.Path(root+'/service-rotation-inco
             time.sleep(0.2)
         assert b'Offline maintenance is incomplete' in diagnostic.stderr,'Incomplete rotation did not refuse startup'
         assert actual.get('Health',{}).get('Status') != 'healthy'
+    sentinel=PROJECT+'-active-helper'
+    run(['docker','run','-d','--name',sentinel,'--label','io.forklift.operation-id='+state['operation_id'],'--network','none','--cap-drop','ALL','alpine:3.22.2','sleep','30'])
+    try:
+        blocked=source.cli('resume',check=False)
+        assert blocked.returncode and b'helper from this operation is still active' in blocked.stderr
+    finally:
+        run(['docker','rm','-f',sentinel],check=False)
     source.cli('resume')
     latest=source.secret('service');assert latest!=new
     source.bind('cn=manager,'+BASE,new,49);source.bind('cn=manager,'+BASE,latest)
