@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import "./style.css";
 import { Hosts, type Host } from "./Hosts";
+import { Servers, type DirectoryHealth } from "./Servers";
 type Entry = { dn: string; attrs: Record<string, string[]> };
 type Overview = {
   directory: { name: string; base: string };
@@ -30,6 +31,8 @@ type Overview = {
   events: { at: number; actor: string; action: string; target: string }[];
   ldap: string;
   hosts: Host[];
+  read_only: boolean;
+  directory_servers: DirectoryHealth;
 };
 const attr = (e: Entry, k: string) => e.attrs[k]?.[0] || "";
 function App() {
@@ -91,6 +94,12 @@ function App() {
   useEffect(() => {
     if (session) perform(refresh);
   }, [session]);
+  useEffect(() => {
+    if (!session || busy || !["Dashboard", "Directory Servers"].includes(page))
+      return;
+    const interval = setInterval(() => perform(refresh), 30000);
+    return () => clearInterval(interval);
+  }, [session, page, busy]);
   useEffect(() => {
     document.documentElement.dataset.theme = light ? "light" : "dark";
     localStorage.setItem("theme", light ? "light" : "dark");
@@ -253,7 +262,7 @@ function App() {
           <div className="secure">
             <ShieldCheck size={17} /> OpenLDAP, made simple
           </div>
-          <small>Forklift v0.2 · Linux integration</small>
+          <small>Forklift v0.3 · Replicated directories</small>
         </div>
       </aside>
       <div className="main">
@@ -285,6 +294,12 @@ function App() {
         </header>
         <main>
           {banner}
+          {data?.read_only && (
+            <div className="error" role="status">
+              Primary unavailable. Showing replica-backed reads; administrative
+              writes are disabled. Replica data may lag behind the primary.
+            </div>
+          )}
           <div className="page-heading">
             <div>
               <p className="eyebrow">DIRECTORY MANAGEMENT</p>
@@ -304,6 +319,7 @@ function App() {
             {["Users", "Groups"].includes(page) ? (
               <button
                 className="primary"
+                disabled={busy || data?.read_only}
                 onClick={() => setModal({ kind: page })}
               >
                 <Plus size={18} />
@@ -347,8 +363,8 @@ function App() {
                       [
                         Database,
                         "Directory servers",
-                        1,
-                        "Primary directory connected",
+                        data.directory_servers.servers.length,
+                        "Registered primary and replicas",
                       ],
                       [
                         Server,
@@ -376,7 +392,9 @@ function App() {
                         <h2>Directory health</h2>
                         <span className="pill">
                           <CheckCircle2 size={14} />
-                          Connected
+                          {data.read_only
+                            ? "Replica-backed reads"
+                            : "Primary connected"}
                         </span>
                       </div>
                       <div className="directory-art">
@@ -389,11 +407,19 @@ function App() {
                       <dl>
                         <div>
                           <dt>Directory endpoint</dt>
-                          <dd>ldaps://ldap:636</dd>
+                          <dd>
+                            {data.read_only
+                              ? "Verified replica"
+                              : "ldaps://ldap:636"}
+                          </dd>
                         </div>
                         <div>
                           <dt>Role</dt>
-                          <dd>Read / write primary</dd>
+                          <dd>
+                            {data.read_only
+                              ? "Read-only management"
+                              : "Read / write primary"}
+                          </dd>
                         </div>
                         <div>
                           <dt>Transport</dt>
@@ -401,8 +427,8 @@ function App() {
                         </div>
                       </dl>
                       <p className="hint">
-                        Connectivity checked on refresh. Replication is planned
-                        for Milestone 3.
+                        LDAP connectivity and replication context are checked on
+                        refresh and every 30 seconds while viewing this page.
                       </p>
                     </section>
                     <section className="panel">
@@ -585,37 +611,22 @@ function App() {
                 </section>
               )}
               {page === "Directory Servers" && (
-                <section className="panel">
-                  <div className="panel-title">
-                    <h2>Primary directory</h2>
-                    <span className="pill">LDAP connected</span>
-                  </div>
-                  <dl>
-                    <div>
-                      <dt>Endpoint</dt>
-                      <dd>ldaps://ldap:636</dd>
-                    </div>
-                    <div>
-                      <dt>Base DN</dt>
-                      <dd>{data.directory.base}</dd>
-                    </div>
-                    <div>
-                      <dt>Replication</dt>
-                      <dd>Not implemented · Milestone 3</dd>
-                    </div>
-                  </dl>
-                  <p className="hint">
-                    Replica enrollment, synchronization monitoring, and failover
-                    testing are planned. This release manages one primary.
-                  </p>
-                </section>
+                <Servers
+                  health={data.directory_servers}
+                  csrf={session.csrf}
+                  busy={busy}
+                  readOnly={data.read_only}
+                  api={api}
+                  perform={perform}
+                  refresh={refresh}
+                />
               )}
               {page === "Hosts" && (
                 <Hosts
                   hosts={data.hosts}
                   groups={data.groups.map((g) => attr(g, "cn"))}
                   csrf={session.csrf}
-                  busy={busy}
+                  busy={busy || data.read_only}
                   api={api}
                   refresh={refresh}
                   perform={perform}
@@ -859,7 +870,7 @@ function App() {
                   </p>
                 </>
               )}
-              <button className="primary" disabled={busy}>
+              <button className="primary" disabled={busy || data?.read_only}>
                 {busy ? "Saving…" : "Save changes"}
               </button>
             </form>
