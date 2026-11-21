@@ -23,6 +23,7 @@ import {
 import "./style.css";
 import { Hosts, type Host } from "./Hosts";
 import { Servers, type DirectoryHealth } from "./Servers";
+import { Operations } from "./Operations";
 type Entry = { dn: string; attrs: Record<string, string[]> };
 type Overview = {
   directory: { name: string; base: string };
@@ -32,6 +33,8 @@ type Overview = {
   ldap: string;
   hosts: Host[];
   read_only: boolean;
+  read_only_reason: string | null;
+  directory_source: string;
   directory_servers: DirectoryHealth;
 };
 const attr = (e: Entry, k: string) => e.attrs[k]?.[0] || "";
@@ -262,7 +265,7 @@ function App() {
           <div className="secure">
             <ShieldCheck size={17} /> OpenLDAP, made simple
           </div>
-          <small>Forklift v0.3 · Replicated directories</small>
+          <small>Forklift v0.4 · Directory operations</small>
         </div>
       </aside>
       <div className="main">
@@ -296,8 +299,9 @@ function App() {
           {banner}
           {data?.read_only && (
             <div className="error" role="status">
-              Primary unavailable. Showing replica-backed reads; administrative
-              writes are disabled. Replica data may lag behind the primary.
+              {data.read_only_reason === "recovery_review"
+                ? "Restored directory: writes are paused until recovery review is completed in Settings."
+                : "Primary unavailable. Showing replica-backed reads; administrative writes are disabled. Replica data may lag behind the primary."}
             </div>
           )}
           <div className="page-heading">
@@ -392,7 +396,7 @@ function App() {
                         <h2>Directory health</h2>
                         <span className="pill">
                           <CheckCircle2 size={14} />
-                          {data.read_only
+                          {data.directory_source === "replica"
                             ? "Replica-backed reads"
                             : "Primary connected"}
                         </span>
@@ -408,7 +412,7 @@ function App() {
                         <div>
                           <dt>Directory endpoint</dt>
                           <dd>
-                            {data.read_only
+                            {data.directory_source === "replica"
                               ? "Verified replica"
                               : "ldaps://ldap:636"}
                           </dd>
@@ -576,6 +580,7 @@ function App() {
                                 <div className="actions">
                                   <button
                                     aria-label="Edit"
+                                    disabled={busy || data.read_only}
                                     onClick={() =>
                                       setModal({ kind: page, entry: e })
                                     }
@@ -584,6 +589,7 @@ function App() {
                                   </button>
                                   <button
                                     aria-label="Delete"
+                                    disabled={busy || data.read_only}
                                     onClick={() => {
                                       if (
                                         confirm(
@@ -633,47 +639,18 @@ function App() {
                 />
               )}
               {page === "Settings" && (
-                <>
-                  <section className="panel">
-                    <h2>Installation</h2>
-                    <dl>
-                      <div>
-                        <dt>Directory name</dt>
-                        <dd>{data.directory.name}</dd>
-                      </div>
-                      <div>
-                        <dt>Base DN</dt>
-                        <dd>{data.directory.base}</dd>
-                      </div>
-                      <div>
-                        <dt>Administrator group</dt>
-                        <dd>administrators</dd>
-                      </div>
-                      <div>
-                        <dt>Backups and certificate rotation</dt>
-                        <dd>Offline operations · see README</dd>
-                      </div>
-                    </dl>
-                  </section>
-                  <section className="panel">
-                    <h2>Administrative audit log</h2>
-                    <div className="events">
-                      {data.events.map((e, i) => (
-                        <div className="event" key={i}>
-                          <ShieldCheck size={17} />
-                          <div>
-                            <strong>
-                              {e.actor}: {e.action} · {e.target}
-                            </strong>
-                            <small>
-                              {new Date(e.at * 1000).toLocaleString()}
-                            </small>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                </>
+                <Operations
+                  busy={busy}
+                  readOnly={data.read_only}
+                  directory={data.directory}
+                  api={api}
+                  perform={perform}
+                  refresh={refresh}
+                  signedOut={() => {
+                    setSession(null);
+                    setData(null);
+                  }}
+                />
               )}
             </>
           )}

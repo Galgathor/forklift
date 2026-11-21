@@ -761,3 +761,29 @@ td {
     grid-template-columns: 1fr;
   }
 }
+
+.download-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+}
+.recovery-review {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  margin: 20px 0;
+}
+.recovery-review p {
+  color: var(--muted);
+  margin: 12px 0;
+  line-height: 1.7;
+}
+.panel details code {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 10px;
+}
+.server-card details button {
+  margin: 10px 0;
+}

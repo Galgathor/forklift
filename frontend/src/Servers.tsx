@@ -22,6 +22,9 @@ export type DirectoryNode = {
   context_csn?: string[] | null;
   expires_at?: number;
   error?: string | null;
+  certificate_rotation_pending?: boolean;
+  credential_rotated_at?: number | null;
+  credential_epoch?: number;
 };
 export type DirectoryHealth = {
   servers: DirectoryNode[];
@@ -44,6 +47,7 @@ const labels: Record<string, string> = {
   enrolled: "Enrolled",
   expired: "Enrollment expired",
   failed: "Enrollment failed",
+  restore_required: "Restored snapshot · reseed required",
   synchronized: "Synchronization confirmed",
   catching_up: "Catching up",
   unreachable: "Unreachable / TLS error",
@@ -64,19 +68,24 @@ export function Servers({
   const [adding, setAdding] = useState(false),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
-  async function download(node: DirectoryNode) {
+  async function download(node: DirectoryNode, credential = false) {
     if (
       !confirm(
-        "This private deployment bundle contains a one-use enrollment token valid for 15 minutes. Enroll only a trusted server: replication includes password hashes. Generate the bundle?",
+        credential
+          ? "Replace the replication password now? Download and apply this private update on the replica, restart it, then verify a new directory change synchronizes. Existing bound connections may remain valid until disconnected."
+          : "This private deployment bundle contains a one-use enrollment token valid for 15 minutes. Enroll only a trusted server: replication includes password hashes. Generate the bundle?",
       )
     )
       return;
     await perform(async () => {
-      const r = await fetch(`/api/replicas/${node.id}/bundle`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-        body: JSON.stringify({ acknowledge: true }),
-      });
+      const r = await fetch(
+        `/api/replicas/${node.id}/${credential ? "credential" : "bundle"}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+          body: JSON.stringify({ acknowledge: true }),
+        },
+      );
       if (!r.ok) {
         const v = await r.json();
         throw Error(v.error || "Unable to generate deployment");
@@ -84,7 +93,7 @@ export function Servers({
       const url = URL.createObjectURL(await r.blob());
       const a = document.createElement("a");
       a.href = url;
-      a.download = `forklift-replica-${node.id}.tar.gz`;
+      a.download = `forklift-replica-${credential ? "credential-" : ""}${node.id}.tar.gz`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       await refresh();
@@ -212,6 +221,101 @@ export function Servers({
                   </div>
                 )}
               </dl>
+              {node.role === "replica" &&
+                node.enrollment_state === "enrolled" && (
+                  <details>
+                    <summary>Credentials & certificate rotation</summary>
+                    <p className="hint">
+                      Credential update issued:{" "}
+                      {date(node.credential_rotated_at)} · epoch{" "}
+                      {node.credential_epoch ?? 0}. Issued time does not confirm
+                      remote deployment.
+                    </p>
+                    <button
+                      className="secondary"
+                      disabled={busy || readOnly}
+                      onClick={() => download(node, true)}
+                    >
+                      Rotate replication credential
+                    </button>
+                    {node.certificate_rotation_pending ? (
+                      <>
+                        <p className="hint">
+                          Both certificate pins are trusted. Redeploy affected
+                          host bundles, activate the candidate locally and
+                          restart this replica before finalizing. Finalization
+                          verifies its actual TLS certificate and marks hosts
+                          for final trust redeployment.
+                        </p>
+                        <button
+                          className="secondary"
+                          disabled={busy || readOnly}
+                          onClick={() => {
+                            if (
+                              confirm(
+                                "Client trust has been deployed and the replica is serving its staged certificate. Retire the old manager pin and mark host bundles for final trust deployment?",
+                              )
+                            )
+                              perform(async () => {
+                                await api(
+                                  `replicas/${node.id}/certificate/finalize`,
+                                  "POST",
+                                  { acknowledge: true },
+                                );
+                                await refresh();
+                              });
+                          }}
+                        >
+                          Verify & finalize certificate
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="hint">
+                          Generate a candidate on the replica using
+                          stage-certificate. Upload only its public certificate,
+                          then redeploy host bundles before local activation.
+                          See docs/operations.md.
+                        </p>
+                        <label>
+                          Stage public certificate
+                          <input
+                            type="file"
+                            accept=".crt,.pem"
+                            disabled={busy || readOnly}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              e.target.value = "";
+                              if (!file) return;
+                              if (file.size > 16384) {
+                                perform(async () => {
+                                  throw Error("Certificate exceeds 16 KiB");
+                                });
+                                return;
+                              }
+                              if (
+                                confirm(
+                                  "Trust this candidate certificate alongside the current pin and mark affected hosts for trust redeployment?",
+                                )
+                              )
+                                perform(async () => {
+                                  await api(
+                                    `replicas/${node.id}/certificate`,
+                                    "POST",
+                                    {
+                                      certificate: await file.text(),
+                                      acknowledge: true,
+                                    },
+                                  );
+                                  await refresh();
+                                });
+                            }}
+                          />
+                        </label>
+                      </>
+                    )}
+                  </details>
+                )}
               {node.error && <p className="hint server-error">{node.error}</p>}
               {node.context_csn?.length ? (
                 <details>
