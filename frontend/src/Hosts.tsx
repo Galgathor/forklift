@@ -100,11 +100,8 @@ export function Hosts({
         {!hosts.length ? (
           <div className="empty">
             <Server size={36} />
-            <h2>Bring your Linux hosts together.</h2>
-            <p className="muted">
-              Use conventional SSSD, PAM and SSH password authentication. A host
-              configuration grants no sudo privileges.
-            </p>
+            <h2>No hosts registered</h2>
+            <p className="muted">Register a host to configure Linux login.</p>
           </div>
         ) : (
           <div className="table-scroll">
@@ -218,7 +215,7 @@ export function Hosts({
       <section className="callout">
         <ShieldCheck size={24} />
         <div>
-          <h3>Access is enforced on your Linux host.</h3>
+          <h3>Client configuration</h3>
           <p>
             Deploy the complete bundle with the Ansible role or manual guide in
             docs/linux-clients.md. Group membership updates follow LDAP/NSS

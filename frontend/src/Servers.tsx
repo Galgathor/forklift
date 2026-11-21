@@ -111,12 +111,6 @@ export function Servers({
             Add server
           </button>
         </div>
-        <p className="hint">
-          Keep a synchronized copy of your users, groups and passwords on
-          another machine. Forklift installs and configures its directory
-          automatically. Your existing server remains where administrative
-          changes are made.
-        </p>
         <div className="server-grid">
           {health.servers.map((node) => (
             <section key={node.id} className="server-card">
@@ -343,7 +337,7 @@ export function Servers({
       <section className="callout">
         <ShieldCheck size={24} />
         <div>
-          <h3>Authentication keeps running independently.</h3>
+          <h3>Client failover</h3>
           <p>
             After synchronization is confirmed, add the replica to each Linux
             host’s endpoints and deploy a new host bundle to include its pinned

@@ -199,10 +199,9 @@ function App() {
       <div className="auth">
         <div className="auth-card">
           <div className="brand">
-            <BrandIcon /> forklift<span className="tag">EARLY ACCESS</span>
+            <BrandIcon /> forklift
           </div>
-          <p className="eyebrow">YOUR DIRECTORY, SIMPLIFIED</p>
-          <h1>Welcome back.</h1>
+          <h1>Sign in</h1>
           <p className="muted">
             Sign in with your directory administrator account.
           </p>
@@ -220,10 +219,6 @@ function App() {
               {busy ? "Connecting…" : "Sign in"}
             </button>
           </form>
-          <div className="secure">
-            <ShieldCheck size={16} /> Encrypted directory connections · Local
-            persistent storage
-          </div>
         </div>
       </div>
     );
@@ -245,12 +240,8 @@ function App() {
           <span className="workspace-icon">
             {data?.directory.name.slice(0, 1) || "F"}
           </span>
-          <div>
-            {data?.directory.name || "Directory"}
-            <small>Local workspace</small>
-          </div>
+          <div>{data?.directory.name || "Directory"}</div>
         </div>
-        <div className="nav-label">WORKSPACE</div>
         <nav>
           {nav.map(([label, Icon]) => (
             <button
@@ -270,16 +261,14 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="secure">
-            <ShieldCheck size={17} /> OpenLDAP, made simple
-          </div>
-          <small>Forklift v0.5 · Managed directories</small>
+          <small>Forklift v0.5</small>
         </div>
       </aside>
       <div className="main">
         <header>
           <span>
-            Workspace <span className="muted">/</span> {page}
+            {data?.directory.name || "Directory"}{" "}
+            <span className="muted">/</span> {page}
           </span>
           <div>
             <button aria-label="Toggle theme" onClick={() => setLight(!light)}>
@@ -314,19 +303,7 @@ function App() {
           )}
           <div className="page-heading">
             <div>
-              <p className="eyebrow">DIRECTORY MANAGEMENT</p>
-              <h1>
-                {page === "Dashboard" ? "Your directory at a glance." : page}
-              </h1>
-              <p className="muted">
-                {page === "Dashboard"
-                  ? "A clear view of the identities that power your homelab."
-                  : page === "Users"
-                    ? "Manage people, credentials, and Unix identities."
-                    : page === "Groups"
-                      ? "Organize accounts into practical access groups."
-                      : "Configuration and operational information."}
-              </p>
+              <h1>{page}</h1>
             </div>
             {["Users", "Groups"].includes(page) ? (
               <button
@@ -360,31 +337,15 @@ function App() {
                 <>
                   <div className="stats">
                     {[
-                      [
-                        Users,
-                        "Directory users",
-                        data.users.length,
-                        "Centrally managed accounts",
-                      ],
-                      [
-                        UsersRound,
-                        "Groups",
-                        data.groups.length,
-                        "POSIX-compatible groups",
-                      ],
+                      [Users, "Directory users", data.users.length],
+                      [UsersRound, "Groups", data.groups.length],
                       [
                         Database,
                         "Directory servers",
                         data.directory_servers.servers.length,
-                        "Registered primary and replicas",
                       ],
-                      [
-                        Server,
-                        "Configured hosts",
-                        data.hosts.length,
-                        "Registered Linux configurations",
-                      ],
-                    ].map(([Icon, label, value, caption]) => {
+                      [Server, "Hosts", data.hosts.length],
+                    ].map(([Icon, label, value]) => {
                       const I = Icon as typeof Users;
                       return (
                         <section className="stat" key={String(label)}>
@@ -393,7 +354,6 @@ function App() {
                             <I size={20} />
                           </div>
                           <strong>{String(value)}</strong>
-                          <small>{String(caption)}</small>
                         </section>
                       );
                     })}
@@ -475,16 +435,6 @@ function App() {
                       </div>
                     </section>
                   </div>
-                  <section className="callout">
-                    <ShieldCheck size={24} />
-                    <div>
-                      <h3>Built on the directory you can trust.</h3>
-                      <p>
-                        OpenLDAP keeps serving identities independently of the
-                        Forklift management app.
-                      </p>
-                    </div>
-                  </section>
                 </>
               )}
               {["Users", "Groups"].includes(page) && (
@@ -664,10 +614,6 @@ function App() {
             </>
           )}
         </main>
-        <footer>
-          Forklift{" "}
-          <span>Self-hosted identities. Straightforward administration.</span>
-        </footer>
       </div>
       {modal && (
         <div className="overlay">

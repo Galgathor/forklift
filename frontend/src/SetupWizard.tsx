@@ -46,14 +46,9 @@ export function SetupWizard({ api, completed }: Props) {
           />
           forklift
         </div>
-        <p className="eyebrow">FIRST-TIME SETUP</p>
-        <h1>
-          {restore ? "Restore your directory" : "A home for your identities."}
-        </h1>
+        <h1>{restore ? "Restore your directory" : "Set up Forklift"}</h1>
         <p className="hint">
-          Forklift creates the primary directory, certificates and protected
-          storage. Configure this server here once; later replicas inherit its
-          connection details.
+          Configure the primary directory or restore a backup.
         </p>
         {error && (
           <div className="error" role="alert">
@@ -226,10 +221,7 @@ export function SetupWizard({ api, completed }: Props) {
                     defaultValue="dc=homelab,dc=internal"
                     required
                   />
-                  <small>
-                    Choose once. Forklift handles the LDAP structure
-                    automatically.
-                  </small>
+                  <small>The base DN cannot be changed after setup.</small>
                 </label>
                 <label>
                   Administrator username

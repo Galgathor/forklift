@@ -94,7 +94,6 @@ export function ReplicaWizard({
       >
         <div className="panel-title">
           <div>
-            <p className="eyebrow">NEW DIRECTORY SERVER</p>
             <h2>Add a replica</h2>
           </div>
           <button aria-label="Close setup" onClick={close}>
@@ -102,10 +101,8 @@ export function ReplicaWizard({
           </button>
         </div>
         <p className="setup-intro">
-          The primary was configured during Forklift setup. The new machine only
-          needs Linux and Docker. Forklift installs its LDAP directory, manages
-          its certificates and applies future credential changes from this
-          WebUI.
+          The new machine needs Linux and Docker. Its primary connection is
+          inherited from setup.
         </p>
         {error && (
           <div className="error" role="alert">

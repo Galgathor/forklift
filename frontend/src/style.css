@@ -115,13 +115,6 @@ small {
 .muted {
   color: var(--muted);
 }
-.eyebrow {
-  font-size: 12px;
-  letter-spacing: 1.8px;
-  color: var(--accent-text);
-  margin-bottom: 12px;
-  font-weight: 600;
-}
 .primary {
   background: var(--accent);
   color: var(--accent-foreground);
@@ -185,12 +178,6 @@ aside {
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 11%, transparent);
   color: var(--accent-text);
-}
-.nav-label {
-  font-size: 11px;
-  color: var(--muted);
-  letter-spacing: 1.5px;
-  margin: 0 12px 12px;
 }
 nav {
   display: flex;
@@ -426,14 +413,6 @@ dd {
   color: var(--muted);
   margin-top: 6px;
 }
-footer {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--muted);
-  padding: 24px 40px;
-  border-top: 1px solid var(--border);
-}
 .table-toolbar {
   display: flex;
   align-items: center;
@@ -524,15 +503,6 @@ td {
 .auth .brand {
   padding: 0;
   margin-bottom: 40px;
-}
-.tag {
-  font-size: 9px;
-  letter-spacing: 1px;
-  color: var(--accent-text);
-  border: 1px solid var(--border);
-  padding: 4px 6px;
-  border-radius: 4px;
-  margin-left: auto;
 }
 .auth h1 {
   font-size: 27px;
@@ -640,7 +610,6 @@ td {
     border-bottom: 1px solid var(--border);
   }
   .workspace,
-  .nav-label,
   .sidebar-bottom {
     display: none;
   }
@@ -693,12 +662,6 @@ td {
   }
   .search {
     width: 100%;
-  }
-  footer {
-    padding: 20px 16px;
-  }
-  footer span {
-    display: none;
   }
   .form-grid {
     grid-template-columns: 1fr;
