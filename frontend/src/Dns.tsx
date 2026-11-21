@@ -33,6 +33,12 @@ type Overview = {
   };
   zones: Zone[];
   changes: { id: string; status: string; error?: string }[];
+  host_tasks?: {
+    id: string;
+    name: string;
+    deleted: boolean;
+    status: { state: string; error?: string; operation_id?: string };
+  }[];
   errors: { at: number; action: string; target: string }[];
 };
 type Api = (path: string, method?: string, body?: unknown) => Promise<any>;
@@ -183,6 +189,66 @@ export function Dns({ api }: { api: Api }) {
           </>
         )}
       </section>
+      {!!overview?.host_tasks?.length && (
+        <section className="panel">
+          <h2>Host DNS tasks</h2>
+          {overview.host_tasks.map((t) => (
+            <div className="event" key={t.id}>
+              <div>
+                <strong>
+                  {t.name}
+                  {t.deleted ? " · deleted host" : ""}
+                </strong>
+                <p className="hint">
+                  {t.status.error || t.status.state.replaceAll("_", " ")}
+                </p>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    perform(async () => {
+                      const status = await api(
+                        `dns/hosts/${t.id}/reconcile`,
+                        "POST",
+                        {},
+                      );
+                      setNotice(status.error || "Host DNS reconciled.");
+                      await load();
+                    })
+                  }
+                >
+                  Reconcile host DNS
+                </button>
+                {t.deleted ? (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      perform(async () => {
+                        if (
+                          confirm(
+                            "Keep all already-applied records for this deleted host and release their ownership?",
+                          )
+                        ) {
+                          await api(`dns/hosts/${t.id}/retain`, "POST", {
+                            acknowledge: true,
+                          });
+                          await load();
+                        }
+                      })
+                    }
+                  >
+                    Keep records; close cleanup
+                  </button>
+                ) : (
+                  <p className="hint">
+                    Review desired names, addresses and pending changes in Hosts
+                    before retrying.
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
       {!!overview?.changes.length && (
         <section className="panel">
           <h2>Pending DNS changes</h2>
@@ -209,7 +275,13 @@ export function Dns({ api }: { api: Api }) {
                   Retry
                 </button>
                 <button
-                  disabled={busy}
+                  disabled={
+                    busy ||
+                    overview.host_tasks?.some(
+                      (t) => t.status.operation_id === c.id,
+                    )
+                  }
+                  title="For host operations, review its settings in Hosts or resolve its cleanup below"
                   onClick={() =>
                     perform(async () => {
                       if (
@@ -593,26 +665,26 @@ function ZoneForm({
             required
             placeholder={
               kind === "reverse4"
-                ? "10.0.20.0/24"
+                ? "192.168.1.0/24"
                 : kind === "reverse6"
                   ? "d.f.ip6.arpa."
-                  : "ad.ilpe.me"
+                  : "example.test"
             }
           />
         </label>
         {kind === "reverse4" && (
           <p className="hint">
-            Use aligned /8, /16 or /24 RFC1918 networks. 10.0.20.0/24 becomes
-            20.0.10.in-addr.arpa.
+            Use aligned /8, /16 or /24 RFC1918 networks. 192.168.1.0/24 becomes
+            1.168.192.in-addr.arpa.
           </p>
         )}
         <label>
           Primary nameserver
-          <input name="nameserver" required placeholder="ns1.ad.ilpe.me." />
+          <input name="nameserver" required placeholder="ns1.example.test." />
         </label>
         <label>
           Nameserver address
-          <input name="nameserver_address" placeholder="10.0.20.2" />
+          <input name="nameserver_address" placeholder="192.168.1.2" />
         </label>
         <p className="hint">
           An in-zone nameserver requires an address. This creates its A or AAAA
@@ -775,7 +847,7 @@ function SoaForm({
     <Dialog title="DNS zone settings" close={close} error={error}>
       <p className="hint">
         SOA serials increase automatically on API changes. This is a standalone
-        zone; secondary enrollment and transfers are not configured in Phase 1.
+        zone; secondary enrollment and transfers are not configured.
       </p>
       <form
         onSubmit={(e) => {

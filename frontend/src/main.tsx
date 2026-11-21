@@ -83,7 +83,13 @@ function App() {
       },
       body: body ? JSON.stringify(body) : undefined,
     });
-    const v = await r.json();
+    const text = await r.text();
+    let v;
+    try {
+      v = JSON.parse(text);
+    } catch {
+      throw Error(text || `Request failed (${r.status})`);
+    }
     if (r.status === 503 && /maintenance/i.test(v.error || ""))
       maintenance.start();
     if (r.status === 401 && session) {

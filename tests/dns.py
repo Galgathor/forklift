@@ -7,9 +7,9 @@ with Stack() as s:
     s.setup()
     r=s.request
     dns_port=s.env['FORKLIFT_DNS_PORT']
-    def get(name='ad.ilpe.me.'):
+    def get(name='example.test.'):
         return r('/api/dns/zones/'+name)
-    def record(name,kind,values,zone='ad.ilpe.me.',**options):
+    def record(name,kind,values,zone='example.test.',**options):
         data=get(zone)
         old=next((v for v in data['rrsets'] if v['name']==(name if name.endswith('.') else zone if name=='@' else name+'.'+zone) and v['type']==kind),None)
         body=dict(name=name,type=kind,ttl=300,values=values,expected_revision=old['revision'] if old else None)|options
@@ -29,72 +29,72 @@ with Stack() as s:
         return json.loads(s.compose('exec','-T','dns','python3','-c',code,input=json.dumps(dict(method=method,path='/api/v1/servers/localhost'+path,body=body,key=key)).encode()).stdout)
     r('/api/dns',authenticated=False,expect=401)
     assert r('/api/dns')['available']
-    base=dict(name='ad.ilpe.me',kind='forward',nameserver='ns1.ad.ilpe.me.',nameserver_address='10.0.20.2',ttl=300)
+    base=dict(name='example.test',kind='forward',nameserver='ns1.example.test.',nameserver_address='192.168.1.2',ttl=300)
     r('/api/dns/zones','POST',base,use_csrf=False,expect=403)
     r('/api/dns/zones','POST',base,authenticated=False,expect=401)
     r('/api/dns/zones','POST',dict(base,name='../../api'),expect=400)
     r('/api/dns/zones','POST',base)
     r('/api/dns/zones','POST',base,expect=400)
-    reverse=dict(name='10.0.20.0/24',kind='reverse4',nameserver='ns1.ad.ilpe.me.',ttl=300)
-    r('/api/dns/zones','POST',dict(reverse,name='10.0.20.1/24'),expect=400)
+    reverse=dict(name='192.168.1.0/24',kind='reverse4',nameserver='ns1.example.test.',ttl=300)
+    r('/api/dns/zones','POST',dict(reverse,name='192.168.1.1/24'),expect=400)
     r('/api/dns/zones','POST',dict(reverse,name='8.8.8.0/24'),expect=400)
     r('/api/dns/zones','POST',reverse)
     r('/api/dns/zones','POST',dict(reverse,name='d.f.ip6.arpa.',kind='reverse6'))
-    record('monolith','A',['10.0.20.10'],auto_ptr=True)
+    record('monolith','A',['192.168.1.50'],auto_ptr=True)
     record('monolith','AAAA',['fd00::10'],auto_ptr=True)
-    dig('monolith.ad.ilpe.me.','A','10.0.20.10')
-    dig('monolith.ad.ilpe.me.','AAAA','fd00::10',tcp=True)
-    dig('10.20.0.10.in-addr.arpa.','PTR','monolith.ad.ilpe.me.')
-    dig('0.1.'+'0.'*28+'d.f.ip6.arpa.','PTR','monolith.ad.ilpe.me.')
-    assert next(v for v in get()['rrsets'] if v['name']=='monolith.ad.ilpe.me.' and v['type']=='A')['auto_ptr']
+    dig('monolith.example.test.','A','192.168.1.50')
+    dig('monolith.example.test.','AAAA','fd00::10',tcp=True)
+    dig('50.1.168.192.in-addr.arpa.','PTR','monolith.example.test.')
+    dig('0.1.'+'0.'*28+'d.f.ip6.arpa.','PTR','monolith.example.test.')
+    assert next(v for v in get()['rrsets'] if v['name']=='monolith.example.test.' and v['type']=='A')['auto_ptr']
     print('PASS: mandatory DNS initialization, authorizations, forward/private reverse zones, real UDP/TCP A/AAAA answers and matching IPv4/IPv6 PTR.',flush=True)
     before=get()['serial']
-    for owner,kind,value in [('alias','CNAME','monolith.ad.ilpe.me.'),('@','MX','10 mail.ad.ilpe.me.'),('_ldap._tcp','SRV','0 5 389 monolith.ad.ilpe.me.'),('@','TXT','"v=spf1 -all"'),('delegated','NS','ns1.ad.ilpe.me.')]:
-        record(owner,kind,[value]);dig((owner+'.' if owner!='@' else '')+'ad.ilpe.me.',kind,value,aa=owner!='delegated')
+    for owner,kind,value in [('alias','CNAME','monolith.example.test.'),('@','MX','10 mail.example.test.'),('_ldap._tcp','SRV','0 5 389 monolith.example.test.'),('@','TXT','"v=spf1 -all"'),('delegated','NS','ns1.example.test.')]:
+        record(owner,kind,[value]);dig((owner+'.' if owner!='@' else '')+'example.test.',kind,value,aa=owner!='delegated')
     assert get()['serial']>before
     record('escaped','TXT',['"\\104ello"'])
-    dig('escaped.ad.ilpe.me.','TXT','"hello"')
-    r('/api/dns/zones/ad.ilpe.me./records','POST',dict(name='duplicate-txt',type='TXT',ttl=300,values=['"hello"','"\\104ello"']),expect=400)
+    dig('escaped.example.test.','TXT','"hello"')
+    r('/api/dns/zones/example.test./records','POST',dict(name='duplicate-txt',type='TXT',ttl=300,values=['"hello"','"\\104ello"']),expect=400)
 
-    record('@','NS',['ns1.ad.ilpe.me.','ns2.ad.ilpe.me.'])
-    dig('ad.ilpe.me.','NS','ns2.ad.ilpe.me.')
-    old=next(v for v in get()['rrsets'] if v['name']=='monolith.ad.ilpe.me.' and v['type']=='A')
-    record('monolith','A',['10.0.20.11','10.0.20.12'],auto_ptr=True)
-    r('/api/dns/zones/ad.ilpe.me./records','POST',dict(name='monolith',type='A',ttl=300,values=['10.0.20.99'],expected_revision=old['revision']),expect=409)
-    dig('11.20.0.10.in-addr.arpa.','PTR','monolith.ad.ilpe.me.')
-    dig('10.20.0.10.in-addr.arpa.','PTR',rcode='NXDOMAIN')
+    record('@','NS',['ns1.example.test.','ns2.example.test.'])
+    dig('example.test.','NS','ns2.example.test.')
+    old=next(v for v in get()['rrsets'] if v['name']=='monolith.example.test.' and v['type']=='A')
+    record('monolith','A',['192.168.1.11','192.168.1.12'],auto_ptr=True)
+    r('/api/dns/zones/example.test./records','POST',dict(name='monolith',type='A',ttl=300,values=['192.168.1.99'],expected_revision=old['revision']),expect=409)
+    dig('11.1.168.192.in-addr.arpa.','PTR','monolith.example.test.')
+    dig('50.1.168.192.in-addr.arpa.','PTR',rcode='NXDOMAIN')
     # Explicit PTR edits relinquish automatic ownership; later forward changes preserve them.
-    record('11','PTR',['manual.ad.ilpe.me.','monolith.ad.ilpe.me.'],zone='20.0.10.in-addr.arpa.')
-    record('monolith','A',['10.0.20.12'],auto_ptr=True)
-    dig('11.20.0.10.in-addr.arpa.','PTR','manual.ad.ilpe.me.')
-    dig('11.20.0.10.in-addr.arpa.','PTR','monolith.ad.ilpe.me.')
-    invalid=dict(name='alias',type='A',ttl=300,values=['10.0.20.10'])
-    r('/api/dns/zones/ad.ilpe.me./records','POST',invalid,expect=400)
-    r('/api/dns/zones/ad.ilpe.me./records','POST',dict(invalid,name='@',type='CNAME',values=['monolith.ad.ilpe.me.']),expect=400)
-    r('/api/dns/zones/ad.ilpe.me./records','POST',dict(invalid,name='bad',values=['10.0.20.10','10.0.20.10']),expect=400)
-    r('/api/dns/zones/ad.ilpe.me./records','POST',dict(invalid,name='outside.example.'),expect=400)
-    r('/api/dns/zones/ad.ilpe.me./records','POST',dict(invalid,name='no-reverse',values=['10.99.0.1'],auto_ptr=True),expect=400)
+    record('11','PTR',['manual.example.test.','monolith.example.test.'],zone='1.168.192.in-addr.arpa.')
+    record('monolith','A',['192.168.1.12'],auto_ptr=True)
+    dig('11.1.168.192.in-addr.arpa.','PTR','manual.example.test.')
+    dig('11.1.168.192.in-addr.arpa.','PTR','monolith.example.test.')
+    invalid=dict(name='alias',type='A',ttl=300,values=['192.168.1.50'])
+    r('/api/dns/zones/example.test./records','POST',invalid,expect=400)
+    r('/api/dns/zones/example.test./records','POST',dict(invalid,name='@',type='CNAME',values=['monolith.example.test.']),expect=400)
+    r('/api/dns/zones/example.test./records','POST',dict(invalid,name='bad',values=['192.168.1.50','192.168.1.50']),expect=400)
+    r('/api/dns/zones/example.test./records','POST',dict(invalid,name='outside.example.'),expect=400)
+    r('/api/dns/zones/example.test./records','POST',dict(invalid,name='no-reverse',values=['192.168.2.1'],auto_ptr=True),expect=400)
     record('alias','CNAME',[],delete=True,acknowledge=True)
-    dig('alias.ad.ilpe.me.','CNAME',rcode='NXDOMAIN')
+    dig('alias.example.test.','CNAME',rcode='NXDOMAIN')
     data=get();soa=next(v for v in data['rrsets'] if v['type']=='SOA')
-    r('/api/dns/zones/ad.ilpe.me.','PUT',dict(primary='ns1.ad.ilpe.me.',contact='dnsadmin.ad.ilpe.me.',refresh=7200,retry=1800,expire=604800,minimum=300,ttl=600,expected_revision=soa['revision']))
-    dig('ad.ilpe.me.','SOA','dnsadmin.ad.ilpe.me.')
-    exported,_=r('/api/dns/zones/ad.ilpe.me./export',raw=True)
-    assert b'monolith' in exported and b'10.0.20.12' in exported
-    r('/api/dns/zones/ad.ilpe.me.','DELETE',dict(acknowledge=False,confirm_name='ad.ilpe.me.',expected_revision=get()['revision']),expect=400)
-    r('/api/dns/zones/ad.ilpe.me.','DELETE',dict(acknowledge=True,confirm_name='wrong.',expected_revision=get()['revision']),expect=400)
-    r('/api/dns/zones/ad.ilpe.me.','DELETE',dict(acknowledge=True,confirm_name='ad.ilpe.me.',expected_revision='stale'),expect=409)
-    axfr=run(['docker','run','--rm','--network','host','--entrypoint','dig','forklift-dns:latest','@127.0.0.1','-p',dns_port,'ad.ilpe.me.','AXFR'],check=False)
+    r('/api/dns/zones/example.test.','PUT',dict(primary='ns1.example.test.',contact='dnsadmin.example.test.',refresh=7200,retry=1800,expire=604800,minimum=300,ttl=600,expected_revision=soa['revision']))
+    dig('example.test.','SOA','dnsadmin.example.test.')
+    exported,_=r('/api/dns/zones/example.test./export',raw=True)
+    assert b'monolith' in exported and b'192.168.1.12' in exported
+    r('/api/dns/zones/example.test.','DELETE',dict(acknowledge=False,confirm_name='example.test.',expected_revision=get()['revision']),expect=400)
+    r('/api/dns/zones/example.test.','DELETE',dict(acknowledge=True,confirm_name='wrong.',expected_revision=get()['revision']),expect=400)
+    r('/api/dns/zones/example.test.','DELETE',dict(acknowledge=True,confirm_name='example.test.',expected_revision='stale'),expect=409)
+    axfr=run(['docker','run','--rm','--network','host','--entrypoint','dig','forklift-dns:latest','@127.0.0.1','-p',dns_port,'example.test.','AXFR'],check=False)
     assert b'Transfer failed' in axfr.stdout or b'failed' in axfr.stderr.lower()
     assert native('GET','/zones',key='invalid')['status']==401
     # The native DNS UPDATE protocol is disabled, independently of WebUI authorization.
-    update=run(['docker','run','--rm','-i','--network','host','--entrypoint','nsupdate','forklift-dns:latest'],data=('server 127.0.0.1 '+dns_port+'\nzone ad.ilpe.me.\nupdate add unauthorized.ad.ilpe.me. 300 A 10.0.20.250\nsend\n').encode(),check=False)
+    update=run(['docker','run','--rm','-i','--network','host','--entrypoint','nsupdate','forklift-dns:latest'],data=('server 127.0.0.1 '+dns_port+'\nzone example.test.\nupdate add unauthorized.example.test. 300 A 192.168.1.250\nsend\n').encode(),check=False)
     assert update.returncode and any(code in update.stderr+update.stdout for code in [b'REFUSED',b'NOTIMP',b'NOTAUTH'])
-    dig('unauthorized.ad.ilpe.me.','A',rcode='NXDOMAIN')
-    foreign=native('POST','/zones',dict(name='foreign.test.',kind='Native',account='other-admin',nameservers=['ns1.ad.ilpe.me.']))
+    dig('unauthorized.example.test.','A',rcode='NXDOMAIN')
+    foreign=native('POST','/zones',dict(name='foreign.test.',kind='Native',account='other-admin',nameservers=['ns1.example.test.']))
     assert foreign['status']==201
     foreign_zone=get('foreign.test.');assert not foreign_zone['managed']
-    r('/api/dns/zones/foreign.test./records','POST',dict(name='host',type='A',ttl=300,values=['10.0.20.1']),expect=400)
+    r('/api/dns/zones/foreign.test./records','POST',dict(name='host',type='A',ttl=300,values=['192.168.1.1']),expect=400)
     r('/api/dns/zones/foreign.test.','DELETE',dict(acknowledge=True,confirm_name='foreign.test.',expected_revision=foreign_zone['revision']),expect=400)
     assert native('DELETE','/zones/foreign.test.')['status']==204
 
@@ -107,14 +107,14 @@ with Stack() as s:
     r('/api/dns/rotate','POST',dict(acknowledge=True))
     assert native('GET','/zones',key=old_key)['status']==401
     assert old_key not in json.dumps(r('/api/dns'))
-    dig('monolith.ad.ilpe.me.','A','10.0.20.12')
+    dig('monolith.example.test.','A','192.168.1.12')
     print('PASS: CNAME/MX/TXT/SRV/NS record sets, serials, revisions, validation, PTR ownership, deletion safeguards, export, refused transfers and API-key rotation.',flush=True)
     # Seed the durable state of a process interrupted after its first actual DNS write.
-    record('recover','A',['10.0.20.33'])
-    rr=next(v for v in get()['rrsets'] if v['name']=='recover.ad.ilpe.me.' and v['type']=='A')
+    record('recover','A',['192.168.1.33'])
+    rr=next(v for v in get()['rrsets'] if v['name']=='recover.example.test.' and v['type']=='A')
     rr.pop('revision');rr.pop('auto_ptr',None)
     operation=secrets.token_hex(16)
-    change=dict(id=operation,key='ad.ilpe.me./recover.ad.ilpe.me./A',links=[],warnings=[],clear_ptr=None,steps=[dict(zone='ad.ilpe.me.',name='recover.ad.ilpe.me.',rr_type='A',before=None,after=rr),dict(zone='20.0.10.in-addr.arpa.',name='33.20.0.10.in-addr.arpa.',rr_type='PTR',before=None,after=dict(name='33.20.0.10.in-addr.arpa.',type='PTR',ttl=300,records=[dict(content='recover.ad.ilpe.me.',disabled=False)],comments=[]))])
+    change=dict(id=operation,key='example.test./recover.example.test./A',links=[],warnings=[],clear_ptr=None,steps=[dict(zone='example.test.',name='recover.example.test.',rr_type='A',before=None,after=rr),dict(zone='1.168.192.in-addr.arpa.',name='33.1.168.192.in-addr.arpa.',rr_type='PTR',before=None,after=dict(name='33.1.168.192.in-addr.arpa.',type='PTR',ttl=300,records=[dict(content='recover.example.test.',disabled=False)],comments=[]))])
     seed="import json,sqlite3,sys,time;p=json.load(sys.stdin);d=sqlite3.connect('/metadata/forklift.db');d.execute('INSERT INTO dns_changes VALUES(?,?,?,?,?)',(p['id'],int(time.time()),json.dumps(p),'pending',None));d.commit()"
     s.compose('exec','-T','maintenance','python3','-c',seed,input=json.dumps(change).encode())
     s.compose('stop','dns')
@@ -126,7 +126,7 @@ with Stack() as s:
         if r('/api/dns')['available']:break
         time.sleep(.3)
     assert r('/api/dns/changes/'+operation+'/retry','POST',{})['status']=='completed'
-    dig('33.20.0.10.in-addr.arpa.','PTR','recover.ad.ilpe.me.')
+    dig('33.1.168.192.in-addr.arpa.','PTR','recover.example.test.')
     # An unexpected native-process exit restarts the container without losing SQLite state.
     s.compose('exec','-T','dns','python3','-c',"import os,signal;from pathlib import Path;pid=next(int(p.name) for p in Path('/proc').iterdir() if p.name.isdigit() and (p/'comm').read_text().strip()=='pdns_server');os.kill(pid,signal.SIGKILL)")
     time.sleep(1.2)
@@ -134,15 +134,15 @@ with Stack() as s:
         if r('/api/dns')['available']:break
         time.sleep(.3)
     else:raise AssertionError('PowerDNS did not recover after native process failure')
-    dig('monolith.ad.ilpe.me.','A','10.0.20.12')
+    dig('monolith.example.test.','A','192.168.1.12')
     s.compose('up','-d','--no-build','--force-recreate','--wait')
-    s.wait();r('/api/me');dig('monolith.ad.ilpe.me.','A','10.0.20.12')
+    s.wait();r('/api/me');dig('monolith.example.test.','A','192.168.1.12')
     # DNS has no runtime dependency on Forklift or LDAP.
-    s.compose('stop','manager','ldap');dig('monolith.ad.ilpe.me.','A','10.0.20.12',tcp=True)
+    s.compose('stop','manager','ldap');dig('monolith.example.test.','A','192.168.1.12',tcp=True)
     s.compose('start','ldap','manager');s.wait()
-    data=get('20.0.10.in-addr.arpa.')
-    r('/api/dns/zones/20.0.10.in-addr.arpa.','DELETE',dict(acknowledge=True,confirm_name=data['name'],expected_revision=data['revision']))
-    assert all(v['name']!='20.0.10.in-addr.arpa.' for v in r('/api/dns')['zones'])
-    record('monolith','A',['10.0.20.13'])
-    dig('monolith.ad.ilpe.me.','A','10.0.20.13')
+    data=get('1.168.192.in-addr.arpa.')
+    r('/api/dns/zones/1.168.192.in-addr.arpa.','DELETE',dict(acknowledge=True,confirm_name=data['name'],expected_revision=data['revision']))
+    assert all(v['name']!='1.168.192.in-addr.arpa.' for v in r('/api/dns')['zones'])
+    record('monolith','A',['192.168.1.13'])
+    dig('monolith.example.test.','A','192.168.1.13')
     print('PASS: persistent data/session recreation, partial-change recovery through real REST/DNS, LDAP with DNS stopped, DNS with manager/LDAP stopped, and confirmed zone deletion.',flush=True)

@@ -44,13 +44,13 @@ Choose the base DN carefully: suffix changes are unsupported. Setup refuses to o
 
 PowerDNS is a standard part of the management stack. Open **DNS** to create forward/private reverse zones, manage record sets and matching PTR records, edit SOA/NS, inspect real service health, export zones and rotate the DNS API credential. Its own SQLite data persists independently of LDAP. Existing schema-5 installations can upgrade without resetting any directory/metadata volumes.
 
-Set `FORKLIFT_DNS_BIND` and `FORKLIFT_DNS_PORT` in deployment settings before starting. Defaults publish **both TCP and UDP** on `127.0.0.1:53`. If AdGuard Home or another DNS service already owns port 53, use a suitable private address/nonstandard port such as `10.0.20.2:1053`; do not replace your current resolver. Configure AdGuard conditional forwarding for managed forward/reverse zones. No host resolver or AdGuard settings are changed automatically.
+Set `FORKLIFT_DNS_BIND` and `FORKLIFT_DNS_PORT` in deployment settings before starting. Defaults publish **both TCP and UDP** on `127.0.0.1:53`. If another DNS service already owns port 53, use a suitable private address/nonstandard port such as `192.168.1.2:1053`; do not replace your current resolver. Configure resolver conditional forwarding for managed forward/reverse zones. No host resolver settings are changed automatically.
 
 The PowerDNS HTTP API binds to container loopback and is reached only through protected Unix transport. It is never published through Docker or NPM. DNS keeps answering when Forklift/LDAP is down; DNS failures do not block LDAP readiness or authentication.
 
-**Phase 1 is single-node DNS.** Host lifecycle registration, DNS secondary enrollment/transfers and integrated encrypted DNS backups/import remain later phases. The existing LDAP replica stack does not deploy a DNS secondary yet. Existing encrypted Forklift backups do **not** include DNS database/secrets volumes; maintain a separate consistent infrastructure backup until DNS recovery is integrated.
+**Phase 2 adds host DNS registration.** Hosts can manage A/AAAA and matching PTR values, safely update names/addresses, defer or retry changes, and explicitly retain/delete owned records. DNS remains single-node; secondary enrollment/transfers and integrated encrypted DNS backups/import remain later phases. The existing LDAP replica stack does not deploy a DNS secondary yet. Existing encrypted Forklift backups do **not** include DNS database/secrets volumes; maintain a separate consistent infrastructure backup until DNS recovery is integrated.
 
-Networking/AdGuard examples, supported records and reverse boundaries, PTR reconciliation, backups, AD migration and limitations: [DNS operations](docs/dns.md).
+Networking/resolver examples, supported records and reverse boundaries, PTR reconciliation, backups, AD migration and limitations: [DNS operations](docs/dns.md).
 
 ## Nginx Proxy Manager
 

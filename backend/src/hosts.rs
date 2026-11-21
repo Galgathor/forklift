@@ -1,4 +1,5 @@
 use super::*;
+use crate::dns::host_records as dns_hosts;
 use serde::Serialize;
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -17,6 +18,10 @@ pub(super) struct Host {
     pub directory_role: Option<String>,
     #[serde(flatten)]
     pub draft: HostDraft,
+    #[serde(default)]
+    pub dns: Option<dns_hosts::Config>,
+    #[serde(default)]
+    pub dns_status: Option<dns_hosts::Status>,
     pub revision: i64,
     pub exported_revision: Option<i64>,
     pub exported_at: Option<i64>,
@@ -36,20 +41,24 @@ fn hostname(s: &str) -> bool {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
         })
 }
+#[cfg(test)]
 fn validate(p: &HostDraft) -> Result<()> {
+    validate_inventory(p, false)
+}
+fn validate_inventory(p: &HostDraft, inventory: bool) -> Result<()> {
     if p.name.trim().is_empty()
         || p.name.len() > 100
         || p.name.chars().any(char::is_control)
         || !hostname(&p.hostname)
         || p.endpoints.is_empty()
         || p.endpoints.len() > 8
-        || p.allowed_groups.is_empty()
+        || (!inventory && p.allowed_groups.is_empty())
         || p.allowed_groups.len() > 32
         || p.allowed_groups.iter().any(|s| !valid(s))
         || p.allowed_groups.iter().collect::<HashSet<_>>().len() != p.allowed_groups.len()
     {
         return Err(bad(
-            "Provide a name, lowercase DNS hostname, 1–8 LDAPS endpoints and 1–32 distinct existing login groups",
+            "Provide a name, lowercase DNS hostname and 1–8 LDAPS endpoints. Select up to 32 distinct existing login groups; at least one is required unless this is DNS-only or directory inventory",
         ));
     }
     for endpoint in &p.endpoints {
@@ -100,15 +109,17 @@ pub(super) fn list(a: &App) -> Result<Vec<Host>> {
         .map_err(anyhow::Error::from)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(anyhow::Error::from)?;
+    drop(q);
+    drop(db);
     data.into_iter()
         .map(|s| {
-            serde_json::from_str(&s)
-                .map_err(anyhow::Error::from)
-                .map_err(Error::from)
+            let mut h: Host = serde_json::from_str(&s).map_err(anyhow::Error::from)?;
+            h.dns_status = dns_hosts::status(a, &h.id, h.dns.as_ref(), h.revision)?;
+            Ok(h)
         })
         .collect()
 }
-fn load(a: &App, id: &str) -> Result<Host> {
+pub(crate) fn load(a: &App, id: &str) -> Result<Host> {
     valid_id(id)?;
     list(a)?
         .into_iter()
@@ -143,27 +154,44 @@ pub(super) fn store(a: &App, h: &Host) -> Result<()> {
     {
         return Err(bad("A host with that hostname already exists"));
     }
-    a.db.lock().unwrap().execute("INSERT INTO hosts(id,hostname,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET hostname=excluded.hostname,data=excluded.data", params![h.id,h.draft.hostname,serde_json::to_string(h).map_err(anyhow::Error::from)?]).map_err(anyhow::Error::from)?;
+    let mut stored = h.clone();
+    stored.dns_status = None;
+    a.db.lock().unwrap().execute("INSERT INTO hosts(id,hostname,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET hostname=excluded.hostname,data=excluded.data", params![h.id,h.draft.hostname,serde_json::to_string(&stored).map_err(anyhow::Error::from)?]).map_err(anyhow::Error::from)?;
     Ok(())
 }
 pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
     admin(&a, &h, false).await?;
     Ok(Json(json!(list(&a)?)))
 }
+fn yes() -> bool {
+    true
+}
+#[derive(Deserialize)]
+pub(super) struct Create {
+    #[serde(flatten)]
+    draft: HostDraft,
+    dns: Option<dns_hosts::Config>,
+    #[serde(default = "yes")]
+    dns_apply: bool,
+}
 pub(super) async fn create(
     State(a): State<App>,
     h: HeaderMap,
-    Json(p): Json<HostDraft>,
+    Json(p): Json<Create>,
 ) -> Result<Json<Value>> {
     let who = admin(&a, &h, true).await?;
-    validate(&p)?;
+    let dns = p.dns.map(dns_hosts::Config::normalize).transpose()?;
+    validate_inventory(&p.draft, dns.is_some())?;
     let _guard = a.gate.lock().await;
-    check_groups(&a, &p).await?;
+    dns_hosts::validate_unique(&a, "", dns.as_ref())?;
+    check_groups(&a, &p.draft).await?;
     let host = Host {
         directory_id: None,
         directory_role: None,
         id: token()[..32].into(),
-        draft: p,
+        draft: p.draft,
+        dns,
+        dns_status: None,
         revision: 1,
         exported_revision: None,
         exported_at: None,
@@ -173,13 +201,41 @@ pub(super) async fn create(
     audit(&a, &who, "attempt register host", &host.id)?;
     store(&a, &host)?;
     audit(&a, &who, "register host", &host.id)?;
-    Ok(Json(json!(host)))
+    finish_dns(&a, &who, &host, p.dns_apply).await;
+    Ok(Json(json!(load(&a, &host.id)?)))
+}
+async fn finish_dns(a: &App, who: &str, host: &Host, apply: bool) {
+    if host.dns.is_some() || host.dns_status.is_some() {
+        if let Err(error) = dns_hosts::intent(a, host) {
+            eprintln!("Host DNS intent failed: {}", error.1);
+            return;
+        }
+        if apply && let Err(error) = dns_hosts::reconcile_locked(a, who, &host.id).await {
+            eprintln!("Host DNS reconciliation failed: {}", error.1);
+        }
+    }
+}
+#[derive(Default)]
+enum DnsEdit {
+    #[default]
+    Unchanged,
+    Set(Option<dns_hosts::Config>),
+}
+impl<'de> Deserialize<'de> for DnsEdit {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        Ok(Self::Set(Option::deserialize(d)?))
+    }
 }
 #[derive(Deserialize)]
 pub(super) struct Update {
     #[serde(flatten)]
     draft: HostDraft,
     revision: i64,
+    #[serde(default)]
+    dns: DnsEdit,
+    #[serde(default = "yes")]
+    dns_apply: bool,
+    dns_cleanup: Option<String>,
 }
 pub(super) async fn update(
     State(a): State<App>,
@@ -188,7 +244,6 @@ pub(super) async fn update(
     Json(p): Json<Update>,
 ) -> Result<Json<Value>> {
     let who = admin(&a, &h, true).await?;
-    validate(&p.draft)?;
     let _guard = a.gate.lock().await;
     let mut host = load(&a, &id)?;
     if host.directory_id.is_some() && host.draft.hostname != p.draft.hostname {
@@ -202,6 +257,20 @@ pub(super) async fn update(
             "Host changed; refresh before editing".into(),
         ));
     }
+    let explicit = matches!(p.dns, DnsEdit::Set(_));
+    let disabling =
+        matches!(p.dns, DnsEdit::Set(None)) && (host.dns.is_some() || host.dns_status.is_some());
+    if disabling && !matches!(p.dns_cleanup.as_deref(), Some("keep" | "delete")) {
+        return Err(bad("Choose whether to keep or delete managed DNS records"));
+    }
+    if let DnsEdit::Set(config) = p.dns {
+        host.dns = config.map(dns_hosts::Config::normalize).transpose()?;
+    }
+    validate_inventory(
+        &p.draft,
+        host.dns.is_some() || host.directory_id.is_some() || host.draft.allowed_groups.is_empty(),
+    )?;
+    dns_hosts::validate_unique(&a, &id, host.dns.as_ref())?;
     check_groups(&a, &p.draft).await?;
     host.draft = p.draft;
     host.revision += 1;
@@ -209,18 +278,38 @@ pub(super) async fn update(
     audit(&a, &who, "attempt update host", &id)?;
     store(&a, &host)?;
     audit(&a, &who, "update host", &id)?;
-    Ok(Json(json!(host)))
+    if disabling && p.dns_cleanup.as_deref() == Some("keep") {
+        dns_hosts::detach(&a, &host)?;
+    } else {
+        finish_dns(&a, &who, &host, explicit && p.dns_apply).await;
+    }
+    Ok(Json(json!(load(&a, &id)?)))
+}
+#[derive(Deserialize)]
+pub(super) struct Delete {
+    dns: Option<String>,
+    revision: Option<i64>,
 }
 pub(super) async fn delete(
     State(a): State<App>,
     h: HeaderMap,
     Path(id): Path<String>,
+    axum::extract::Query(p): axum::extract::Query<Delete>,
 ) -> Result<Json<Value>> {
     let who = admin(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     let host = load(&a, &id)?;
     if host.directory_id.is_some() {
         return Err(bad("Remove directory servers through Directory Servers"));
+    }
+    let has_dns = host.dns.is_some() || host.dns_status.is_some();
+    if has_dns
+        && (p.revision != Some(host.revision)
+            || !matches!(p.dns.as_deref(), Some("keep" | "delete")))
+    {
+        return Err(bad(
+            "Refresh this host and explicitly choose to keep or delete its managed DNS records",
+        ));
     }
     audit(&a, &who, "attempt delete host", &id)?;
     let mut l = service(&a).await?;
@@ -231,12 +320,18 @@ pub(super) async fn delete(
     {
         l.delete(&format!("cn=host-{id},{b}")).await?.success()?;
     }
-    a.db.lock()
-        .unwrap()
-        .execute("DELETE FROM hosts WHERE id=?", [&id])
-        .map_err(anyhow::Error::from)?;
+    dns_hosts::retire(&a, &host, has_dns && p.dns.as_deref() == Some("delete"))?;
     audit(&a, &who, "delete host", &id)?;
-    Ok(Json(json!({"ok":true})))
+    let status = if has_dns && p.dns.as_deref() == Some("delete") {
+        Some(
+            dns_hosts::reconcile_locked(&a, &who, &id)
+                .await
+                .unwrap_or_else(|e| dns_hosts::Status::failed(&e.1)),
+        )
+    } else {
+        None
+    };
+    Ok(Json(json!({"ok":true,"dns_status":status})))
 }
 pub(super) fn sssd(h: &Host, b: &str, credential: &str) -> String {
     format!(
@@ -404,6 +499,16 @@ mod tests {
         assert!(validate(&h).is_err());
     }
     #[test]
+    fn omitted_dns_preserves_settings_but_null_requests_detachment() {
+        let body = json!({"name":"Server", "hostname":"server.example.test", "endpoints":["ldaps://ldap.example.test"], "allowed_groups":["administrators"], "revision":1});
+        let omitted: Update = serde_json::from_value(body.clone()).unwrap();
+        assert!(matches!(omitted.dns, DnsEdit::Unchanged));
+        let mut body = body;
+        body["dns"] = Value::Null;
+        let detached: Update = serde_json::from_value(body).unwrap();
+        assert!(matches!(detached.dns, DnsEdit::Set(None)));
+    }
+    #[test]
     fn migration_preserves_existing_metadata() {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch("CREATE TABLE settings(value TEXT); INSERT INTO settings VALUES('preserve'); PRAGMA user_version=1;").unwrap();
@@ -452,6 +557,8 @@ pub(super) fn sync_directory(
             endpoints: vec![primary],
             allowed_groups: vec![],
         },
+        dns: None,
+        dns_status: None,
         revision: 1,
         exported_revision: None,
         exported_at: None,
@@ -469,7 +576,7 @@ pub(super) fn unlink_directory(a: &App, directory_id: &str) -> Result<()> {
         .into_iter()
         .filter(|h| h.directory_id.as_deref() == Some(directory_id))
     {
-        if host.draft.allowed_groups.is_empty() {
+        if host.draft.allowed_groups.is_empty() && host.dns.is_none() && host.dns_status.is_none() {
             a.db.lock()
                 .unwrap()
                 .execute("DELETE FROM hosts WHERE id=?", [host.id])

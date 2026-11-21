@@ -4,7 +4,7 @@ Validated on Linux/amd64 with Docker Engine, native OpenLDAP 2.6.10 and isolated
 
 | Check                                                                     | Result                                                                                                                                        |
 | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Locked Rust unit tests, formatting and Clippy with warnings denied        | Passed; 10 unit tests                                                                                                                         |
+| Locked Rust unit tests, formatting and Clippy with warnings denied        | Passed; 12 unit tests                                                                                                                         |
 | Strict TypeScript/Vite production build                                   | Passed                                                                                                                                        |
 | Python compilation, emergency shell syntax, Compose validation            | Passed                                                                                                                                        |
 | Manager, primary and network-isolated maintenance images                  | Built successfully                                                                                                                            |
@@ -32,9 +32,15 @@ Failure tests passed for unavailable DNS while LDAP remained usable, interrupted
 
 `tests/dns_upgrade.py` built the actual pre-DNS manager from commit `804bb40`, populated LDAP/schema-5 metadata, then upgraded the deployment. Passwords, Unix IDs, groups, host policy and the administrator session were preserved while DNS initialized without resetting LDAP or changing the schema version.
 
-Run `python3 tests/dns.py` and `python3 tests/dns_upgrade.py` after building images. The upgrade fixture needs Git history. DNS tests use random loopback TCP/UDP ports, isolated volumes and the native `dig`/`nsupdate` clients. No existing DNS/AdGuard service or default installation is modified.
+Run `python3 tests/dns.py` and `python3 tests/dns_upgrade.py` after building images. The upgrade fixture needs Git history. DNS tests use random loopback TCP/UDP ports, isolated volumes and the native `dig`/`nsupdate` clients. No existing DNS/resolver service or default installation is modified.
 
-Unimplemented DNS phases: host lifecycle integration, secondary enrollment/TSIG transfers/failover, bulk zone import and integrated encrypted DNS backup/restore. The existing encrypted LDAP snapshot excludes separate DNS data/secrets volumes. Multi-host DNS, schema-changing PowerDNS upgrades, infrastructure DNS restoration, large/load tests and an external security audit remain unverified. See [DNS operations](dns.md) for deployment, AdGuard forwarding and recovery boundaries.
+Unimplemented DNS phases: secondary enrollment/TSIG transfers/failover, bulk zone import and integrated encrypted DNS backup/restore. The existing encrypted LDAP snapshot excludes separate DNS data/secrets volumes. Multi-host DNS, schema-changing PowerDNS upgrades, infrastructure DNS restoration, large/load tests and an external security audit remain unverified. See [DNS operations](dns.md) for deployment, resolver forwarding and recovery boundaries.
+
+## Host DNS integration (Phase 2)
+
+Run `python3 tests/dns_hosts.py` against the built manager/DNS images. The suite passed real published DNS checks for host A/AAAA and IPv4/IPv6 PTR values, relative names, record-set merging and TTL preservation, preexisting/manual/disabled value protection, shared PTR ownership, rename/address changes, apply/defer, stale revisions, authenticated/CSRF-protected writes and explicit retention/deletion. It exercises DNS outages independently of LDAP, persisted retry state across manager recreation, deleted-host cleanup, interruption after an actual native write, conflicting external edits, superseded-plan rejection, primary inventory registration and volume persistence.
+
+The Chromium suite also passed registration without SSH groups, editing addresses, deferred application, reconciliation, explicit DNS retention during deletion, actual retained values in the DNS page and responsive host forms. This phase does not include host liveness monitoring, DNS replication, continuous DNS drift polling, bulk import or integrated DNS recovery. Native comment ownership is a safety check with recorded metadata, not a lock against concurrent external PowerDNS administrators. One expanded run failed directory readiness after full-stack recreation with a missing LDAPI socket; the isolated rerun, including full recreation, passed. The cause of that transient existing-directory restart failure was not established; no LDAP configuration was changed for this feature.
 
 ## Run the suites
 

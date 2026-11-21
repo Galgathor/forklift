@@ -1,4 +1,4 @@
-# DNS management (Phase 1)
+# DNS management
 
 PowerDNS Authoritative is a standard part of Forklift. It uses its own persistent SQLite database and continues answering configured zones when the manager or LDAP is stopped. DNS outages do not block LDAP startup, readiness or authentication. There is no recursive resolver, Kerberos, Windows domain join or automatic primary promotion.
 
@@ -15,7 +15,7 @@ FORKLIFT_DNS_BIND=127.0.0.1
 FORKLIFT_DNS_PORT=53
 ```
 
-For LAN DNS use the Docker host's specific private address. If another service owns port 53, choose a different address/port, for example `10.0.20.2:1053`. TCP **and** UDP are published. Forklift does not change your resolver, AdGuard or host DNS settings.
+For LAN DNS use the Docker host's specific private address. If another service owns port 53, choose a different address/port, for example `192.168.1.2:1053`. TCP **and** UDP are published. Forklift does not change your resolver or host DNS settings.
 
 Docker publishes host ports, not an additional LAN IP for a container. A service bound to `0.0.0.0:53` may conflict even if PowerDNS uses a specific host IP. Use a nonstandard port plus conditional forwarding, a separate host/IP, or reconfigure the existing service through its own management interface. Ordinary clients generally expect port 53 and cannot use a custom port supplied through standard DHCP DNS settings. Docker-published ports may bypass some host firewall rules; restrict intended client networks using appropriate Docker-aware rules. IPv4 is the current publishing default; AAAA data can still be served over IPv4 DNS transport.
 
@@ -25,8 +25,8 @@ The PowerDNS REST API binds **only to container loopback**. Forklift accesses it
 
 Open **DNS → Create zone**. Choose:
 
-- Forward: an internal domain such as `ad.ilpe.me`.
-- Private IPv4 reverse: an aligned RFC1918 `/8`, `/16` or `/24`, such as `10.0.20.0/24` → `20.0.10.in-addr.arpa.`. Classless RFC2317 delegation is not implemented.
+- Forward: an internal domain such as `example.test`.
+- Private IPv4 reverse: an aligned RFC1918 `/8`, `/16` or `/24`, such as `192.168.1.0/24` → `1.168.192.in-addr.arpa.`. Classless RFC2317 delegation is not implemented.
 - ULA IPv6 reverse: a nibble-form zone within `c.f.ip6.arpa.` or `d.f.ip6.arpa.`, for example `d.f.ip6.arpa.` for `fd00::/8`.
 
 Specify the primary nameserver and, when it belongs to the new zone, its IPv4/IPv6 address. Forklift creates SOA, NS and any in-zone nameserver address. Additional NS values can be edited afterward. Zone settings expose SOA mailbox/name/timers; SOA serials increase through PowerDNS's `INCREASE` API policy. Zone kinds are **Native / standalone**, not replicated primaries or secondaries.
@@ -37,27 +37,38 @@ Read-only revisions reject stale edits. Only Forklift-owned Native zones (`accou
 
 ## Automatic PTR and partial changes
 
-For A/AAAA record sets, **Manage matching PTR records** looks for the longest matching managed reverse zone. Missing reverse coverage is rejected before changing the forward record. `10.0.20.10` becomes `10.20.0.10.in-addr.arpa.`; with a `/24` reverse zone its relative owner is `10`. IPv6 addresses use the full reversed 32-nibble owner.
+For A/AAAA record sets, **Manage matching PTR records** looks for the longest matching managed reverse zone. Missing reverse coverage is rejected before changing the forward record. `192.168.1.50` becomes `50.1.168.192.in-addr.arpa.`; with a `/24` reverse zone its relative owner is `50`. IPv6 addresses use the full reversed 32-nibble owner.
 
-Automatic PTR changes preserve existing values. Forklift tracks values it added; explicit manual PTR edits relinquish that automatic ownership. A PTR set changed outside its recorded revision is preserved for review rather than overwritten or deleted. Removing/changing forward addresses cleans up only unchanged, tracked PTR values. This is record-set management, **not yet automatic Host registration**.
+Automatic PTR changes preserve existing values. Forklift tracks values it added; explicit manual PTR edits relinquish that automatic ownership. A PTR set changed outside its recorded revision is preserved for review rather than overwritten or deleted. Removing/changing forward addresses cleans up only unchanged, tracked PTR values. For automatic host registration, use the Hosts workflow below.
 
 Forward and reverse zones cannot be changed atomically. Durable pending-change plans record exact before/after sets. Interrupted or failed operations appear in **Pending DNS changes**. Retry checks actual state, skips already applied steps and refuses conflicting changes. New record operations wait for pending work to be resolved. **Review complete; keep applied steps** closes an operation without rolling back or deleting already-applied records; inspect both forward and reverse results first. LDAP and DNS data are independent.
 
-## AdGuard Home conditional forwarding
+## Host DNS registration
 
-In AdGuard Home's **Settings → DNS settings → Upstream DNS servers**, add the internal forward zone while retaining your existing general upstreams:
+In **Hosts → Register host** (or **Edit host**), enable **Manage this host’s DNS records**. Select an existing managed forward zone, enter its relative name or FQDN, an IPv4 address and optional IPv6 address. For example, `server` in `example.test.` with `192.168.1.50` creates `server.example.test. A 192.168.1.50`. The inventory hostname and DNS name are separate fields; review both when renaming a machine.
 
-```text
-[/ad.ilpe.me/]10.0.20.2:1053
-```
+**Create matching reverse DNS** requires managed reverse zones covering every supplied address. Create `192.168.1.0/24` first for the example above; its PTR owner is `50.1.168.192.in-addr.arpa.`. IPv6 registration requires a covering ULA nibble reverse zone. Missing coverage or CNAME/zone conflicts leave a saved host with an actionable DNS error, without partially applying that new plan.
 
-In the separate **Private reverse DNS servers** field, add the private reverse zone:
+Directory machines, including the primary, can manage DNS through the same form. Login groups may be empty for DNS-only inventory; DNS registration never grants SSH or sudo permissions. Configuring Linux login still requires permitted groups and deployment of the client configuration. Removing a directory server retains its DNS-managed host inventory so its records can be reviewed and explicitly retained/deleted through Hosts.
 
-```text
-[/20.0.10.in-addr.arpa/]10.0.20.2:1053
-```
+Saving a host and changing DNS are independent operations. Host saves survive DNS outages. Leave **Apply DNS changes after saving** checked, or uncheck it to review later. **Reconcile DNS** applies pending settings, retries failed work and checks ownership against current native record sets. Status is the last confirmed application result, not continuous host/service monitoring. Inventory edits from older API clients that omit DNS preserve the existing desired name and defer reconciliation. Host revisions protect concurrent edits; DNS settings changes also advance the configuration revision.
 
-Enable **Use private reverse DNS resolvers**. Private-range reverse upstreams belong in that separate field; putting them only in the main upstream list does not route private PTR queries. Add corresponding IPv6 reverse zones there if needed. Test an internal forward name and PTR through AdGuard before changing client DNS settings. Forklift does not modify AdGuard automatically. See [AdGuard's domain and private-reverse forwarding documentation](https://github.com/AdguardTeam/AdGuardHome/wiki/Configuration#specifying-upstreams-for-reverse-dns).
+Forklift tracks individual values in its metadata and [PowerDNS record-set comments](https://doc.powerdns.com/authoritative/http-api/zone.html#comment). It merges host values into existing record sets, preserving unrelated values, disabled flags, comments and TTLs. Preexisting identical values are preserved without taking ownership. Editing a record set through DNS releases host ownership of the edited values and flags the host for review. Removing ownership comments or disabling a value externally also prevents automatic deletion of that value. Do not edit DNS SQLite files directly or run concurrent external API writers; record revision checks cannot provide atomic compare-and-swap with independent administrators.
+
+Changing addresses or DNS names removes only still-owned old values and creates the new values/PTRs. A desired value already disabled in PowerDNS produces a visible registration error and is preserved. Disabling DNS management or deleting a host requires an explicit choice: **Keep records and release ownership** or **Delete only this host’s managed values**. Host deletion revokes its LDAP credential independently. If DNS cleanup fails after host deletion, **DNS → Host DNS tasks** retains a durable cleanup task. Retry there, or explicitly keep already-applied records to close the task. Superseding an unfinished host plan cancels its old retry and checks ownership of every possibly applied value before cleanup. Pending DNS plans block other record mutations until resolved.
+
+Existing installations need no storage reset. Desired settings and ownership metadata are additive; older host rows remain unmanaged until configured. Preserve matching Forklift metadata with DNS data during infrastructure backups, because ownership and pending cleanup plans live in the manager’s SQLite database.
+
+## Conditional forwarding with an existing resolver
+
+Keep your existing recursive DNS service for client resolution, filtering and general upstream queries. Configure its conditional-forwarding, stub-zone or equivalent rules for the zones hosted by Forklift:
+
+| Zone | Authoritative endpoint |
+| --- | --- |
+| `example.test` | `192.168.1.2:1053` |
+| `1.168.192.in-addr.arpa` | `192.168.1.2:1053` |
+
+Use your actual domain, reverse zone, address and published port. Resolver products differ in their syntax, support for nonstandard ports, and handling of private reverse queries; consult your tool’s documentation. Retain existing general upstreams for other names. Verify forward and PTR lookups through your resolver before changing client settings. Forklift does not change the existing resolver automatically.
 
 NPM proxies only Forklift HTTP/HTTPS. DNS uses ordinary UDP/TCP networking, never an NPM HTTP Proxy Host.
 
@@ -73,8 +84,8 @@ For AD DNS migration, retain AD until independently verified. Export zone record
 
 ## Status and remaining phases
 
-API connectivity, local authoritative UDP probe, SOA serials and record counts use actual backend state. A healthy process/API does not establish replication health. Phase 1 explicitly reports **replication not configured**. The local probe does not prove clients can cross your firewall or published port; integration tests query both published UDP and TCP sockets.
+API connectivity, local authoritative UDP probe, SOA serials and record counts use actual backend state. A healthy process/API does not establish replication health. The single-node deployment explicitly reports **replication not configured**. The local probe does not prove clients can cross your firewall or published port; integration tests query both published UDP and TCP sockets.
 
 This release supports at most 128 zones, 100 values per edited set, bounded DNS API responses and 256 KiB record-change requests. Large-directory/load and multi-host DNS replication tests are not yet covered.
 
-Host-owned DNS lifecycle integration, secondary enrollment/TSIG transfers/failover, bulk import and integrated encrypted DNS recovery remain unimplemented. No simulated synchronization or secondary health is shown.
+Secondary enrollment/TSIG transfers/failover, bulk import and integrated encrypted DNS recovery remain unimplemented. No simulated synchronization or secondary health is shown.

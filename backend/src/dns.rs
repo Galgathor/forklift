@@ -1,4 +1,5 @@
 //! PowerDNS REST management. No DNS database writes or dependency in the LDAP login path.
+pub(crate) mod host_records;
 use super::*;
 use axum::http::Method;
 use serde::Serialize;
@@ -538,6 +539,8 @@ struct Step {
     rr_type: String,
     before: Option<String>,
     after: Option<Value>,
+    #[serde(default)]
+    protect_comments: bool,
 }
 #[derive(Serialize, Deserialize, Clone)]
 struct Change {
@@ -547,6 +550,8 @@ struct Change {
     links: Vec<Link>,
     warnings: Vec<String>,
     clear_ptr: Option<(String, String)>,
+    #[serde(default)]
+    host: Option<host_records::Completion>,
 }
 fn change_target(c: &Change) -> String {
     c.steps
@@ -559,18 +564,25 @@ fn save(a: &App, c: &Change, status: &str, error: Option<&str>) -> Result<()> {
     Ok(())
 }
 async fn apply(a: &App, who: &str, c: &Change) -> Result<Value> {
+    if let Some(completion) = &c.host {
+        host_records::check_current(a, &c.id, completion)?;
+    }
     for step in &c.steps {
         let result=async {
             let current_zone=zone(&step.zone).await?;managed(&current_zone)?;
             let current=find(&current_zone,&step.name,&step.rr_type);
-            let actual=current.as_ref().map(revision);
-            if applied(current.as_ref(),step.after.as_ref()){return Ok(());}
+            let signature=|r:&Value|if step.protect_comments {host_records::record_revision(r)} else {revision(r)};
+            let actual=current.as_ref().map(&signature);
+            if if step.protect_comments {actual==step.after.as_ref().map(&signature)} else {applied(current.as_ref(),step.after.as_ref())} {return Ok(());}
             if actual!=step.before {return Err(Error(StatusCode::CONFLICT,"A record set changed since this operation was planned. Inspect the current values before editing again; the conflicting step was preserved.".into()));}
             let payload=if let Some(r)=&step.after {let mut r=r.clone();r["changetype"]=json!("REPLACE");r} else {json!({"name":step.name,"type":step.rr_type,"changetype":"DELETE"})};
             request(Method::PATCH,&zone_path(&step.zone),Some(&json!({"rrsets":[payload]}))).await?;Ok::<_,Error>(())
         }.await;
         if let Err(error) = result {
             save(a, c, "needs_retry", Some(&error.1))?;
+            if let Some(completion) = &c.host {
+                host_records::failed(a, &c.id, completion, &error.1)?;
+            }
             audit(a, who, "DNS failed record change", &change_target(c))?;
             return Ok(
                 json!({"id":c.id,"status":"needs_retry","error":error.1,"warnings":c.warnings}),
@@ -601,7 +613,17 @@ async fn apply(a: &App, who: &str, c: &Change) -> Result<Value> {
                 .map_err(anyhow::Error::from)?;
             }
         }
-        tx.execute("INSERT INTO dns_links(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",params![c.key,serde_json::to_string(&c.links).map_err(anyhow::Error::from)?]).map_err(anyhow::Error::from)?;
+        if let Some(completion) = &c.host {
+            host_records::complete(&tx, &c.id, completion)?;
+        } else {
+            tx.execute("INSERT INTO dns_links(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",params![c.key,serde_json::to_string(&c.links).map_err(anyhow::Error::from)?]).map_err(anyhow::Error::from)?;
+            host_records::manual_override(&tx, c)?;
+        }
+        tx.execute(
+            "UPDATE dns_changes SET status='completed',error=NULL WHERE id=?",
+            [&c.id],
+        )
+        .map_err(anyhow::Error::from)?;
         tx.commit().map_err(anyhow::Error::from)?;
     }
     save(a, c, "completed", None)?;
@@ -794,6 +816,7 @@ pub(super) async fn records(
         name: n.clone(),
         rr_type: t.clone(),
         before: current.as_ref().map(revision),
+        protect_comments: false,
         after: if p.delete {
             None
         } else {
@@ -806,8 +829,27 @@ pub(super) async fn records(
             name,
             rr_type: "PTR".into(),
             before: before.as_ref().map(revision),
+            protect_comments: false,
             after,
         });
+    }
+    for step in &mut steps {
+        let z = zone(&step.zone).await?;
+        let before = find(&z, &step.name, &step.rr_type);
+        if before.as_ref().is_some_and(host_records::has_markers) {
+            // Recheck the original plan before changing its ownership precondition.
+            if before.as_ref().map(revision) != step.before {
+                return Err(Error(
+                    StatusCode::CONFLICT,
+                    "DNS records changed while planning; refresh and try again".into(),
+                ));
+            }
+            step.protect_comments = true;
+            step.before = before.as_ref().map(host_records::record_revision);
+            if let Some(after) = step.after.as_mut() {
+                host_records::strip_markers(after);
+            }
+        }
     }
     let c = Change {
         id: token()[..32].into(),
@@ -815,6 +857,7 @@ pub(super) async fn records(
         steps,
         links,
         warnings,
+        host: None,
         clear_ptr: if t == "PTR" {
             Some((data["name"].as_str().unwrap().into(), n))
         } else {
@@ -969,11 +1012,13 @@ pub(super) async fn settings(
             name: z,
             rr_type: "SOA".into(),
             before: Some(revision(&old)),
+            protect_comments: false,
             after: Some(after),
         }],
         links: vec![],
         warnings: vec![],
         clear_ptr: None,
+        host: None,
     };
     save(&a, &c, "pending", None)?;
     audit(&a, &who, "DNS attempt SOA change", &change_target(&c))?;
@@ -1040,6 +1085,19 @@ pub(super) async fn abandon(
     if !p.acknowledge {
         return Err(bad(
             "Confirm you reviewed and will retain any already applied DNS steps",
+        ));
+    }
+    let data =
+        a.db.lock()
+            .unwrap()
+            .query_row("SELECT data FROM dns_changes WHERE id=?", [&id], |r| {
+                r.get::<_, String>(0)
+            })
+            .map_err(|_| bad("DNS change not found"))?;
+    let change: Change = serde_json::from_str(&data).map_err(anyhow::Error::from)?;
+    if change.host.is_some() {
+        return Err(bad(
+            "Review this host's DNS settings, then reconcile or detach them from Hosts; deleted-host cleanup has its own retain option",
         ));
     }
     a.db.lock().unwrap().execute("UPDATE dns_changes SET status='completed',error='Abandoned after review; already-applied records retained' WHERE id=? AND status!='completed'",[&id]).map_err(anyhow::Error::from)?;
@@ -1122,6 +1180,7 @@ pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Val
         let mut q=db.prepare("SELECT at,action,target FROM audit WHERE action LIKE 'DNS failed%' ORDER BY id DESC LIMIT 10").map_err(anyhow::Error::from)?;
         q.query_map([],|r|Ok(json!({"at":r.get::<_,i64>(0)?,"action":r.get::<_,String>(1)?,"target":r.get::<_,String>(2)?}))).map_err(anyhow::Error::from)?.collect::<std::result::Result<Vec<_>,_>>().map_err(anyhow::Error::from)?
     };
+    let host_tasks = host_records::tasks(&a)?;
     let data = async {
         let (status, raw) = transport(Method::GET, "/inspect", None, true).await?;
         if !status.is_success() {
@@ -1153,10 +1212,10 @@ pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Val
     .await;
     match data {
         Ok((health, list)) => Ok(Json(
-            json!({"available":true,"server":health,"zones":list,"changes":changes,"errors":errors}),
+            json!({"available":true,"server":health,"zones":list,"changes":changes,"host_tasks":host_tasks,"errors":errors}),
         )),
         Err(e) => Ok(Json(
-            json!({"available":false,"error":e.1,"zones":[],"changes":changes,"errors":errors,"server":{"api_available":false,"service_available":null,"role":"standalone","replication":"not_configured","address":std::env::var("FORKLIFT_DNS_BIND").unwrap_or("127.0.0.1".into()),"port":std::env::var("FORKLIFT_DNS_PORT").ok().and_then(|v|v.parse::<u16>().ok()).unwrap_or(53)}}),
+            json!({"available":false,"error":e.1,"zones":[],"changes":changes,"host_tasks":host_tasks,"errors":errors,"server":{"api_available":false,"service_available":null,"role":"standalone","replication":"not_configured","address":std::env::var("FORKLIFT_DNS_BIND").unwrap_or("127.0.0.1".into()),"port":std::env::var("FORKLIFT_DNS_PORT").ok().and_then(|v|v.parse::<u16>().ok()).unwrap_or(53)}}),
         )),
     }
 }
@@ -1166,20 +1225,20 @@ mod tests {
     #[test]
     fn reverse_boundaries_and_owners() {
         assert_eq!(
-            reverse4("10.0.20.0/24").ok().unwrap(),
-            "20.0.10.in-addr.arpa."
+            reverse4("192.168.1.0/24").ok().unwrap(),
+            "1.168.192.in-addr.arpa."
         );
-        assert!(reverse4("10.0.20.1/24").is_err());
+        assert!(reverse4("192.168.1.1/24").is_err());
         assert!(reverse4("8.8.8.0/24").is_err());
         assert_eq!(
-            reverse("10.0.20.10".parse().unwrap()),
-            "10.20.0.10.in-addr.arpa."
+            reverse("192.168.1.50".parse().unwrap()),
+            "50.1.168.192.in-addr.arpa."
         );
         assert_eq!(
-            owner("monolith", "ad.ilpe.me.").ok().unwrap(),
-            "monolith.ad.ilpe.me."
+            owner("monolith", "example.test.").ok().unwrap(),
+            "monolith.example.test."
         );
-        assert!(owner("other.example.", "ad.ilpe.me.").is_err());
+        assert!(owner("other.example.", "example.test.").is_err());
     }
     #[test]
     fn dns_values_and_injection() {

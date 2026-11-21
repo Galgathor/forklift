@@ -8,7 +8,23 @@ import {
   X,
   ShieldCheck,
 } from "lucide-react";
+type DnsConfig = {
+  zone: string;
+  fqdn: string;
+  ipv4: string;
+  ipv6: string | null;
+  reverse: boolean;
+};
+export type HostDnsStatus = {
+  state: string;
+  error?: string;
+  warnings: string[];
+  managed_values: number;
+  checked_at?: number | null;
+};
 export type Host = {
+  dns?: DnsConfig | null;
+  dns_status?: HostDnsStatus | null;
   id: string;
   name: string;
   hostname: string;
@@ -41,7 +57,38 @@ export function Hosts({
   const [editing, setEditing] = useState<Host | null | undefined>(undefined),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
-    [query, setQuery] = useState("");
+    [query, setQuery] = useState(""),
+    [dnsEnabled, setDnsEnabled] = useState(false),
+    [zones, setZones] = useState<string[]>([]),
+    [zoneError, setZoneError] = useState(""),
+    [removing, setRemoving] = useState<Host | null>(null),
+    [notice, setNotice] = useState("");
+  async function open(host: Host | null) {
+    setError("");
+    setZoneError("");
+    setEditing(host);
+    setDnsEnabled(!!host?.dns);
+    setZones([]);
+    try {
+      const value = (await api("dns")) as {
+        available: boolean;
+        error?: string;
+        zones: { name: string; managed: boolean }[];
+      };
+      setZones(
+        value.zones
+          .filter((z) => z.managed && !z.name.endsWith(".arpa."))
+          .map((z) => z.name),
+      );
+      if (!value.available)
+        setZoneError(
+          value.error ||
+            "DNS is unavailable. Settings can be saved for later retry.",
+        );
+    } catch (e) {
+      setZoneError((e as Error).message);
+    }
+  }
   async function download(host: Host) {
     const warning = host.exported_at
       ? "This creates a new host bind password and invalidates previous bundles. Redeploy immediately; existing SSSD LDAP connections may continue until reconnected."
@@ -69,6 +116,11 @@ export function Hosts({
   }
   return (
     <>
+      {notice && (
+        <div className="hint" role="status">
+          {notice}
+        </div>
+      )}
       <section className="panel">
         <div className="table-toolbar">
           <h2>
@@ -77,8 +129,7 @@ export function Hosts({
           <button
             className="primary"
             onClick={() => {
-              setError("");
-              setEditing(null);
+              void open(null);
             }}
           >
             <Plus size={17} />
@@ -111,6 +162,7 @@ export function Hosts({
                   <th>Host</th>
                   <th>Permitted login groups</th>
                   <th>Configuration</th>
+                  <th>DNS</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -163,6 +215,60 @@ export function Hosts({
                         </small>
                       </td>
                       <td>
+                        {h.dns?.fqdn && <small>{h.dns.fqdn}</small>}
+                        <span
+                          className={
+                            h.dns_status &&
+                            ["applied", "removed", "retained"].includes(
+                              h.dns_status.state,
+                            )
+                              ? "pill"
+                              : "badge"
+                          }
+                        >
+                          {h.dns_status?.state.replaceAll("_", " ") ||
+                            "Unmanaged"}
+                        </span>
+                        {h.dns_status?.checked_at && (
+                          <small>
+                            Last applied{" "}
+                            {new Date(
+                              h.dns_status.checked_at * 1000,
+                            ).toLocaleString()}
+                          </small>
+                        )}
+                        {h.dns_status?.error && (
+                          <small role="alert">{h.dns_status.error}</small>
+                        )}
+                        {h.dns_status?.warnings.map((w, i) => (
+                          <small key={i}>{w}</small>
+                        ))}
+                        {(h.dns ||
+                          (h.dns_status &&
+                            !["retained", "removed"].includes(
+                              h.dns_status.state,
+                            ))) && (
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              perform(async () => {
+                                const status = (await api(
+                                  `dns/hosts/${h.id}/reconcile`,
+                                  "POST",
+                                  {},
+                                )) as HostDnsStatus;
+                                setNotice(
+                                  status.error || "DNS records reconciled.",
+                                );
+                                await refresh();
+                              })
+                            }
+                          >
+                            Reconcile DNS
+                          </button>
+                        )}
+                      </td>
+                      <td>
                         <div className="actions">
                           <button
                             disabled={busy || !h.allowed_groups.length}
@@ -175,8 +281,7 @@ export function Hosts({
                           <button
                             aria-label="Edit host"
                             onClick={() => {
-                              setError("");
-                              setEditing(h);
+                              void open(h);
                             }}
                           >
                             <Pencil size={16} />
@@ -189,17 +294,7 @@ export function Hosts({
                                 : undefined
                             }
                             aria-label="Delete host"
-                            onClick={() => {
-                              if (
-                                confirm(
-                                  `Delete ${h.name} and revoke its LDAP bind credential? Remove its configuration from the host separately.`,
-                                )
-                              )
-                                perform(async () => {
-                                  await api(`hosts/${h.id}`, "DELETE");
-                                  await refresh();
-                                });
-                            }}
+                            onClick={() => setRemoving(h)}
                           >
                             <Trash2 size={16} />
                           </button>
@@ -259,11 +354,29 @@ export function Hosts({
                       .filter(Boolean),
                     allowed_groups: form.getAll("allowed_groups").map(String),
                     ...(editing ? { revision: editing.revision } : {}),
+                    dns: dnsEnabled
+                      ? {
+                          zone: String(form.get("dns_zone")),
+                          fqdn: String(form.get("dns_fqdn")),
+                          ipv4: String(form.get("dns_ipv4")),
+                          ipv6: String(form.get("dns_ipv6") || "") || null,
+                          reverse: form.has("dns_reverse"),
+                        }
+                      : null,
+                    dns_apply: form.has("dns_apply"),
+                    dns_cleanup: String(form.get("dns_cleanup") || "keep"),
                   };
-                  await api(
+                  const saved = (await api(
                     editing ? `hosts/${editing.id}` : "hosts",
                     editing ? "PUT" : "POST",
                     body,
+                  )) as Host;
+                  setNotice(
+                    saved.dns_status?.error
+                      ? `Host saved. DNS needs attention: ${saved.dns_status.error}`
+                      : saved.dns_status?.state === "needs_apply"
+                        ? "Host saved. Reconcile DNS to apply its pending settings."
+                        : "Host saved.",
                   );
                   setEditing(undefined);
                   await refresh();
@@ -298,7 +411,13 @@ export function Hosts({
                 LDAPS endpoints (comma separated, in failover order)
                 <input
                   name="endpoints"
-                  defaultValue={editing?.endpoints.join(", ") || ""}
+                  defaultValue={
+                    editing?.endpoints.join(", ") ||
+                    hosts
+                      .find((h) => h.directory_id === "primary")
+                      ?.endpoints.join(", ") ||
+                    ""
+                  }
                   placeholder="ldaps://ldap.homelab.internal:1636"
                   required
                 />
@@ -323,13 +442,194 @@ export function Hosts({
                 ))}
               </fieldset>
               <p className="hint">
-                Choose at least one group. Exported policy applies to LDAP users
-                signing in through SSH/PAM; local accounts retain their existing
-                policy. Each export rotates the host’s read-only bind
+                Choose login groups to configure SSH access. Hosts managed only
+                in DNS can leave these empty. Exported policy applies to LDAP
+                users signing in through SSH/PAM; local accounts retain their
+                existing policy. Each export rotates the host’s read-only bind
                 credential.
               </p>
+              <fieldset>
+                <legend>DNS registration</legend>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={dnsEnabled}
+                    onChange={(e) => setDnsEnabled(e.target.checked)}
+                  />
+                  Manage this host’s DNS records
+                </label>
+                {zoneError && (
+                  <p className="hint" role="status">
+                    {zoneError}
+                  </p>
+                )}
+                {dnsEnabled && (
+                  <>
+                    <label>
+                      DNS zone
+                      <select
+                        name="dns_zone"
+                        aria-label="DNS zone"
+                        defaultValue={editing?.dns?.zone || ""}
+                        required
+                      >
+                        <option value="">Select a managed forward zone</option>
+                        {[
+                          ...new Set([
+                            ...zones,
+                            ...(editing?.dns?.zone ? [editing.dns.zone] : []),
+                          ]),
+                        ].map((z) => (
+                          <option key={z} value={z}>
+                            {z}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {!zones.length && (
+                      <p className="hint">
+                        Create a forward zone in DNS before registering a new
+                        name.
+                      </p>
+                    )}
+                    <label>
+                      DNS name
+                      <input
+                        name="dns_fqdn"
+                        aria-label="DNS name"
+                        defaultValue={
+                          editing?.dns?.fqdn || editing?.hostname || ""
+                        }
+                        placeholder="server.example.test."
+                        required
+                      />
+                    </label>
+                    <label>
+                      IPv4 address
+                      <input
+                        name="dns_ipv4"
+                        aria-label="IPv4 address"
+                        defaultValue={editing?.dns?.ipv4 || ""}
+                        placeholder="192.168.1.50"
+                        required
+                      />
+                    </label>
+                    <label>
+                      IPv6 address (optional)
+                      <input
+                        name="dns_ipv6"
+                        aria-label="IPv6 address (optional)"
+                        defaultValue={editing?.dns?.ipv6 || ""}
+                        placeholder="fd00::50"
+                      />
+                    </label>
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        name="dns_reverse"
+                        defaultChecked={editing?.dns?.reverse ?? true}
+                      />
+                      Create matching reverse DNS
+                    </label>
+                    <p className="hint">
+                      Every address needs a matching managed reverse zone when
+                      reverse DNS is enabled. Unrelated records are preserved.
+                      DNS registration does not grant SSH access. Changing the
+                      inventory hostname does not change this DNS name; review
+                      both fields.
+                    </p>
+                  </>
+                )}
+                {!dnsEnabled && (editing?.dns || editing?.dns_status) && (
+                  <label>
+                    Existing managed DNS records
+                    <select
+                      name="dns_cleanup"
+                      aria-label="Existing managed DNS records"
+                      defaultValue="keep"
+                    >
+                      <option value="keep">
+                        Keep records and release ownership
+                      </option>
+                      <option value="delete">
+                        Delete only this host’s managed values
+                      </option>
+                    </select>
+                  </label>
+                )}
+                <label className="checkbox">
+                  <input type="checkbox" name="dns_apply" defaultChecked />
+                  Apply DNS changes after saving
+                </label>
+                <p className="hint">
+                  You can save settings without applying DNS, then use Reconcile
+                  DNS. If DNS is unavailable, the host remains saved and can be
+                  retried.
+                </p>
+              </fieldset>
               <button className="primary" disabled={saving}>
                 {saving ? "Saving…" : "Save host"}
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+      {removing && (
+        <div className="overlay">
+          <section
+            className="dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Delete host"
+          >
+            <h2>Delete {removing.name}?</h2>
+            <p>
+              This revokes the LDAP bind credential. Remove client configuration
+              from the machine separately.
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const choice = String(
+                  new FormData(e.currentTarget).get("dns") || "keep",
+                );
+                void perform(async () => {
+                  const result = (await api(
+                    `hosts/${removing.id}?revision=${removing.revision}&dns=${choice}`,
+                    "DELETE",
+                  )) as { dns_status?: HostDnsStatus };
+                  setNotice(
+                    result.dns_status?.error
+                      ? `Host deleted. DNS cleanup needs retry in DNS: ${result.dns_status.error}`
+                      : "Host deleted.",
+                  );
+                  setRemoving(null);
+                  await refresh();
+                });
+              }}
+            >
+              {(removing.dns || removing.dns_status) && (
+                <label>
+                  Managed DNS records
+                  <select
+                    name="dns"
+                    aria-label="Managed DNS records"
+                    defaultValue="keep"
+                  >
+                    <option value="keep">
+                      Keep records and release ownership
+                    </option>
+                    <option value="delete">
+                      Delete only this host’s managed values
+                    </option>
+                  </select>
+                </label>
+              )}
+              <button className="danger" disabled={busy}>
+                Delete host
+              </button>
+              <button type="button" onClick={() => setRemoving(null)}>
+                Cancel
               </button>
             </form>
           </section>

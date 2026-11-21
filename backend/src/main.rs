@@ -1067,6 +1067,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dns/zones/{zone}/export", get(dns::export))
         .route("/api/dns/changes/{id}/retry", post(dns::retry))
         .route("/api/dns/changes/{id}/abandon", post(dns::abandon))
+        .route("/api/dns/hosts/{id}/reconcile", post(dns::host_records::reconcile))
+        .route("/api/dns/hosts/{id}/retain", post(dns::host_records::retain))
         .route("/api/dns/rotate", post(dns::rotate))
         .route("/api/maintenance", get(maintenance::index))
         .route("/api/maintenance/inspect", get(maintenance::inspect))
