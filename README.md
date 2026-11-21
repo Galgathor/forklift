@@ -2,7 +2,7 @@
 
 Self-hosted OpenLDAP management for homelabs. A Rust/Axum API, React/TypeScript interface, SQLite metadata store, and a real OpenLDAP 2.6 directory deployed with Docker Compose.
 
-**Development release: Milestone 3.** Setup, administrator login, user/POSIX group management, host registration, SSSD/PAM/NSS configuration exports and an Ubuntu Ansible role are implemented. Native primary/replica Syncrepl, HTTPS enrollment, real replication monitoring and replica-backed read-only management are implemented. SSH-key schema support, automated backup/restore and service-credential rotation remain planned. Host configuration export is not remote deployment or liveness monitoring. Do not rely on this release as your only path into critical infrastructure. Keep an independently managed local recovery account on Linux hosts.
+**Development release: Milestone 4.** Setup, LDAP administrator login, users/POSIX groups, Linux host configuration/Ansible, primary/replica Syncrepl, HTTPS enrollment and verified replication monitoring are implemented. This release adds encrypted offline backup/restore, guarded recovery, service/replication credential rotation, staged replica certificate renewal, certificate expiry, audit search/export and session revocation. SSH-key schema support remains planned. Host exports and credential issuance do not imply remote deployment. This is security-critical software without an external security audit; keep independently managed local Linux recovery accounts.
 
 ## Quick start
 
@@ -58,7 +58,7 @@ docker compose logs --tail=100 manager ldap
 4. Add a Proxy Host for `forklift.example.com`, scheme **http**, forwarding target as above, port **8080** (or `FORKLIFT_PORT`). Enable Block Common Exploits. Request/select a TLS certificate on the SSL tab and enable Force SSL. WebSocket support is unnecessary.
 5. Browse through the configured HTTPS hostname. Origin validation requires that exact origin, including any non-default public port.
 
-Forklift derives security decisions from the configured public URL and **does not trust any forwarded headers**. `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Proto` cannot change the request origin, cookie policy or rate-limit identity. No trusted-proxy configuration is needed in this release because no such headers are consumed. Login throttling is global, persisted in SQLite (20 attempts per five minutes), not client-IP based; this avoids proxy spoofing but permits temporary denial of login by a hostile caller. Restrict access to your management network.
+Forklift derives security decisions from the configured public URL and **does not trust any forwarded headers**. `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Proto` cannot change the request origin, cookie policy or rate-limit identity. No trusted-proxy configuration is needed in this release because no such headers are consumed. Login throttling is persisted in SQLite (20 attempts globally and 10 per exact username per five minutes), not client-IP based; this avoids proxy spoofing but permits temporary denial of login by a hostile caller. Restrict access to your management network.
 
 Never send LDAP authentication traffic through NPM's HTTP Proxy Host. LDAPS is a separate protocol and certificate. The default stack publishes no directory ports. The optional client Compose override publishes LDAPS on an explicitly configured private address; see [Linux clients](docs/linux-clients.md).
 
@@ -68,7 +68,7 @@ The Users page creates, edits, disables and deletes LDAP accounts, changes/reset
 
 Groups are `posixGroup` entries with `memberUid` usernames. Create or rename a group, edit its member usernames, and delete unused groups. Primary-group references prevent deletion. Supplemental membership is managed on the group form. The `administrators` group authorizes the WebUI independently of the user's primary GID. Administrators cannot delete/disable themselves or remove their own current administrator membership.
 
-A shared monotonic allocator starts after UID/GID 10000. Deleted IDs are not reused. Do not create entries outside Forklift, run multiple managers against one directory, or restore metadata from an older point than directory data; those workflows currently lack reconciliation and could create duplicate numeric identities.
+A shared monotonic allocator starts after UID/GID 10000. Deleted IDs are not reused. Do not create entries outside Forklift, run multiple managers against one directory, or restore metadata from an older point than directory data; uncoordinated changes can create duplicate numeric identities. Supported restoration requires a future ID floor above all allocations, including those after the snapshot.
 
 Disabling an account removes its password hash and sets `shadowExpire=1`, blocking subsequent LDAP binds. Re-enabling requires a new password. Password reset and disabling revoke that account's Forklift sessions. Administrator membership is checked against LDAP on every privileged request, so removed administrators immediately lose API access. Previously issued host/offline credentials remain subject to the destination system's policies.
 
@@ -92,9 +92,9 @@ Prerequisites, private networking, certificate trust, deployment, monitoring sem
 
 ## Backups, recovery and upgrades
 
-See [operations](docs/operations.md) for offline backup/restore, partial initialization and TLS recovery. This release has no online backup scheduler, restore UI or automatic certificate/service-credential rotation. Back up directory data/configuration, metadata **and** installation secrets together. Keep archives encrypted and offline. The CA private key is retained on the installation host but is never mounted into either service.
+See [operations](docs/operations.md) for offline backup/restore, partial initialization and TLS recovery. The local operator CLI creates age-encrypted coherent snapshots and restores into fresh, fenced targets. Settings shows maintenance history and the required post-restore review. There is no online backup scheduler or remote restore execution. Back up directory data/configuration, metadata **and** installation secrets together. Keep archives encrypted and offline. The CA private key is retained on the installation host but is never mounted into either service.
 
-Before upgrading: stop services, make a matching backup, build the new revision and run the integration suite on a separate test project. Recreate services with `docker compose up -d --build`. Milestone 3 automatically migrates metadata through schema 3 while preserving identities, sessions and the ID allocator. Metadata schema is versioned; a newer schema is refused by older code. Rollback requires restoring a matching complete backup, not just an older image.
+Before upgrading: create and verify a matching encrypted backup, test the new revision on an isolated recovery project, then build the new revision. Recreate services with `docker compose up -d --build`. Milestone 4 automatically migrates metadata through schema 4 while preserving identities, sessions and the ID allocator. Metadata schema is versioned; a newer schema is refused by older code. Rollback requires restoring a matching complete backup, not just an older image.
 
 ## Development and verification
 
@@ -115,12 +115,17 @@ FORKLIFT_TEST_UBUNTU=1 python3 tests/integration.py
 python3 tests/certificates.py
 # Real HTTPS enrollment, Syncrepl, and fresh Ubuntu SSH failover:
 python3 tests/replication.py
-# Actual Milestone 2 image/data upgrade (requires Git history):
+# Real encrypted recovery/fault drills (fresh installation secrets):
+docker build -t forklift-maintenance -f docker/maintenance/Dockerfile .
+python3 tests/hardening.py
+# Actual Milestone 2 and 3 image/data upgrades (requires Git history):
 python3 tests/upgrade.py
 ```
 
-The integration suite requires the installer-created secret files and built `forklift-manager:latest` / `forklift-ldap:latest` images. It creates a randomly named Compose project with fresh volumes and a temporary loopback port, then removes **only its test volumes**. It does not initialize or delete your default installation. Test credentials are random and never printed. Ubuntu mode also runs the Ansible role twice and actual NSS/PAM/SSH password and access-policy checks. Checks include bootstrap replay/origin rejection, authenticated and unauthenticated authorization, CSRF, LDAP bind/password/disable behavior, group CRUD, administrator revocation, non-reused IDs, container recreation, independent LDAP operation, directory outages, certificate rejection and login throttling.
+The integration suite requires the installer-created secret files and built `forklift-manager:latest` / `forklift-ldap:latest` images. It creates a randomly named Compose project with fresh volumes and a temporary loopback port, then removes **only its test volumes**. It does not initialize or delete your default installation. Replication and hardening suites generate their own installation secrets; they never rotate checkout secrets. Test credentials are random and never printed. Ubuntu mode also runs the Ansible role twice and actual NSS/PAM/SSH password and access-policy checks. Checks include bootstrap replay/origin rejection, authenticated and unauthenticated authorization, CSRF, LDAP bind/password/disable behavior, group CRUD, administrator revocation, non-reused IDs, container recreation, independent LDAP operation, directory outages, certificate rejection and login throttling.
 
 Vite development mode proxies `/api` to localhost:8080; configure `FORKLIFT_PUBLIC_URL` to the actual development browser origin (usually `http://localhost:5173`). The production UI is embedded in the manager image. No external fonts, CDNs, runtime mock records or WebSockets are required.
+
+Milestone 4 test results and optional browser checks: [verification](docs/verification.md).
 
 Architecture and phased implementation: [docs/architecture.md](docs/architecture.md). Security boundaries and remaining limitations: [docs/security.md](docs/security.md). License: [MIT](LICENSE).
