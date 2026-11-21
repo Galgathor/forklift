@@ -1,0 +1,7 @@
+# Phase 4: DNS operations and recovery
+
+1. Extend encrypted installation backups with an online SQLite snapshot of primary DNS data, its schema marker and service credentials. Preserve the current maintenance authorization, bounded archive validation, recovery ticket and rollback machinery. Include DNS ownership/replication metadata in the same quiesced manager snapshot.
+2. Add a durable DNS restore fence outside restored storage. Validate the pinned schema and supported data before publication, revoke archived peer transfer authorization before serving restored zones, quarantine archived enrollments, and require recovery review. Verify legacy LDAP-only archives without pretending they contain DNS; reject destructive full restores that lack DNS scope.
+3. Add journaled, retryable WebUI rotation for secondary transfer/control credentials and staged TLS certificates. Retain overlap only until the new identity is confirmed, then explicitly retire old trust and transfer permissions. Test lost responses and container restarts.
+4. Add reviewed zone import through the documented PowerDNS API, with preview, bounded supported records, stale-revision checks, explicit confirmation and existing durable change plans. Never load user-supplied server configuration or scripts.
+5. Verify actual DNS/LDAP responses, snapshot persistence, restoration/rollback/interruption, rotation/revocation, upgrade safety and administrative authorization. Document deployment limits and the absence of automatic primary promotion. Use generic domains and LAN examples.

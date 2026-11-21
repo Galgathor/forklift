@@ -34,7 +34,7 @@ Failure tests passed for unavailable DNS while LDAP remained usable, interrupted
 
 Run `python3 tests/dns.py` and `python3 tests/dns_upgrade.py` after building images. The upgrade fixture needs Git history. DNS tests use random loopback TCP/UDP ports, isolated volumes and the native `dig`/`nsupdate` clients. No existing DNS/resolver service or default installation is modified.
 
-Remaining DNS work: bulk zone import, in-place secondary key/certificate rotation and integrated encrypted DNS backup/restore. The existing encrypted LDAP snapshot excludes separate DNS data/secrets volumes. Separate physical-host routing/firewall tests, schema-changing PowerDNS upgrades, infrastructure DNS restoration, large/load tests and an external security audit remain unverified. See [DNS operations](dns.md) for deployment, resolver forwarding and recovery boundaries.
+Phase 4 adds integrated recovery, reviewed import and secondary identity rotation as documented below. Separate physical-host routing/firewall tests, schema-changing PowerDNS upgrades, large/load tests and an external security audit remain unverified. See [DNS operations](dns.md) for deployment and forwarding boundaries.
 
 ## Host DNS integration (Phase 2)
 
@@ -49,6 +49,16 @@ Run `python3 tests/dns_replication.py` after building manager/DNS images. It dep
 Chromium covers the primary endpoint form, secondary registration, zone selection, private HTTPS CA field, expiring join generation, clipboard copy and mobile layout alongside the existing DNS/host/LDAP/backup/replica flows. `tests/dns.py`, `tests/dns_hosts.py` and the core LDAP suite remain regression checks. Initial real-service testing exposed the native API’s legacy Master/Slave role strings; the adapter now normalizes them to Primary/Secondary. The two-peer test also exposed first-key-only native NOTIFY signing; explicit source-restricted unsigned notifications preserve per-node transfer-key isolation while allowing both peers to refresh. An earlier same-host fixture had blocked bridge-to-host notifications; peers now use isolated routable container interfaces rather than changing firewall rules or weakening peer checks.
 
 This is primary/secondary DNS with native AXFR (IXFR requests can fall back to AXFR), not writable automatic failover. TSIG does not encrypt zone contents; use trusted private networking/VPN. Synchronization is checked on demand, with separate last-confirmed timestamps. No separate physical-host deployment, NAT/firewall matrix, expired-zone time-travel test, in-place secondary certificate/key rotation or integrated DNS recovery is claimed by this phase. See [deployment and operational limits](dns-replication.md).
+
+## DNS hardening (Phase 4)
+
+`tests/dns_import.py` exercises reviewed JSON preview/apply through the actual PowerDNS API and queries real DNS answers. Checks cover supported record types, merge/replace/TTL behavior, validation/CNAME/duplicate/ownership rejection, stale previews/hash confirmation, Forklift/native JSON roundtrips, host ownership release and a partially applied import with conflict-checked retry. LDAP remains functional while DNS is unavailable.
+
+`tests/dns_recovery.py` verifies DNS answers during encrypted online backup, archive format-3 scope, no omitted-WAL copying, rejection of custom SQLite objects, legacy format-2 verification/full-restore refusal, and real LDAP plus A/PTR restoration into a fresh target. It checks transfer revocation, peer/token quarantine, recovery guards, host ownership reconciliation and persistence. The interruption drill recreates a fenced DNS container, injects failure midway through storage replacement, recreates recovery control beside an unreadable native database and rolls back to previous actual answers and LDAP credentials.
+
+The extended `tests/dns_replication.py` verifies actual signed transfers under new credential epochs, old transfer/control rejection, lost-ack recovery and interrupted TLS key/certificate publication. It verifies the new certificate independently, rejects the old pin and confirms retirement of old private/staged files. A populated helper built from Phase 3 commit `e9a4b24` is upgraded with the same volume to check compatibility and refusal of new identity operations on old software. `tests/dns_upgrade.py` also builds the actual Phase 3 manager, DNS and maintenance images, populates real LDAP plus host-owned A/PTR records, then upgrades without resetting volumes; credentials, sessions, DNS SQLite and ownership reconciliation are preserved. These are isolated containers with real native services; they do not modify host firewalls.
+
+Chromium additionally exercises JSON export/download, file upload, import preview/confirmation, actual displayed results, responsive import forms and DNS-inclusive backup receipts/verification. The ordinary DNS, host-DNS, core LDAP, encrypted recovery and pre-DNS upgrade suites remain regression checks. See [DNS recovery](dns-recovery.md) for operational limits and unsupported custom native configurations.
 
 ## Run the suites
 
@@ -69,4 +79,4 @@ This host's firewall blocks Docker-bridge-to-host listeners. HTTPS/replica/clien
 
 ## Limits
 
-Single Docker host tests simulate independent machines with separate storage and processes. Physically separate hosts/VMs, Ubuntu 22.04, full systemd boots, multiple simultaneous replicas, multi-architecture builds, large/load testing, long partitions, CA-root rotation and independent security auditing remain unverified. Schema5/archive2 is a deliberate break, not an upgrade claim for 0.4 storage. No production certification or automatic primary promotion is implied.
+Single Docker host tests simulate independent machines with separate storage and processes. Physically separate hosts/VMs, Ubuntu 22.04, full systemd boots, multiple simultaneous replicas, multi-architecture builds, large/load testing, long partitions, CA-root rotation and independent security auditing remain unverified. Metadata schema5 remains a deliberate break from 0.4 storage. New backups use archive3; archive2 is verification-only in the current full-installation restore flow. No production certification or automatic primary promotion is implied.

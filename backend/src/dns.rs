@@ -1,5 +1,6 @@
 //! PowerDNS REST management. No DNS database writes or dependency in the LDAP login path.
 pub(crate) mod host_records;
+pub(crate) mod imports;
 pub(crate) mod replication;
 use super::*;
 use axum::http::Method;
@@ -614,7 +615,22 @@ async fn apply(a: &App, who: &str, c: &Change) -> Result<Value> {
     {
         let mut db = a.db.lock().unwrap();
         let tx = db.transaction().map_err(anyhow::Error::from)?;
-        if let Some((z, n)) = &c.clear_ptr {
+        let mut cleared = c.clear_ptr.iter().cloned().collect::<Vec<_>>();
+        if c.key.starts_with("import:") {
+            for step in &c.steps {
+                if step.rr_type == "PTR" {
+                    cleared.push((step.zone.clone(), step.name.clone()));
+                }
+                if ["A", "AAAA"].contains(&step.rr_type.as_str()) {
+                    tx.execute(
+                        "DELETE FROM dns_links WHERE id=?",
+                        [format!("{}/{}/{}", step.zone, step.name, step.rr_type)],
+                    )
+                    .map_err(anyhow::Error::from)?;
+                }
+            }
+        }
+        for (z, n) in &cleared {
             let mut q = tx
                 .prepare("SELECT id,data FROM dns_links")
                 .map_err(anyhow::Error::from)?;

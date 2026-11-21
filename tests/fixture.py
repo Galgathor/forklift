@@ -64,7 +64,10 @@ class Stack:
     def login(self):self.csrf=self.request('/api/login','POST',dict(username='admin',password=self.password))['csrf']
     def poll(self,headers=None,success=True):
         for _ in range(450):
-            state=self.request('/api/maintenance/current',headers=headers)['job']
+            # HTTP liveness can precede Unix worker readiness after a restart.
+            reply=self.request('/api/maintenance/current',headers=headers,expect=(200,503))
+            if 'error' in reply:time.sleep(.2);continue
+            state=reply['job']
             if state['status'] in ['completed','failed','needs_resume']:
                 if success:assert state['status']=='completed',state
                 return state

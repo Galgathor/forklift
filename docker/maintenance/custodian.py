@@ -27,6 +27,7 @@ WORK=Path('/work')
 STATE=WORK/'job.json'
 CONTROL=Path('/run/maintenance-control')
 LDAP_CONTROL=Path('/run/ldap-control')
+DNS_CONTROL=Path('/run/dns-control')
 mutex=threading.Lock()
 
 
@@ -48,6 +49,36 @@ def primary(path,payload=None):
         if response.status!=200:raise ValueError(value.get('error','Directory control is unavailable'))
         return value
     finally:conn.close()
+
+
+class Dns(http.client.HTTPConnection):
+    def connect(self):
+        self.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect('/run/dns-control/dns.sock')
+
+
+def dns(path, job):
+    connection=Dns('localhost',timeout=40)
+    try:
+        connection.request('POST',path,body=encode({'operation_id':job['id']}),headers={'Authorization':'Bearer '+Path('/dns-secrets/control').read_text().strip(),'Content-Type':'application/json'})
+        response=connection.getresponse()
+        if response.status!=200:raise ValueError('DNS recovery needs attention; check its supervisor and storage, then resume')
+        return json.load(response)
+    finally:connection.close()
+
+
+def pause_dns(job):
+    atomic(DNS_CONTROL/'offline.json',encode({'id':job['id'],'action':job['action']}))
+    dns('/pause',job)
+
+
+def finish_dns(job, restore=False):
+    marker=DNS_CONTROL/'offline.json'
+    if marker.exists():
+        dns('/restore-start' if restore else '/start',job)
+        marker.unlink()
+        descriptor=os.open(DNS_CONTROL,os.O_DIRECTORY);os.fsync(descriptor);os.close(descriptor)
 
 
 def initialize():
@@ -175,6 +206,8 @@ def apply_stage(stage):
 def prepare_restore(p):
     stage=WORK/'stage'
     floor=p['uid_floor'];manifest=json.loads((stage/'validated.json').read_text())
+    if manifest.get('format')!=3:raise ValueError('This legacy LDAP-only archive does not contain DNS data. It can be verified, but full installation restore requires a DNS-inclusive backup or the matching earlier release.')
+    atomic(stage/'dns-secrets/control',Path('/dns-secrets/control').read_bytes())
     if type(floor) is not int or not manifest['id_high_water']<floor<=2147483647:raise ValueError('Choose a future Unix ID floor above every archived and subsequently allocated ID')
     # Keep local control authorization and the new host's advertised address; recover directory secrets/data.
     for name in ['bootstrap','provision','maintenance']:atomic(stage/'secrets'/name,(Path('/secrets')/name).read_bytes())
@@ -185,6 +218,18 @@ def prepare_restore(p):
     db.execute('DELETE FROM sessions');db.execute('UPDATE allocator SET value=?',(floor-1,))
     db.execute("INSERT INTO settings VALUES('recovery_required','true') ON CONFLICT(key) DO UPDATE SET value='true'")
     db.execute("UPDATE directory_servers SET enrollment_hash=NULL,enrollment_expires=0,state='restore_required',pending_epoch=NULL,last_error='Restored snapshot: fence and reseed this server'")
+    tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if 'dns_servers' in tables:
+        for node_id,raw in db.execute('SELECT id,data FROM dns_servers').fetchall():
+            node=json.loads(raw);node.update(state='restore_required',join_hash=None,expires_at=0,last_error='Restored snapshot: old DNS node must remain fenced and be reenrolled',report={'state':'restore_required'})
+            for field in ['pending_generation','next_certificate','rotation','certificate_staged_at','certificate_retirement_pending']:node.pop(field,None)
+            db.execute('UPDATE dns_servers SET data=? WHERE id=?',(json.dumps(node),node_id))
+    if 'dns_changes' in tables:db.execute("UPDATE dns_changes SET status='completed',error='Restored snapshot: review ownership and replan before DNS changes' WHERE status!='completed'")
+    if 'host_dns' in tables:
+        for host_id,raw in db.execute('SELECT id,data FROM host_dns').fetchall():
+            dns_state=json.loads(raw);dns_state['status'].update(state='needs_review',operation_id=None,error='Restored DNS state requires ownership reconciliation')
+            db.execute('UPDATE host_dns SET data=? WHERE id=?',(json.dumps(dns_state),host_id))
+    db.execute("DELETE FROM settings WHERE key='dns_primary'")
     db.execute("INSERT INTO settings VALUES('public_url',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(json.dumps(p['public_url']),))
     directory=json.loads(db.execute("SELECT value FROM settings WHERE key='directory'").fetchone()[0]);directory['network']=value
     db.execute("UPDATE settings SET value=? WHERE key='directory'",(json.dumps(directory),))
@@ -220,10 +265,11 @@ def execute(p,resume=False,rollback=False):
     try:
         action=job['action']
         if rollback:
-            if (WORK/'rollback/apply-manifest.json').exists():pause(job);apply_stage(WORK/'rollback')
+            if (WORK/'rollback/apply-manifest.json').exists():pause_dns(job);pause(job);apply_stage(WORK/'rollback')
             elif job['phase'] not in ['verified','snapshotting']:raise ValueError('No complete rollback snapshot exists')
             db=sqlite3.connect('/metadata/forklift.db');db.execute('DELETE FROM sessions');db.commit();db.close()
-            finish_pause(job)
+            finish_pause(job);finish_dns(job)
+            storage.event(base,'rollback','completed',detail='Previous LDAP/DNS data and credentials restored; sessions revoked')
             result={'rolled_back':True,'reauthenticate':True}
         elif action=='backup':
             pause(job);storage.event(base,'backup','started')
@@ -245,17 +291,17 @@ def execute(p,resume=False,rollback=False):
                     fd=os.open(folder,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
                 job['phase']='verified';save(job)
             if job['phase'] in ['verified','snapshotting']:
-                pause(job);job['phase']='snapshotting';save(job)
+                pause_dns(job);pause(job);job['phase']='snapshotting';save(job)
                 if not (WORK/'rollback/apply-manifest.json').exists():
                     if (WORK/'rollback').exists():shutil.rmtree(WORK/'rollback')
                     snapshot(WORK/'rollback')
                 job['phase']='prepared';save(job)
-            pause(job);job['phase']='applying';save(job)
+            pause_dns(job);pause(job);job['phase']='applying';save(job)
             apply_stage(WORK/'stage')
             network=configured_network();renew(network)
             storage.validate_config(Path('/directory'),Path('/directory-secrets'))
-            job['phase']='restarting';save(job);finish_pause(job)
-            storage.event(base,'restore','completed',checksum=params['sha256'],detail='Sessions revoked; replicas quarantined; recovery review required')
+            job['phase']='restarting';save(job);finish_dns(job,restore=True);finish_pause(job)
+            storage.event(base,'restore','completed',checksum=params['sha256'],detail='Sessions revoked; directory/DNS replicas quarantined; DNS transfer rights removed; recovery review required')
             result={'restored':True,'recovery_required':True,'reauthenticate':True,'uid_floor':params['uid_floor']}
         elif action=='rotate-service':
             pause(job);storage.rotate_service(base)
@@ -273,15 +319,18 @@ def execute(p,resume=False,rollback=False):
             storage.event(base,action,'completed',detail='Primary TLS and private listener verified and restarted')
             result={'network':network,'previous_endpoint':previous}
         else:raise ValueError('Unknown maintenance operation')
+        if (WORK/'dns-backup').exists():shutil.rmtree(WORK/'dns-backup')
         job.update(status='awaiting_ack',phase='awaiting_ack',result=result,finished_at=int(time.time()));save(job)
         return job
     except Exception as exc:
-        recoverable=(LDAP_CONTROL/'offline.json').exists() and (job['action'] in ['rotate-service','restore','configure-primary','renew-primary'])
+        recoverable=((LDAP_CONTROL/'offline.json').exists() or (DNS_CONTROL/'offline.json').exists()) and (job['action'] in ['rotate-service','restore','configure-primary','renew-primary'])
         if not recoverable:
             try:finish_pause(job)
             except Exception:recoverable=True
         job.update(status='needs_resume' if recoverable else 'failed',error=str(exc) if isinstance(exc,ValueError) else 'Maintenance failed; retry or resume the recorded operation',finished_at=int(time.time()))
-        if not recoverable and (WORK/'stage').exists():shutil.rmtree(WORK/'stage')
+        if not recoverable:
+            for folder in ['stage','dns-backup']:
+                if (WORK/folder).exists():shutil.rmtree(WORK/folder)
         save(job);return job
 
 
@@ -353,7 +402,7 @@ def dispatch(path,p):
         if not job or job['id']!=p.get('id'):raise ValueError('No matching operation to acknowledge')
         if job['status']=='completed':return job
         if job['status']!='awaiting_ack':raise ValueError('The operation is not ready to acknowledge')
-        for folder in ['stage','rollback']:
+        for folder in ['stage','rollback','dns-backup']:
             if (WORK/folder).exists():shutil.rmtree(WORK/folder)
         job.update(status='completed',phase='completed');save(job);return job
     if path=='/delete':
@@ -373,7 +422,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path=='/health':return self.reply(200,{'ready':True})
         if not self.authorized():return self.reply(403,{'error':'Maintenance authorization rejected'})
-        if self.path=='/status':return self.reply(200,{'job':read_state(),'backups':listing(),'busy':mutex.locked(),'offline':(LDAP_CONTROL/'offline.json').exists()})
+        if self.path=='/status':return self.reply(200,{'job':read_state(),'backups':listing(),'busy':mutex.locked(),'offline':(LDAP_CONTROL/'offline.json').exists() or (DNS_CONTROL/'offline.json').exists()})
         return self.reply(404,{})
     def do_POST(self):
         if not self.authorized():return self.reply(403,{'error':'Maintenance authorization rejected'})
@@ -392,7 +441,7 @@ if __name__=='__main__':
     else:
         state=read_state()
         if state and state['status']=='running':
-            changed=(LDAP_CONTROL/'offline.json').exists() or state['phase'] in ['verified','snapshotting','prepared','applying','restarting']
+            changed=(LDAP_CONTROL/'offline.json').exists() or (DNS_CONTROL/'offline.json').exists() or state['phase'] in ['verified','snapshotting','prepared','applying','restarting']
             state['status']='needs_resume' if changed else 'failed'
             state['error']='Interrupted operation; resume or roll back in Forklift' if changed else 'Interrupted before directory replacement; select the recovery key and retry in Forklift'
             if not changed and (WORK/'stage').exists():shutil.rmtree(WORK/'stage')

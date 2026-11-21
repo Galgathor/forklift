@@ -10,6 +10,9 @@ services:
     environment:
       FORKLIFT_BOOTSTRAP_TOKEN: ${FORKLIFT_BOOTSTRAP_TOKEN:-}
     volumes:
+      - dns_data:/dns
+      - dns_secrets:/dns-secrets
+      - dns_control:/run/dns-control
       - directory:/directory
       - metadata:/metadata
       - manager_secrets:/secrets
@@ -64,6 +67,9 @@ services:
       initialize: {condition: service_completed_successfully}
       ldap: {condition: service_healthy}
     volumes:
+      - dns_data:/dns
+      - dns_secrets:/dns-secrets
+      - dns_control:/run/dns-control
       - directory:/directory
       - metadata:/metadata
       - manager_secrets:/secrets

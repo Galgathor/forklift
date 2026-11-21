@@ -34,6 +34,16 @@ struct Node {
     report: Value,
     #[serde(default)]
     revoked: bool,
+    #[serde(default)]
+    pending_generation: Option<i64>,
+    #[serde(default)]
+    rotation: Option<String>,
+    #[serde(default)]
+    next_certificate: Option<String>,
+    #[serde(default)]
+    certificate_staged_at: Option<i64>,
+    #[serde(default)]
+    certificate_retirement_pending: bool,
 }
 fn schema(a: &App) -> Result<()> {
     meta(a)?;
@@ -75,7 +85,7 @@ fn store(a: &App, n: &Node) -> Result<()> {
     Ok(())
 }
 fn public(n: &Node) -> Value {
-    json!({"id":n.id,"name":n.draft.name,"address":n.draft.address,"dns_port":n.draft.dns_port,"control_port":n.draft.control_port,"zones":n.draft.zones,"revision":n.revision,"state":n.state,"expires_at":n.expires_at,"checked_at":n.checked_at,"last_sync_at":n.last_sync_at,"report":n.report,"error":n.last_error,"transfers_revoked":n.revoked,"certificate_expires_at":n.certificate.as_ref().and_then(|c|openssl::x509::X509::from_pem(c.as_bytes()).ok()).map(|c|c.not_after().to_string())})
+    json!({"id":n.id,"name":n.draft.name,"address":n.draft.address,"dns_port":n.draft.dns_port,"control_port":n.draft.control_port,"zones":n.draft.zones,"revision":n.revision,"state":n.state,"expires_at":n.expires_at,"checked_at":n.checked_at,"last_sync_at":n.last_sync_at,"report":n.report,"error":n.last_error,"transfers_revoked":n.revoked,"credential_epoch":n.generation,"pending_epoch":n.pending_generation,"rotation":n.rotation,"certificate_rotation_pending":n.next_certificate.is_some()||n.certificate_retirement_pending,"certificate_staged_at":n.certificate_staged_at,"certificate_expires_at":n.certificate.as_ref().and_then(|c|openssl::x509::X509::from_pem(c.as_bytes()).ok()).map(|c|c.not_after().to_string())})
 }
 fn primary(a: &App) -> Result<Option<Primary>> {
     let raw =
@@ -123,53 +133,88 @@ async fn validate_draft(p: &mut Draft) -> Result<()> {
     Ok(())
 }
 fn derived(n: &Node, purpose: &str) -> Vec<u8> {
+    derived_at(n, purpose, n.generation)
+}
+fn derived_at(n: &Node, purpose: &str, generation: i64) -> Vec<u8> {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret("node-control-key").as_bytes())
         .expect("Installation key");
-    mac.update(format!("forklift/dns/v1/{purpose}/{}/{}", n.id, n.generation).as_bytes());
+    mac.update(format!("forklift/dns/v1/{purpose}/{}/{}", n.id, generation).as_bytes());
     mac.finalize().into_bytes().to_vec()
 }
 fn key_name(n: &Node) -> String {
-    format!("forklift-dns-{}-{}.", n.id, n.generation)
+    key_at(n, n.generation)
+}
+fn key_at(n: &Node, generation: i64) -> String {
+    format!("forklift-dns-{}-{}.", n.id, generation)
+}
+fn generations(n: &Node) -> Vec<i64> {
+    std::iter::once(n.generation)
+        .chain(n.pending_generation)
+        .collect()
+}
+fn transition(n: &Node) -> bool {
+    n.rotation.is_some() || n.next_certificate.is_some() || n.certificate_retirement_pending
 }
 fn configuration(a: &App, n: &Node) -> Result<Value> {
     let primary = primary(a)?.ok_or(bad("Configure the reachable primary DNS endpoint first"))?;
     Ok(
-        json!({"id":n.id,"revision":n.revision,"address":n.draft.address,"dns_port":n.draft.dns_port,"control_port":n.draft.control_port,"primary":primary,"zones":n.draft.zones,"tsig_name":key_name(n),"tsig_key":openssl::base64::encode_block(&derived(n,"transfer")),"control_token":hex::encode(derived(n,"control"))}),
+        json!({"id":n.id,"revision":n.revision,"credential_epoch":n.generation,"address":n.draft.address,"dns_port":n.draft.dns_port,"control_port":n.draft.control_port,"primary":primary,"zones":n.draft.zones,"tsig_name":key_name(n),"tsig_key":openssl::base64::encode_block(&derived(n,"transfer")),"control_token":hex::encode(derived(n,"control"))}),
     )
 }
 async fn remote(n: &Node, path: &str, body: Value) -> Result<Value> {
+    remote_as(n, path, body, None).await
+}
+async fn current_software(n: &Node) -> Result<()> {
+    let health = remote(n, "/health", json!({"id":n.id})).await?;
+    if health["protocol"] != 2 {
+        return Err(bad(
+            "Update the DNS secondary from the current Forklift repository and recreate its container with the same volume before rotating its credentials or certificate.",
+        ));
+    }
+    Ok(())
+}
+async fn remote_as(n: &Node, path: &str, body: Value, epoch: Option<i64>) -> Result<Value> {
     let cert = n
         .certificate
         .as_ref()
         .ok_or(bad("Enroll the DNS server first"))?;
-    let client = reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .use_native_tls()
         .tls_built_in_root_certs(false)
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(45))
-        .add_root_certificate(
+        .timeout(std::time::Duration::from_secs(45));
+    for cert in std::iter::once(cert).chain(n.next_certificate.as_ref()) {
+        builder = builder.add_root_certificate(
             reqwest::Certificate::from_pem(cert.as_bytes()).map_err(anyhow::Error::from)?,
-        )
-        .build()
-        .map_err(anyhow::Error::from)?;
-    let mut response=client.post(format!("https://{}:{}{path}",n.draft.address,n.draft.control_port)).bearer_auth(hex::encode(derived(n,"control"))).json(&body).send().await.map_err(|_|unavailable("Cannot reach the DNS secondary's pinned HTTPS management listener. Check its private interface, port, certificate and firewall."))?;
-    if !response.status().is_success() {
-        return Err(unavailable(
-            "DNS secondary refused provisioning; check enrollment, certificate validity and zone assignments, then retry",
-        ));
+        );
     }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(anyhow::Error::from)? {
-        if bytes.len() + chunk.len() > 131072 {
-            return Err(bad("DNS secondary diagnostics exceed their limit"));
+    let client = builder.build().map_err(anyhow::Error::from)?;
+    for generation in epoch.map(|g| vec![g]).unwrap_or_else(|| generations(n)) {
+        let mut response=client.post(format!("https://{}:{}{path}",n.draft.address,n.draft.control_port)).bearer_auth(hex::encode(derived_at(n,"control",generation))).json(&body).send().await.map_err(|_|unavailable("Cannot reach the DNS secondary's pinned HTTPS management listener. Check its private interface, port, certificate and firewall."))?;
+        if response.status() == StatusCode::UNAUTHORIZED {
+            continue;
         }
-        bytes.extend_from_slice(&chunk);
+        if !response.status().is_success() {
+            return Err(unavailable(
+                "DNS secondary refused provisioning; review its pending transition and retry with its current credentials",
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(anyhow::Error::from)? {
+            if bytes.len() + chunk.len() > 131072 {
+                return Err(bad("DNS secondary diagnostics exceed their limit"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        return serde_json::from_slice(&bytes)
+            .map_err(anyhow::Error::from)
+            .map_err(Error::from);
     }
-    serde_json::from_slice(&bytes)
-        .map_err(anyhow::Error::from)
-        .map_err(Error::from)
+    Err(unavailable(
+        "DNS secondary rejected its recorded credentials; resume its pending credential rotation",
+    ))
 }
 async fn metadata(z: &str, kind: &str, values: Value) -> Result<()> {
     request(
@@ -191,22 +236,24 @@ async fn provision_primary(a: &App) -> Result<()> {
         .cloned()
         .ok_or(unavailable("Invalid native DNS transfer-key response"))?;
     for n in &enrolled {
-        let key = key_name(n);
-        let payload = json!({"name":key,"algorithm":"hmac-sha256","key":openssl::base64::encode_block(&derived(n,"transfer"))});
-        request(
-            if keys.iter().any(|k| k["id"] == key) {
-                Method::PUT
-            } else {
-                Method::POST
-            },
-            &if keys.iter().any(|k| k["id"] == key) {
-                format!("/tsigkeys/{key}")
-            } else {
-                "/tsigkeys".into()
-            },
-            Some(&payload),
-        )
-        .await?;
+        for generation in generations(n) {
+            let key = key_at(n, generation);
+            let payload = json!({"name":key,"algorithm":"hmac-sha256","key":openssl::base64::encode_block(&derived_at(n,"transfer",generation))});
+            request(
+                if keys.iter().any(|k| k["id"] == key) {
+                    Method::PUT
+                } else {
+                    Method::POST
+                },
+                &if keys.iter().any(|k| k["id"] == key) {
+                    format!("/tsigkeys/{key}")
+                } else {
+                    "/tsigkeys".into()
+                },
+                Some(&payload),
+            )
+            .await?;
+        }
     }
     for z in zones().await? {
         if managed(&z).is_err() {
@@ -219,7 +266,7 @@ async fn provision_primary(a: &App) -> Result<()> {
             .collect::<Vec<_>>();
         // Forklift-owned zones have no IP-based transfer exception: a valid assigned TSIG is required.
         metadata(name, "ALLOW-AXFR-FROM", json!([])).await?;
-        request(Method::PUT,&zone_path(name),Some(&json!({"kind":if peers.is_empty(){"Native"}else{"Primary"},"master_tsig_key_ids":peers.iter().map(|n|key_name(n)).collect::<Vec<_>>()}))).await?;
+        request(Method::PUT,&zone_path(name),Some(&json!({"kind":if peers.is_empty(){"Native"}else{"Primary"},"master_tsig_key_ids":peers.iter().flat_map(|n|generations(n).into_iter().map(|g|key_at(n,g))).collect::<Vec<_>>()}))).await?;
         metadata(
             name,
             "ALSO-NOTIFY",
@@ -236,7 +283,9 @@ async fn provision_primary(a: &App) -> Result<()> {
         if key["name"]
             .as_str()
             .is_some_and(|k| k.starts_with("forklift-dns-"))
-            && !enrolled.iter().any(|n| key["id"] == key_name(n))
+            && !enrolled
+                .iter()
+                .any(|n| generations(n).iter().any(|g| key["id"] == key_at(n, *g)))
         {
             let id = key["id"].as_str().ok_or(bad("Invalid transfer key ID"))?;
             request(Method::DELETE, &format!("/tsigkeys/{id}"), None).await?;
@@ -325,6 +374,11 @@ pub(crate) async fn set_primary(
         ));
     }
     let _guard = a.gate.lock().await;
+    if nodes(&a)?.iter().any(transition) {
+        return Err(bad(
+            "Finish DNS credential/certificate transitions before changing the primary endpoint",
+        ));
+    }
     let value = Primary {
         address: p.address,
         dns_port: p.dns_port,
@@ -399,6 +453,11 @@ pub(crate) async fn create(
         last_sync_at: None,
         report: json!({"state":"not_enrolled"}),
         revoked: false,
+        pending_generation: None,
+        rotation: None,
+        next_certificate: None,
+        certificate_staged_at: None,
+        certificate_retirement_pending: false,
     };
     store(&a, &n)?;
     audit(&a, &who, "DNS register secondary", &n.id)?;
@@ -519,6 +578,11 @@ pub(crate) async fn assignments(
     let who = authorize(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     let mut n = load(&a, &id)?;
+    if transition(&n) {
+        return Err(bad(
+            "Finish the pending DNS identity rotation before editing assignments",
+        ));
+    }
     if n.revision != p.revision || n.state != "enrolled" {
         return Err(Error(
             StatusCode::CONFLICT,
@@ -544,6 +608,11 @@ pub(crate) async fn reconcile(
     let mut n = load(&a, &id)?;
     if n.state != "enrolled" {
         return Err(bad("Enroll the DNS node before reconciling it"));
+    }
+    if transition(&n) {
+        return Err(bad(
+            "Resume the pending DNS credential/certificate operation before reconciliation",
+        ));
     }
     match apply_node(&a, &mut n).await {
         Ok(()) => audit(&a, &who, "DNS reconcile secondary", &id)?,
@@ -598,7 +667,9 @@ pub(crate) async fn check(
                         .iter()
                         .all(|name| zs.iter().any(|z| z["name"] == *name))
             });
-            let state = if report["revision"] != n.revision {
+            let state = if transition(&n) {
+                "rotation_pending"
+            } else if report["revision"] != n.revision {
                 "needs_reconcile"
             } else if synchronized {
                 "synchronized"
@@ -651,6 +722,7 @@ pub(crate) async fn remove(
     }
     let _guard = a.gate.lock().await;
     let mut n = load(&a, &id)?;
+    let restored = n.state == "restore_required" || n.report["state"] == "restore_required";
     n.state = "removing".into();
     n.join_hash = None;
     n.revision += 1;
@@ -659,12 +731,14 @@ pub(crate) async fn remove(
         provision_primary(&a).await?;
         n.revoked = true;
         store(&a, &n)?;
-        if !p.retain_data && n.certificate.is_some() {
+        if !restored && !p.retain_data && n.certificate.is_some() {
             n.draft.zones.clear();
+            let mut active = n.clone();
+            active.generation = n.pending_generation.unwrap_or(n.generation);
             remote(
                 &n,
                 "/configure",
-                json!({"id":id,"configuration":configuration(&a,&n)?}),
+                json!({"id":id,"configuration":configuration(&a,&active)?}),
             )
             .await?;
         }
@@ -683,6 +757,136 @@ pub(crate) async fn remove(
         .map_err(anyhow::Error::from)?;
     audit(&a, &who, "DNS remove secondary", &id)?;
     Ok(Json(json!({"removed":true})))
+}
+
+fn fingerprint(pem: &str) -> Result<String> {
+    Ok(hex::encode(Sha256::digest(
+        openssl::x509::X509::from_pem(pem.as_bytes())
+            .map_err(anyhow::Error::from)?
+            .to_der()
+            .map_err(anyhow::Error::from)?,
+    )))
+}
+#[derive(Deserialize)]
+pub(crate) struct Acknowledge {
+    acknowledge: bool,
+}
+pub(crate) async fn credentials(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(p): Json<Acknowledge>,
+) -> Result<Json<Value>> {
+    let who = authorize(&a, &h, true).await?;
+    if !p.acknowledge {
+        return Err(bad(
+            "Confirm rotating DNS transfer and management credentials",
+        ));
+    }
+    let _guard = a.gate.lock().await;
+    let mut n = load(&a, &id)?;
+    if n.state != "enrolled" || n.next_certificate.is_some() || n.certificate_retirement_pending {
+        return Err(bad(
+            "Use an enrolled node without a pending certificate operation",
+        ));
+    }
+    let result=async {
+        if n.rotation.as_deref()!=Some("retire_old") {
+            current_software(&n).await?;
+            if n.pending_generation.is_none(){n.pending_generation=Some(n.generation+1);n.rotation=Some("prepare".into());n.revision+=1;store(&a,&n)?;audit(&a,&who,"DNS attempt credential rotation",&id)?;}
+            provision_primary(&a).await?;
+            let epoch=n.pending_generation.ok_or(bad("Missing DNS rotation journal"))?;
+            let mut next=n.clone();next.generation=epoch;
+            remote(&n,"/credentials",json!({"id":id,"configuration":configuration(&a,&next)?})).await?;
+            n.rotation=Some("verify_new".into());store(&a,&n)?;
+            let proof=remote_as(&n,"/credentials/verify",json!({"id":id,"credential_epoch":epoch}),Some(epoch)).await?;
+            if proof["credential_epoch"]!=epoch||!proof["transfers"].as_array().is_some_and(|rows|rows.len()==n.draft.zones.len()&&n.draft.zones.iter().all(|z|rows.iter().any(|r|r["name"]==*z&&r["verified"]==true))) {return Err(unavailable("The new DNS transfer credential is not confirmed. Keep overlap and retry after the primary is reachable."));}
+            n.generation=epoch;n.pending_generation=None;n.rotation=Some("retire_old".into());store(&a,&n)?;
+        }
+        provision_primary(&a).await?;
+        n.rotation=None;n.last_error=None;n.report=json!({"state":"awaiting_verification"});store(&a,&n)?;audit(&a,&who,"DNS rotate secondary credentials",&id)?;Ok::<_,Error>(())
+    }.await;
+    if let Err(error) = result {
+        n.last_error = Some(error.1);
+        store(&a, &n)?;
+        audit(&a, &who, "DNS failed credential rotation", &id)?;
+    }
+    Ok(Json(public(&n)))
+}
+pub(crate) async fn certificate(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(p): Json<Acknowledge>,
+) -> Result<Json<Value>> {
+    let who = authorize(&a, &h, true).await?;
+    if !p.acknowledge {
+        return Err(bad(
+            "Confirm staging a new pinned DNS management certificate",
+        ));
+    }
+    let _guard = a.gate.lock().await;
+    let mut n = load(&a, &id)?;
+    if n.state != "enrolled" || n.rotation.is_some() || n.certificate_retirement_pending {
+        return Err(bad("Finish the pending DNS identity transition first"));
+    }
+    if n.next_certificate.is_none() {
+        current_software(&n).await?;
+        audit(&a, &who, "DNS attempt certificate staging", &id)?;
+        let generated = remote(&n, "/certificate/stage", json!({"id":id})).await?;
+        let pem = generated["certificate"]
+            .as_str()
+            .ok_or(bad("DNS node did not return a public certificate"))?;
+        replicas::validate_certificate(pem, &n.draft.address.to_string())?;
+        if fingerprint(pem)? == fingerprint(n.certificate.as_deref().unwrap_or(""))? {
+            return Err(bad(
+                "DNS node returned its current certificate instead of a new identity",
+            ));
+        }
+        n.next_certificate = Some(pem.into());
+        n.certificate_staged_at = Some(now());
+        store(&a, &n)?;
+        audit(&a, &who, "DNS stage secondary certificate", &id)?;
+    }
+    Ok(Json(public(&n)))
+}
+pub(crate) async fn finalize_certificate(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(p): Json<Acknowledge>,
+) -> Result<Json<Value>> {
+    let who = authorize(&a, &h, true).await?;
+    if !p.acknowledge {
+        return Err(bad(
+            "Confirm activating the staged DNS certificate and retiring old trust",
+        ));
+    }
+    let _guard = a.gate.lock().await;
+    let mut n = load(&a, &id)?;
+    if n.state != "enrolled"
+        || n.rotation.is_some()
+        || n.next_certificate.is_none() && !n.certificate_retirement_pending
+    {
+        return Err(bad("Stage a DNS certificate before activation"));
+    }
+    let result=async {
+        if let Some(next)=n.next_certificate.clone(){
+            remote(&n,"/certificate/activate",json!({"id":id,"fingerprint":fingerprint(&next)?})).await?;
+            let mut pinned=n.clone();pinned.certificate=Some(next.clone());pinned.next_certificate=None;
+            let healthy=remote(&pinned,"/health",json!({"id":id})).await?;
+            if healthy["api_available"]!=true{return Err(unavailable("The new DNS TLS identity did not confirm a healthy service; keep staged trust and retry"));}
+            n.certificate=Some(next);n.next_certificate=None;n.certificate_retirement_pending=true;store(&a,&n)?;
+        }
+        remote(&n,"/certificate/retire",json!({"id":id,"fingerprint":fingerprint(n.certificate.as_deref().unwrap_or(""))?})).await?;
+        n.certificate_retirement_pending=false;n.certificate_staged_at=None;n.last_error=None;store(&a,&n)?;audit(&a,&who,"DNS activate secondary certificate",&id)?;Ok::<_,Error>(())
+    }.await;
+    if let Err(error) = result {
+        n.last_error = Some(error.1);
+        store(&a, &n)?;
+        audit(&a, &who, "DNS failed certificate activation", &id)?;
+    }
+    Ok(Json(public(&n)))
 }
 
 #[cfg(test)]

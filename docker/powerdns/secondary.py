@@ -13,6 +13,8 @@ import socket
 import ssl
 import subprocess
 import threading
+import hashlib
+import tempfile
 import time
 import urllib.request
 from urllib.parse import urlsplit
@@ -40,8 +42,90 @@ def validate(config):
         raise ValueError('Invalid control credential')
     if not re.fullmatch(r'forklift-dns-[a-f0-9]{32}-[0-9]+\.', config['tsig_name']) or len(base64.b64decode(config['tsig_key'], validate=True)) != 32:
         raise ValueError('Invalid transfer credential')
+    if config['tsig_name'] != 'forklift-dns-'+config['id']+'-'+str(epoch(config))+'.':
+        raise ValueError('Transfer credential belongs to another enrollment')
     if len(set(config['zones'])) != len(config['zones']) or any(len(z) > 254 or not ZONE.fullmatch(z) for z in config['zones']):
         raise ValueError('Invalid zone assignment')
+
+
+def epoch(config):
+    value = config.get('credential_epoch', int(config['tsig_name'].rstrip('.').rsplit('-', 1)[1]))
+    if type(value) is not int or value < 1:
+        raise ValueError('Invalid credential epoch')
+    return value
+
+
+def fingerprint(path):
+    der = subprocess.check_output(['openssl', 'x509', '-in', str(path), '-outform', 'DER'], stderr=subprocess.DEVNULL)
+    return hashlib.sha256(der).hexdigest()
+
+
+def pair(key, certificate):
+    private = subprocess.check_output(['openssl', 'pkey', '-in', str(key), '-pubout', '-outform', 'DER'], stderr=subprocess.DEVNULL)
+    public = subprocess.check_output(['openssl', 'x509', '-in', str(certificate), '-pubkey', '-noout'], stderr=subprocess.DEVNULL)
+    return private == subprocess.run(['openssl', 'pkey', '-pubin', '-outform', 'DER'], input=public, capture_output=True, check=True).stdout
+
+
+def tls_context():
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(str(ROOT/'server.crt'), str(ROOT/'server.key'))
+    return context
+
+
+def stage_certificate():
+    key, cert = ROOT/'server-next.key', ROOT/'server-next.crt'
+    if not key.exists() or not cert.exists():
+        # A complete published pair is kept stable across retries and lost responses.
+        with tempfile.TemporaryDirectory(dir=ROOT, prefix='certificate-stage-') as temporary:
+            temporary = Path(temporary)
+            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:3072', '-nodes', '-days', '365', '-subj', '/CN='+settings['address'],
+                            '-addext', 'basicConstraints=critical,CA:FALSE', '-addext', 'keyUsage=critical,digitalSignature,keyEncipherment',
+                            '-addext', 'extendedKeyUsage=serverAuth', '-addext', 'subjectAltName=IP:'+settings['address'],
+                            '-keyout', str(temporary/'key'), '-out', str(temporary/'cert')], capture_output=True, check=True)
+            supervisor.atomic(key, (temporary/'key').read_bytes())
+            supervisor.atomic(cert, (temporary/'cert').read_bytes())
+    if not pair(key, cert):
+        raise ValueError('Staged DNS certificate pair is inconsistent')
+    return dict(certificate=cert.read_text())
+
+
+def activate_files(expected):
+    journal = ROOT/'certificate-activation.json'
+    if fingerprint(ROOT/'server.crt') == expected and pair(ROOT/'server.key', ROOT/'server.crt'):
+        journal.unlink(missing_ok=True)
+        return
+    key, cert = ROOT/'server-next.key', ROOT/'server-next.crt'
+    if fingerprint(cert) != expected or not pair(key, cert):
+        raise ValueError('Certificate activation does not match its staged pair')
+    supervisor.atomic(journal, json.dumps(dict(fingerprint=expected)).encode())
+    if not (ROOT/'server-previous.crt').exists():
+        supervisor.atomic(ROOT/'server-previous.key', (ROOT/'server.key').read_bytes())
+        supervisor.atomic(ROOT/'server-previous.crt', (ROOT/'server.crt').read_bytes())
+    supervisor.atomic(ROOT/'server.key', key.read_bytes())
+    supervisor.atomic(ROOT/'server.crt', cert.read_bytes())
+    if not pair(ROOT/'server.key', ROOT/'server.crt'):
+        raise ValueError('Activated TLS certificate pair is inconsistent')
+    journal.unlink(missing_ok=True)
+
+
+def credential_proof():
+    results = []
+    with tempfile.NamedTemporaryFile(mode='w', prefix='dns-transfer-', dir='/tmp') as key:
+        key.write('key "'+settings['tsig_name']+'" { algorithm hmac-sha256; secret "'+settings['tsig_key']+'"; };')
+        key.flush()
+        def prove(name):
+            native_zone = api('GET', '/zones/'+name+'?rrsets=false')
+            answer = subprocess.run(['dig', '-k', key.name, '@'+settings['primary']['address'], '-p', str(settings['primary']['dns_port']), name,
+                                     'AXFR', '+time=2', '+tries=1', '+nocookie'], capture_output=True, timeout=10)
+            text = answer.stdout.decode(errors='replace')
+            soa = [line.split()[6] for line in text.splitlines() if len(line.split()) >= 11 and line.split()[0].lower() == name and line.split()[3] == 'SOA']
+            active = [v.lower().rstrip('.') for v in native_zone.get('slave_tsig_key_ids', [])] == [settings['tsig_name'].lower().rstrip('.')]
+            verified = active and answer.returncode == 0 and len(soa) == 2 and soa[0] == soa[1] and b'Transfer failed' not in answer.stdout and not answer.stderr.strip()
+            return dict(name=name, verified=verified, detail=None if verified else 'Native zone key does not match' if not active else 'Signed AXFR response did not validate')
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(prove, settings['zones']))
+    return dict(credential_epoch=epoch(settings), transfers=results)
 
 
 def api(method, path, body=None):
@@ -109,7 +193,7 @@ def inspect():
         return dict(name=name, kind=z.get('kind'), last_check=z.get('last_check'), native_serial=z.get('serial'), udp=udp, tcp=tcp, primary=primary)
     with ThreadPoolExecutor(max_workers=4) as pool:
         zones = list(pool.map(probe, config['zones']))
-    return dict(id=config['id'], revision=config['revision'], api_available=True,
+    return dict(id=config['id'], revision=config['revision'], credential_epoch=epoch(config), protocol=2, api_available=True,
                 checked_at=int(time.time()), zones=zones)
 
 
@@ -186,10 +270,40 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(400, dict(error='DNS node identity mismatch'))
             if self.path == '/health':
                 api('GET', '')
-                return self.reply(200, dict(api_available=True))
+                return self.reply(200, dict(api_available=True, protocol=2))
             with supervisor.lock:
                 if self.path == '/inspect':
                     return self.reply(200, inspect())
+                if self.path == '/credentials':
+                    config = body['configuration']
+                    validate(config)
+                    if any(config[k] != settings[k] for k in ['id','address','dns_port','control_port','primary','zones']) or config['revision'] < settings['revision']:
+                        raise ValueError('Rotate credentials for the current configuration only')
+                    if epoch(config) not in [epoch(settings), epoch(settings)+1]:
+                        raise ValueError('Credential epoch is not consecutive')
+                    if epoch(config) == epoch(settings) and any(config[k] != settings[k] for k in ['control_token','tsig_name','tsig_key']):
+                        raise ValueError('Credential replay differs from the persisted transition')
+                    # The desired credential set is the recovery journal; retries authenticate with the new token.
+                    supervisor.atomic(ROOT/'secondary.json', json.dumps(config).encode())
+                    settings = config
+                    provision(settings)
+                    return self.reply(200, dict(applied=True, credential_epoch=epoch(settings)))
+                if self.path == '/credentials/verify':
+                    if body.get('credential_epoch') != epoch(settings):
+                        raise ValueError('Credential epoch mismatch')
+                    return self.reply(200, credential_proof())
+                if self.path == '/certificate/stage':
+                    return self.reply(200, stage_certificate())
+                if self.path == '/certificate/activate':
+                    activate_files(body['fingerprint'])
+                    self.server.tls_context = tls_context()
+                    return self.reply(200, dict(activated=True))
+                if self.path == '/certificate/retire':
+                    if fingerprint(ROOT/'server.crt') != body.get('fingerprint') or not pair(ROOT/'server.key', ROOT/'server.crt'):
+                        raise ValueError('Verify the active TLS identity before retiring staging')
+                    for name in ['server-next.key','server-next.crt','server-previous.key','server-previous.crt','certificate-activation.json']:
+                        (ROOT/name).unlink(missing_ok=True)
+                    return self.reply(200, dict(retired=True))
                 if self.path == '/configure':
                     config = body['configuration']
                     validate(config)
@@ -251,11 +365,10 @@ def run(runtime):
         supervisor.API_PORT = sock.getsockname()[1]
     supervisor.start()
     provision(settings)
+    if (ROOT/'certificate-activation.json').exists():
+        activate_files(json.loads((ROOT/'certificate-activation.json').read_text())['fingerprint'])
     server = Server((settings['address'], settings['control_port']), Handler)
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.load_cert_chain(str(ROOT/'server.crt'), str(ROOT/'server.key'))
-    server.tls_context = context
+    server.tls_context = tls_context()
     signal.signal(signal.SIGTERM, supervisor.shutdown)
     threading.Thread(target=supervisor.watch, daemon=True).start()
     server.serve_forever()

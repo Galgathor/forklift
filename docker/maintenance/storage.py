@@ -14,11 +14,12 @@ import subprocess
 import sys
 import tarfile
 import time
+import dns_storage
 from argon2 import PasswordHasher
 from primary import configuration, valid_base
 
 MAX_MANIFEST = 16 * 1024 * 1024
-ROOTS = {name: Path('/'+name) for name in ['directory','metadata','secrets','directory-secrets','authority']}
+ROOTS = {name: Path('/'+name) for name in ['directory','metadata','secrets','directory-secrets','authority','dns','dns-secrets']}
 EVENT_SCHEMA = '''CREATE TABLE IF NOT EXISTS maintenance_events(operation_id TEXT PRIMARY KEY,at INTEGER NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL,artifact TEXT NOT NULL DEFAULT '',sha256 TEXT NOT NULL DEFAULT '',detail TEXT NOT NULL DEFAULT '');'''
 
 
@@ -67,9 +68,9 @@ def safe_name(name):
     return path
 
 
-def files():
+def files(roots=None):
     result = []
-    for prefix, root in ROOTS.items():
+    for prefix, root in (roots or ROOTS).items():
         if not root.is_dir():
             raise ValueError('Missing snapshot scope: '+prefix)
         for path in sorted(root.rglob('*')):
@@ -104,7 +105,10 @@ def pack(p):
         raise ValueError('Complete initial directory setup before backup')
     if any((Path('/secrets')/name).exists() for name in ['service-rotation.json','certificate-renewal.json']):
         raise ValueError('Resume pending credential/certificate maintenance before backup')
-    listing = files()
+    dns_snapshot = Path('/work/dns-backup')
+    dns_schema = dns_storage.capture(dns_snapshot)
+    roots = dict(ROOTS, dns=dns_snapshot/'dns', **{'dns-secrets':dns_snapshot/'dns-secrets'})
+    listing = files(roots)
     entries = [{'path': name, 'size': path.stat().st_size, 'sha256': sha(path)} for name, path in listing]
     if len(entries) > 50000 or sum(e['size'] for e in entries) > p['max_bytes']:
         raise ValueError('Snapshot exceeds the configured limit')
@@ -113,7 +117,7 @@ def pack(p):
     if not version == 5 or db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
         raise ValueError('Unsupported or inconsistent metadata')
     db.close()
-    manifest = {'format': 2, 'created_at': int(time.time()), 'architecture': platform.machine(), 'metadata_schema': version,
+    manifest = {'format': 3, 'dns_schema':dns_schema, 'created_at': int(time.time()), 'architecture': platform.machine(), 'metadata_schema': version,
                 'operation_id': p['operation_id'], 'source': p['source'], 'files': entries}
     encoded = json.dumps(manifest, sort_keys=True).encode()
     if len(encoded) > MAX_MANIFEST:
@@ -147,7 +151,7 @@ def pack(p):
         partial.unlink()
         descriptor=os.open(destination.parent,os.O_DIRECTORY);os.fsync(descriptor);os.close(descriptor)
         return {'operation_id': p['operation_id'], 'sha256': sha(destination), 'artifact': destination.name,
-                'files': len(entries), 'metadata_schema': version, 'bytes': destination.stat().st_size}
+                'files': len(entries), 'metadata_schema': version, 'dns_included':True, 'bytes': destination.stat().st_size}
     except BaseException:
         partial.unlink(missing_ok=True)
         raise
@@ -199,7 +203,7 @@ def unpack(p):
             if first is None or first.name != 'manifest.json' or not first.isfile() or first.size > MAX_MANIFEST:
                 raise ValueError('Missing/invalid manifest')
             manifest = json.load(tar.extractfile(first))
-            if manifest.get('format') != 2 or manifest.get('architecture') != platform.machine() or manifest.get('metadata_schema') != 5:
+            if manifest.get('format') not in [2,3] or manifest.get('architecture') != platform.machine() or manifest.get('metadata_schema') != 5:
                 raise ValueError('Unsupported snapshot format, architecture or schema')
             entries = manifest.get('files', [])
             if not entries or len(entries) > 50000 or sum(e['size'] for e in entries) > p['max_bytes']:
@@ -241,6 +245,15 @@ def unpack(p):
         if decrypt.poll() is None:
             decrypt.kill()
             decrypt.wait()
+    included_dns = manifest['format'] == 3
+    if included_dns:
+        required_dns = {'dns/pdns.sqlite3','dns/layout.json','dns-secrets/api-key','dns-secrets/control'}
+        if not required_dns.issubset(seen) or any(n.startswith(('dns/','dns-secrets/')) and n not in required_dns for n in seen):
+            raise ValueError('DNS snapshot scope is incomplete or contains unsupported files')
+        if dns_storage.validate(work/'dns', work/'dns-secrets') != manifest.get('dns_schema'):
+            raise ValueError('DNS snapshot schema identity mismatch')
+    elif any(n.startswith(('dns/','dns-secrets/')) for n in seen):
+        raise ValueError('Legacy archive unexpectedly contains DNS state')
     for name in ['authority/ca.key', 'authority/ca.crt', 'directory-secrets/ldap.key', 'directory-secrets/ldap.crt', 'secrets/ca.crt', 'secrets/service', 'secrets/bootstrap', 'secrets/provision', 'secrets/maintenance', 'secrets/node-control-key', 'secrets/initialized-v5', 'directory-secrets/service', 'directory-secrets/provision', 'directory-secrets/ca.crt', 'secrets/ldap.crt', 'directory/layout-v5', 'metadata/forklift.db', 'directory/complete', 'directory/network.json']:
         if name not in seen:
             raise ValueError('Snapshot lacks required installation state')
@@ -264,7 +277,7 @@ def unpack(p):
     manifest['base'] = base
     manifest['id_high_water'] = max(allocator, largest)
     atomic(work/'validated.json', json.dumps(manifest).encode())
-    return {'operation_id': manifest['operation_id'], 'base': base, 'metadata_schema': manifest['metadata_schema'], 'id_high_water': manifest['id_high_water'], 'files': len(seen), 'validated': True}
+    return {'operation_id': manifest['operation_id'], 'base': base, 'metadata_schema': manifest['metadata_schema'], 'id_high_water': manifest['id_high_water'], 'files': len(seen), 'validated': True, 'dns_included':included_dns}
 
 
 def rotate_service(p):

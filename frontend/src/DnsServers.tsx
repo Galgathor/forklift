@@ -20,6 +20,10 @@ type Node = {
   error?: string;
   transfers_revoked: boolean;
   certificate_expires_at?: string;
+  credential_epoch: number;
+  pending_epoch?: number | null;
+  rotation?: string | null;
+  certificate_rotation_pending?: boolean;
   report: {
     state?: string;
     api_available?: boolean | null;
@@ -201,7 +205,11 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                     <small>
                       Private HTTPS management: {n.address}:{n.control_port}
                     </small>
-                    <small>{n.zones.length} assigned zones</small>
+                    <small>
+                      {n.zones.length} assigned zones · Credential epoch{" "}
+                      {n.credential_epoch}
+                      {n.pending_epoch ? ` → ${n.pending_epoch} pending` : ""}
+                    </small>
                     {n.certificate_expires_at && (
                       <small>
                         Certificate expires {n.certificate_expires_at}
@@ -215,7 +223,12 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                       }
                     >
                       {n.state === "enrolled"
-                        ? n.report.state?.replaceAll("_", " ") || "Not checked"
+                        ? n.rotation
+                          ? `Credential rotation: ${n.rotation.replaceAll("_", " ")}`
+                          : n.certificate_rotation_pending
+                            ? "Certificate rotation pending"
+                            : n.report.state?.replaceAll("_", " ") ||
+                              "Not checked"
                         : n.state}
                     </span>
                     {n.error && <small role="status">{n.error}</small>}
@@ -243,11 +256,22 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                       )}
                       {n.state === "enrolled" && (
                         <>
-                          <button disabled={busy} onClick={() => setEditing(n)}>
+                          <button
+                            disabled={
+                              busy ||
+                              !!n.rotation ||
+                              n.certificate_rotation_pending
+                            }
+                            onClick={() => setEditing(n)}
+                          >
                             Assign zones
                           </button>
                           <button
-                            disabled={busy}
+                            disabled={
+                              busy ||
+                              !!n.rotation ||
+                              n.certificate_rotation_pending
+                            }
                             onClick={() =>
                               perform(async () => {
                                 const result = await api(
@@ -280,6 +304,83 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                           >
                             Check synchronization
                           </button>
+                          <button
+                            disabled={busy || n.certificate_rotation_pending}
+                            onClick={() =>
+                              perform(async () => {
+                                if (
+                                  !confirm(
+                                    "Rotate this node’s transfer and management credentials? Old transfer permission is retired only after a new signed transfer succeeds.",
+                                  )
+                                )
+                                  return;
+                                const value = await api(
+                                  `dns/servers/${n.id}/credentials`,
+                                  "POST",
+                                  { acknowledge: true },
+                                );
+                                setNotice(
+                                  value.error ||
+                                    "DNS credentials rotated and old permissions retired.",
+                                );
+                                await load();
+                              })
+                            }
+                          >
+                            {n.rotation
+                              ? "Resume DNS credential rotation"
+                              : "Rotate DNS credentials"}
+                          </button>
+                          {!n.certificate_rotation_pending && (
+                            <button
+                              disabled={busy || !!n.rotation}
+                              onClick={() =>
+                                perform(async () => {
+                                  if (
+                                    !confirm(
+                                      "Stage a new private HTTPS certificate on this DNS node? Its private key remains on that machine.",
+                                    )
+                                  )
+                                    return;
+                                  await api(
+                                    `dns/servers/${n.id}/certificate`,
+                                    "POST",
+                                    { acknowledge: true },
+                                  );
+                                  await load();
+                                })
+                              }
+                            >
+                              Stage DNS certificate
+                            </button>
+                          )}
+                          {n.certificate_rotation_pending && (
+                            <button
+                              disabled={busy || !!n.rotation}
+                              onClick={() =>
+                                perform(async () => {
+                                  if (
+                                    !confirm(
+                                      "Activate the staged certificate, verify a connection pinned only to the new identity, and retire old trust?",
+                                    )
+                                  )
+                                    return;
+                                  const value = await api(
+                                    `dns/servers/${n.id}/certificate/finalize`,
+                                    "POST",
+                                    { acknowledge: true },
+                                  );
+                                  setNotice(
+                                    value.error ||
+                                      "DNS certificate activated and old trust retired.",
+                                  );
+                                  await load();
+                                })
+                              }
+                            >
+                              Finish DNS certificate rotation
+                            </button>
+                          )}
                         </>
                       )}
                       <button

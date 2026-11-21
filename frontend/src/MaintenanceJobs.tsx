@@ -48,6 +48,7 @@ type Job = {
     sha256?: string;
     artifact?: string;
     validated?: boolean;
+    dns_included?: boolean;
     id_high_water?: number;
     base?: string;
     recovery_required?: boolean;
@@ -174,10 +175,13 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
         )}
         {job?.result?.validated && (
           <p className="hint">
-            Archive verified: {job.result.base}. Archived Unix ID high-water
-            mark: {job.result.id_high_water}. Restoration still requires
-            explicit fencing and an ID floor above every allocation since the
-            snapshot.
+            Archive verified: {job.result.base}.{" "}
+            {job.result.dns_included
+              ? "Includes primary DNS data and secrets."
+              : "Legacy LDAP-only archive; full DNS restore is unavailable."}{" "}
+            Archived Unix ID high-water mark: {job.result.id_high_water}.
+            Restoration still requires explicit fencing and an ID floor above
+            every allocation since the snapshot.
           </p>
         )}
         {job?.result?.sha256 && (
@@ -229,7 +233,7 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
           <p className="hint">
             Restored directory writes remain paused until the recovery review in
             Settings is complete. Old replicas are quarantined and must be
-            fenced and reenrolled.
+            fenced and reenrolled, including DNS secondaries.
           </p>
         )}
         {recovery && (

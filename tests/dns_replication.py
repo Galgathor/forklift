@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Independent PowerDNS SQLite nodes, HTTPS enrollment, TSIG and real DNS failover."""
 import base64
+import io
+import tarfile
 import ipaddress
 import ssl
 import urllib.request
@@ -73,9 +75,16 @@ with stack as s:
         project = s.project+'-dns-secondary'
         override = s.root/'secondary-network.yaml'
         override.write_text('services:\n  dns-secondary:\n    network_mode: !reset null\n    networks:\n      default:\n        ipv4_address: '+address+'\nnetworks:\n  default:\n    external: true\n    name: '+network_name+'\n')
+        old_source=s.root/'phase3';old_source.mkdir()
+        with tarfile.open(fileobj=io.BytesIO(run(['git','archive','e9a4b24'],cwd=SOURCE).stdout)) as archive:
+            archive.extractall(old_source,filter='data')
+        old_image=project+'-phase3'
+        run(['docker','build','-t',old_image,'-f','docker/powerdns/Dockerfile','.'],cwd=old_source)
+        image_override=s.root/'secondary-image.yaml'
+        image_override.write_text('services:\n  dns-secondary:\n    image: '+old_image+'\n')
         env = {**os.environ, 'FORKLIFT_DNS_JOIN': joined['join_config'].partition('=')[2]}
-        def secondary(*args, check=True):
-            return run(['docker', 'compose', '-p', project, '-f', str(SOURCE/'deploy/dns-secondary/compose.yaml'), '-f', str(override), *args], env=env, check=check)
+        def secondary(*args, check=True, input=None):
+            return run(['docker', 'compose', '-p', project, '-f', str(SOURCE/'deploy/dns-secondary/compose.yaml'), '-f', str(override), '-f', str(image_override), *args], env=env, check=check, data=input)
         second_address = str(subnet.network_address+102)
         override2 = s.root/'secondary2-network.yaml'
         override2.write_text(override.read_text().replace(address, second_address))
@@ -168,6 +177,82 @@ with tempfile.NamedTemporaryFile(mode='w') as key:
             assert host['dns_status']['state']=='applied', host
             synced(); public_query('managed.example.test.', expected='192.168.1.61')
             r('/api/dns/rotate', 'POST', dict(acknowledge=True)); synced()
+            # A real Phase 3 secondary keeps serving existing zones and is gated before rotation.
+            secondary('exec','-T','dns-secondary','python3','-c',"import json;from pathlib import Path;p=Path('/dns/secondary.json');v=json.loads(p.read_text());v.pop('credential_epoch',None);p.write_text(json.dumps(v))")
+            pending=r(path+'/credentials','POST',dict(acknowledge=True))
+            assert not pending['rotation'] and not pending['pending_epoch'] and 'Update the DNS secondary' in pending['error'],pending
+            r(path+'/certificate','POST',dict(acknowledge=True),expect=400)
+            old_pin=secondary('exec','-T','dns-secondary','cat','/dns/server.crt').stdout
+            image_override.write_text('services:\n  dns-secondary:\n    image: forklift-dns:latest\n')
+            secondary('up','-d','--no-build','--force-recreate','--wait')
+            synced();public_query('managed.example.test.',expected='192.168.1.61')
+            assert secondary('exec','-T','dns-secondary','cat','/dns/server.crt').stdout==old_pin
+            print('PASS: populated Phase 3 secondary upgrade preserves SQLite zones, enrollment, certificate and signed transfers; old helper rotation is rejected before identity changes.',flush=True)
+            # Rotate real transfer/control credentials; neither old secret remains usable.
+            def node_row():
+                return json.loads(s.compose('exec','-T','maintenance','python3','-c',"import sqlite3,sys;d=sqlite3.connect('/metadata/forklift.db');print(d.execute('SELECT data FROM dns_servers WHERE id=?',(sys.argv[1],)).fetchone()[0])",node['id']).stdout)
+            before_rotation=node_row()
+            previous_config=json.loads(secondary('exec','-T','dns-secondary','cat','/dns/secondary.json').stdout)
+            r(path+'/credentials','POST',dict(acknowledge=False),expect=400)
+            r(path+'/credentials','POST',dict(acknowledge=True),use_csrf=False,expect=403)
+            rotated=r(path+'/credentials','POST',dict(acknowledge=True))
+            assert rotated['credential_epoch']==before_rotation['generation']+1 and not rotated['rotation'],rotated
+            synced();synced(path2)
+            rejection="""import json,ssl,sys,urllib.request,urllib.error
+from pathlib import Path
+p=json.load(sys.stdin);current=json.loads(Path('/dns/secondary.json').read_text());context=ssl.create_default_context(cafile='/dns/server.crt');client=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPSHandler(context=context));request=urllib.request.Request('https://'+current['address']+':'+str(current['control_port'])+'/health',data=json.dumps(dict(id=current['id'])).encode(),headers={'Authorization':'Bearer '+p['control_token']})
+try:client.open(request);raise AssertionError('Old DNS control token was accepted')
+except urllib.error.HTTPError as e:assert e.code==401
+"""
+            secondary('exec','-T','dns-secondary','python3','-c',rejection,input=json.dumps(previous_config).encode())
+            signed_old="""import json,subprocess,tempfile,sys
+p=json.load(sys.stdin)
+with tempfile.NamedTemporaryFile(mode='w') as key:
+ key.write('key "'+p['tsig_name']+'" { algorithm hmac-sha256; secret "'+p['tsig_key']+'"; };');key.flush()
+ r=subprocess.run(['dig','-k',key.name,'@'+p['primary']['address'],'-p',str(p['primary']['dns_port']),'example.test.','AXFR','+time=1','+tries=1'],capture_output=True)
+ assert r.returncode or any(v in r.stdout+r.stderr for v in [b'Transfer failed',b'BADKEY',b'NOTAUTH']), 'Old transfer key was accepted'
+"""
+            secondary('exec','-T','dns-secondary','python3','-c',signed_old,input=json.dumps(previous_config).encode())
+            # Reconstruct a lost acknowledgement after the peer applied the new credential.
+            after_rotation=node_row()
+            interrupted=dict(before_rotation,pending_generation=after_rotation['generation'],rotation='prepare',revision=after_rotation['revision'])
+            s.compose('exec','-T','maintenance','python3','-c',"import sqlite3,json,sys;p=json.load(sys.stdin);d=sqlite3.connect('/metadata/forklift.db');d.execute('UPDATE dns_servers SET data=? WHERE id=?',(json.dumps(p),p['id']));d.commit()",input=json.dumps(interrupted).encode())
+            secondary('up','-d','--no-build','--force-recreate','--wait')
+            resumed=r(path+'/credentials','POST',dict(acknowledge=True))
+            assert resumed['credential_epoch']==after_rotation['generation'] and not resumed['pending_epoch'] and not resumed['rotation'],resumed
+            synced()
+            old_certificate=secondary('exec','-T','dns-secondary','cat','/dns/server.crt').stdout.decode()
+            r(path+'/certificate','POST',dict(acknowledge=True),use_csrf=False,expect=403)
+            staged=r(path+'/certificate','POST',dict(acknowledge=True))
+            assert staged['certificate_rotation_pending']
+            # Crash between publishing the new key and certificate. Startup must finish its journal.
+            interrupt="""import hashlib,json;from pathlib import Path
+import supervisor,secondary
+secondary.supervisor=supervisor
+expected=secondary.fingerprint(Path('/dns/server-next.crt'))
+supervisor.atomic(Path('/dns/certificate-activation.json'),json.dumps(dict(fingerprint=expected)).encode())
+supervisor.atomic(Path('/dns/server-previous.key'),Path('/dns/server.key').read_bytes())
+supervisor.atomic(Path('/dns/server-previous.crt'),Path('/dns/server.crt').read_bytes())
+supervisor.atomic(Path('/dns/server.key'),Path('/dns/server-next.key').read_bytes())
+"""
+            secondary('exec','-T','dns-secondary','python3','-c',interrupt)
+            secondary('up','-d','--no-build','--force-recreate','--wait')
+            finalized=r(path+'/certificate/finalize','POST',dict(acknowledge=True))
+            assert not finalized['certificate_rotation_pending'],finalized
+            new_certificate=secondary('exec','-T','dns-secondary','cat','/dns/server.crt').stdout.decode()
+            assert old_certificate!=new_certificate
+            secondary('exec','-T','dns-secondary','python3','-c',"from pathlib import Path;assert not any((Path('/dns')/n).exists() for n in ['server-next.key','server-next.crt','server-previous.key','server-previous.crt','certificate-activation.json'])")
+            pinned_rejection="""import json,ssl,socket,sys
+p=json.load(sys.stdin);context=ssl.create_default_context(cadata=p['certificate'])
+try:
+ with socket.create_connection((p['address'],p['port']),timeout=5) as s:
+  with context.wrap_socket(s,server_hostname=p['address']):raise AssertionError('Old certificate pin accepted the new identity')
+except ssl.SSLCertVerificationError:pass
+"""
+            run(['python3','-c',pinned_rejection],data=json.dumps(dict(certificate=old_certificate,address=address,port=management_port)).encode())
+            synced();synced(path2)
+            print('PASS: actual credential rotation/new signed-transfer proof, old token/key rejection, lost-ack recovery, interrupted TLS pair activation and retirement of old pins/files.',flush=True)
+            node=synced()
             # New zones require explicit assignments; stale edits are rejected.
             new_zone = 'other.test.'
             r('/api/dns/zones', 'POST', dict(name=new_zone, kind='forward', nameserver='ns1.example.test.', ttl=300))
@@ -223,5 +308,6 @@ with tempfile.NamedTemporaryFile(mode='w') as key:
         finally:
             second('down', '--volumes', '--remove-orphans', check=False)
             secondary('down', '--volumes', '--remove-orphans', check=False)
+            run(['docker','image','rm',old_image],check=False)
     finally:
         run(['docker', 'rm', '-f', proxy_name], check=False)

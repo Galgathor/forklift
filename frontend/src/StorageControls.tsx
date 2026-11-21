@@ -21,7 +21,13 @@ export function StorageControls({
   const [publicUrl, setPublicUrl] = useState(window.location.origin);
   const [recipient, setRecipient] = useState(""),
     [backups, setBackups] = useState<
-      { id: string; sha256: string; bytes: number; at: number }[]
+      {
+        id: string;
+        sha256: string;
+        bytes: number;
+        at: number;
+        dns_included?: boolean;
+      }[]
     >([]),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -58,10 +64,11 @@ export function StorageControls({
       <section className="panel">
         <h2>Backups & recovery</h2>
         <p className="hint">
-          Backups contain directory data, matching metadata and installation
-          secrets. Forklift pauses directory writes and drains application
-          requests while producing an age-encrypted snapshot. Keep the recovery
-          key and trusted checksum in separate protected storage.
+          Backups contain LDAP data, primary DNS data, matching metadata and
+          installation secrets. Forklift pauses directory writes and drains
+          application requests. DNS keeps serving while its SQLite online
+          snapshot is captured into the encrypted archive. Keep the recovery key
+          and trusted checksum in separate protected storage.
         </p>
         {error && (
           <div className="error" role="alert">
@@ -134,6 +141,9 @@ export function StorageControls({
                 <strong>{new Date(backup.at * 1000).toLocaleString()}</strong>
                 <small>
                   {Math.ceil(backup.bytes / 1024)} KiB · {backup.id}
+                  {backup.dns_included
+                    ? " · LDAP + primary DNS"
+                    : " · Legacy/unknown scope; verify before restore"}
                 </small>
                 <details>
                   <summary>Creation checksum</summary>
@@ -435,10 +445,11 @@ export function BackupRestore({
     <>
       <h2>Verify or restore a backup</h2>
       <p className="hint">
-        Verification checks age authentication, file hashes, SQLite integrity
-        and native LDAP readability before any directory data is replaced. The
-        private recovery key is held only for this operation and never saved to
-        the metadata or logs.
+        Verification checks age authentication, file hashes, SQLite integrity,
+        native LDAP readability and the supported DNS schema before replacement.
+        Legacy LDAP-only archives can be verified; a full installation restore
+        requires an archive that includes primary DNS. The private recovery key
+        is held only for this operation and never saved to the metadata or logs.
       </p>
       {error && (
         <div className="error" role="alert">
@@ -486,12 +497,12 @@ export function BackupRestore({
         {busy ? "Uploading and validating…" : "Verify backup"}
       </button>
       <details>
-        <summary>Restore and replace this directory</summary>
+        <summary>Restore and replace this installation</summary>
         <p className="hint">
           The current installation is snapshotted for rollback before
-          replacement. Fence the original primary and every old replica before
-          starting a recovered directory. Archived passwords may restore access
-          revoked after the backup.
+          replacement. Fence the original LDAP/DNS primary services and every
+          old directory/DNS replica before starting a recovered installation.
+          Archived passwords may restore access revoked after the backup.
         </p>
         <label>
           Future UID/GID floor
@@ -514,7 +525,7 @@ export function BackupRestore({
             checked={fenced}
             onChange={(e) => setFenced(e.target.checked)}
           />
-          The original primary and old replicas are fenced.
+          The original LDAP/DNS primaries and all old replicas are fenced.
         </label>
         <label className="checkbox">
           <input

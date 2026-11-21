@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { DnsServers } from "./DnsServers";
+import { DnsImport } from "./DnsImport";
 import { Plus, RefreshCw, Pencil, Trash2, X, Download } from "lucide-react";
 type RecordSet = {
   name: string;
@@ -52,7 +53,8 @@ export function Dns({ api }: { api: Api }) {
     [busy, setBusy] = useState(false),
     [creating, setCreating] = useState(false),
     [editing, setEditing] = useState<RecordSet | null | undefined>(),
-    [soa, setSoa] = useState(false);
+    [soa, setSoa] = useState(false),
+    [importing, setImporting] = useState(false);
   async function load(name = selected?.name) {
     const value = (await api("dns")) as Overview;
     setOverview(value);
@@ -421,6 +423,20 @@ export function Dns({ api }: { api: Api }) {
                 <Download size={15} />
                 Export zone
               </a>
+              <a
+                className="secondary download-link"
+                href={`/api/dns/zones/${encodeURIComponent(selected.name)}/export-json`}
+                download
+              >
+                Export JSON
+              </a>
+              <button
+                className="secondary"
+                disabled={busy || !selected.managed || pending}
+                onClick={() => setImporting(true)}
+              >
+                Import records
+              </button>
               <button
                 className="secondary"
                 disabled={busy || !selected.managed || pending}
@@ -551,6 +567,17 @@ export function Dns({ api }: { api: Api }) {
               await load(zone.name);
             })
           }
+        />
+      )}
+      {selected && importing && (
+        <DnsImport
+          api={api}
+          zone={selected.name}
+          close={() => setImporting(false)}
+          complete={async (result) => {
+            setImporting(false);
+            await outcome(result);
+          }}
         />
       )}
       {selected && editing !== undefined && (

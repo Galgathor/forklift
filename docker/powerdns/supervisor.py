@@ -89,9 +89,9 @@ def initialize():
     db.close()
 
 
-def configuration():
+def configuration(isolated=False):
     settings = json.loads((DATA / 'secondary.json').read_text()) if SECONDARY else None
-    address = settings['address'] if settings else '0.0.0.0'
+    address = settings['address'] if settings else '127.0.0.1' if isolated else '0.0.0.0'
     port = settings['dns_port'] if settings else 5353
     return f'''launch=gsqlite3
 gsqlite3-dnssec=yes
@@ -149,9 +149,9 @@ def stop():
         child = None
 
 
-def start():
+def start(isolated=False):
     global child
-    atomic(DATA / 'pdns.conf', configuration().encode())
+    atomic(DATA / 'pdns.conf', configuration(isolated).encode())
     child = subprocess.Popen(['pdns_server', '--config-dir=/dns'])
     for _ in range(80):
         if child.poll() is not None:
@@ -188,6 +188,34 @@ def inspect():
             'replication': 'configured' if SECONDARY or any(z['kind'] in ['Primary', 'Master'] for z in zones) else 'not_configured', 'role': 'secondary' if SECONDARY else 'primary' if any(z['kind'] in ['Primary', 'Master'] for z in zones) else 'standalone'}
 
 
+def restore_start(operation):
+    marker = CONTROL/'offline.json'
+    if not marker.exists() or json.loads(marker.read_text())['id'] != operation:
+        raise ValueError('DNS restore fence does not match this operation')
+    stop()
+    initialize()
+    start(isolated=True)
+    def api(method, path, value=None):
+        code, data, _ = native(method, '/api/v1/servers/localhost'+path, json.dumps(value).encode() if value is not None else None)
+        if not 200 <= code < 300:
+            raise ValueError('DNS recovery provisioning failed')
+        return json.loads(data) if data else None
+    # Archived peers cannot retain transfer rights or notifications after restoration.
+    for zone in api('GET', '/zones?rrsets=false'):
+        if zone['account'] != 'forklift':
+            raise ValueError('Unmanaged DNS zones require separate recovery review')
+        name = zone['name']
+        api('PUT', '/zones/'+name, {'kind':'Native','master_tsig_key_ids':[]})
+        for kind in ['ALSO-NOTIFY','ALLOW-AXFR-FROM']:
+            api('PUT', '/zones/'+name+'/metadata/'+kind, {'kind':kind,'metadata':[]})
+    for key in api('GET','/tsigkeys'):
+        if key['name'].startswith('forklift-dns-'):
+            api('DELETE','/tsigkeys/'+key['id'])
+    stop()
+    start()
+    return {'restored':True}
+
+
 class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
@@ -222,6 +250,24 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(code, content, mime)
                 if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + secret('control')):
                     return self.reply(403, {'error': 'DNS control authorization rejected'})
+                if self.path == '/pause' and self.command == 'POST':
+                    payload = json.loads(body or b'{}')
+                    marker = CONTROL/'offline.json'
+                    if not marker.exists() or json.loads(marker.read_text())['id'] != payload.get('operation_id'):
+                        raise ValueError('DNS pause requires its durable operation fence')
+                    stop()
+                    return self.reply(200, {'paused':True})
+                if self.path == '/restore-start' and self.command == 'POST':
+                    return self.reply(200, restore_start(json.loads(body or b'{}').get('operation_id')))
+                if self.path == '/start' and self.command == 'POST':
+                    payload = json.loads(body or b'{}')
+                    marker = CONTROL/'offline.json'
+                    if marker.exists() and json.loads(marker.read_text())['id'] != payload.get('operation_id'):
+                        raise ValueError('DNS start fence does not match')
+                    if child is None or child.poll() is not None:
+                        initialize()
+                        start()
+                    return self.reply(200, {'started':True})
                 if self.path == '/inspect' and self.command == 'GET':
                     return self.reply(200, inspect())
                 if self.path == '/rotate' and self.command == 'POST':
@@ -259,6 +305,8 @@ if __name__ == '__main__':
             if SECONDARY:
                 import secondary
                 raise SystemExit(secondary.health())
+            if (CONTROL/'offline.json').exists():
+                raise SystemExit(0 if (CONTROL/'dns.sock').exists() else 1)
             value = inspect()
             raise SystemExit(0 if value['service_available'] else 1)
         except Exception:
@@ -267,8 +315,11 @@ if __name__ == '__main__':
         import secondary
         secondary.run(sys.modules[__name__])
         raise SystemExit(0)
-    initialize()
-    start()
+    if not (CONTROL/'offline.json').exists():
+        initialize()
+        start()
+    # Replaced storage may be incomplete. Keep recovery control reachable without
+    # opening or regenerating native data/credentials while its durable fence exists.
     signal.signal(signal.SIGTERM, shutdown)
     threading.Thread(target=watch, daemon=True).start()
     path = CONTROL / 'dns.sock'
