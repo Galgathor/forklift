@@ -23,9 +23,20 @@ import "./style.css";
 import { Hosts, type Host } from "./Hosts";
 import { Servers, type DirectoryHealth } from "./Servers";
 import { Operations } from "./Operations";
+import { MaintenanceProvider, useMaintenance } from "./MaintenanceJobs";
+import { SetupWizard } from "./SetupWizard";
 type Entry = { dn: string; attrs: Record<string, string[]> };
 type Overview = {
-  directory: { name: string; base: string };
+  directory: {
+    name: string;
+    base: string;
+    network: {
+      address: string;
+      hostname: string;
+      port: number;
+      endpoint: string;
+    };
+  };
   users: Entry[];
   groups: Entry[];
   events: { at: number; actor: string; action: string; target: string }[];
@@ -50,6 +61,7 @@ function BrandIcon({ size = 40 }: { size?: number }) {
   );
 }
 function App() {
+  const maintenance = useMaintenance();
   const [configured, setConfigured] = useState<boolean | null>(null),
     [session, setSession] = useState<{ username: string; csrf: string } | null>(
       null,
@@ -71,6 +83,8 @@ function App() {
       body: body ? JSON.stringify(body) : undefined,
     });
     const v = await r.json();
+    if (r.status === 503 && /maintenance/i.test(v.error || ""))
+      maintenance.start();
     if (r.status === 401 && session) {
       setSession(null);
       setData(null);
@@ -92,28 +106,43 @@ function App() {
       setBusy(false);
     }
   }
-  useEffect(() => {
-    perform(async () => {
-      const s = await api("status");
-      setConfigured(s.configured);
-      if (s.configured) {
-        try {
-          setSession(await api("me"));
-        } catch {
-          setSession(null);
-        }
+  async function initialize() {
+    const s = await api("status");
+    setConfigured(s.configured);
+    if (s.maintenance) {
+      maintenance.start({ bootstrap: s.maintenance_bootstrap });
+      return;
+    }
+    if (s.configured) {
+      try {
+        setSession(await api("me"));
+      } catch {
+        setSession(null);
+        setData(null);
       }
-    });
+    }
+  }
+  useEffect(() => {
+    void perform(initialize);
+    const done = () => void perform(initialize);
+    window.addEventListener("forklift:maintenance-complete", done);
+    return () =>
+      window.removeEventListener("forklift:maintenance-complete", done);
   }, []);
   useEffect(() => {
     if (session) perform(refresh);
   }, [session]);
   useEffect(() => {
-    if (!session || busy || !["Dashboard", "Directory Servers"].includes(page))
+    if (
+      !session ||
+      busy ||
+      maintenance.active ||
+      !["Dashboard", "Directory Servers"].includes(page)
+    )
       return;
     const interval = setInterval(() => perform(refresh), 30000);
     return () => clearInterval(interval);
-  }, [session, page, busy]);
+  }, [session, page, busy, maintenance.active]);
   useEffect(() => {
     document.documentElement.dataset.theme = light ? "light" : "dark";
     localStorage.setItem("theme", light ? "light" : "dark");
@@ -164,7 +193,8 @@ function App() {
         {banner}
       </div>
     );
-  if (!configured || !session)
+  if (!configured) return <SetupWizard api={api} completed={initialize} />;
+  if (!session)
     return (
       <div className="auth">
         <div className="auth-card">
@@ -172,49 +202,22 @@ function App() {
             <BrandIcon /> forklift<span className="tag">EARLY ACCESS</span>
           </div>
           <p className="eyebrow">YOUR DIRECTORY, SIMPLIFIED</p>
-          <h1>
-            {configured ? "Welcome back." : "A home for your identities."}
-          </h1>
+          <h1>Welcome back.</h1>
           <p className="muted">
-            {configured
-              ? "Sign in with your directory administrator account."
-              : "Initialize your encrypted OpenLDAP directory. Your existing data is never reset."}
+            Sign in with your directory administrator account.
           </p>
           {banner}
           <form
             onSubmit={(e) =>
               submit(e, async (v) => {
-                if (!configured) {
-                  await api("setup", "POST", v);
-                  setConfigured(true);
-                } else setSession(await api("login", "POST", v));
+                setSession(await api("login", "POST", v));
               })
             }
           >
-            {!configured && (
-              <>
-                {field("token", "One-time bootstrap token", "", "password")}
-                {field("name", "Directory name", "Homelab")}
-                {field("base", "LDAP base DN", "dc=homelab,dc=internal")}
-                <p className="hint">
-                  Use at least two dc= components. TLS and persistent storage
-                  are prepared by the installer.
-                </p>
-              </>
-            )}
-            {field(
-              "username",
-              configured ? "Username" : "Initial administrator",
-              "",
-              "text",
-            )}
+            {field("username", "Username", "", "text")}
             {field("password", "Password (14+ characters)", "", "password")}
             <button className="primary" disabled={busy}>
-              {busy
-                ? "Connecting…"
-                : configured
-                  ? "Sign in"
-                  : "Initialize directory"}
+              {busy ? "Connecting…" : "Sign in"}
             </button>
           </form>
           <div className="secure">
@@ -270,7 +273,7 @@ function App() {
           <div className="secure">
             <ShieldCheck size={17} /> OpenLDAP, made simple
           </div>
-          <small>Forklift v0.4 · Directory operations</small>
+          <small>Forklift v0.5 · Managed directories</small>
         </div>
       </aside>
       <div className="main">
@@ -648,6 +651,7 @@ function App() {
                   busy={busy}
                   readOnly={data.read_only}
                   directory={data.directory}
+                  csrf={session.csrf}
                   api={api}
                   perform={perform}
                   refresh={refresh}
@@ -862,4 +866,8 @@ function App() {
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  <MaintenanceProvider>
+    <App />
+  </MaintenanceProvider>,
+);

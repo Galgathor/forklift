@@ -1,16 +1,16 @@
 [package]
 name = "forklift"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ldap3 = "0.12"
 rusqlite = { version = "0.37", features = ["bundled"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "native-tls"] }
 rand = "0.9"
 sha2 = "0.10"
 hex = "0.4"
@@ -23,3 +23,5 @@ native-tls = "0.2"
 openssl = "0.10"
 x509-parser = "0.18"
 hmac = "0.12"
+
+tokio-util = { version = "0.7", features = ["io"] }

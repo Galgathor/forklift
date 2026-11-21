@@ -19,6 +19,9 @@ pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
         .query_map([], |r| r.get::<_, String>(1))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     for (name, kind) in [
+        ("address", "TEXT NOT NULL DEFAULT ''"),
+        ("control_port", "INTEGER NOT NULL DEFAULT 9443"),
+        ("pending_epoch", "INTEGER"),
         ("next_certificate", "TEXT"),
         ("certificate_staged_at", "INTEGER"),
         ("credential_rotated_at", "INTEGER"),
@@ -31,7 +34,7 @@ pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
             )?;
         }
     }
-    db.execute_batch("PRAGMA user_version=4; COMMIT;")?;
+    db.execute_batch("PRAGMA user_version=5; COMMIT;")?;
     Ok(())
 }
 pub(super) fn recovery(a: &App) -> Result<bool> {
@@ -250,19 +253,19 @@ mod tests {
     #[test]
     fn earlier_migrations_cannot_lower_the_downgrade_guard() {
         let db = Connection::open_in_memory().unwrap();
-        db.execute_batch("PRAGMA user_version=4;").unwrap();
-        // A crash after either committed migration must still advertise schema 4.
+        db.execute_batch("PRAGMA user_version=5;").unwrap();
+        // A crash after either committed migration must still advertise schema 5.
         hosts::migrate(&db).unwrap();
         assert_eq!(
             db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            4
+            5
         );
         replicas::migrate(&db).unwrap();
         assert_eq!(
             db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            4
+            5
         );
     }
     #[test]
@@ -276,7 +279,7 @@ mod tests {
         assert_eq!(
             db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            4
+            5
         );
         assert_eq!(
             db.query_row("SELECT value FROM settings WHERE key='preserve'", [], |r| r
@@ -285,4 +288,37 @@ mod tests {
             "true"
         );
     }
+}
+
+#[derive(Deserialize)]
+pub(super) struct PublicUrl {
+    url: String,
+    acknowledge: bool,
+}
+pub(super) async fn set_public_url(
+    State(a): State<App>,
+    h: HeaderMap,
+    Json(p): Json<PublicUrl>,
+) -> Result<Json<Value>> {
+    let who = admin(&a, &h, true).await?;
+    let url = p.url.trim_end_matches('/').to_owned();
+    if !p.acknowledge || !valid_public_url(&url) {
+        return Err(bad(
+            "Confirm a valid HTTP(S) origin without credentials or a path",
+        ));
+    }
+    let _guard = a.gate.lock().await;
+    let mut db = a.db.lock().unwrap();
+    let tx = db.transaction().map_err(anyhow::Error::from)?;
+    tx.execute("INSERT INTO settings VALUES('public_url',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[json!(url).to_string()]).map_err(anyhow::Error::from)?;
+    tx.execute(
+        "INSERT INTO audit(at,actor,action,target) VALUES(?,?,?,?)",
+        params![now(), who, "change public URL", url],
+    )
+    .map_err(anyhow::Error::from)?;
+    tx.execute("DELETE FROM sessions", [])
+        .map_err(anyhow::Error::from)?;
+    tx.commit().map_err(anyhow::Error::from)?;
+    *a.url.write().unwrap() = url.clone();
+    Ok(Json(json!({"url":url,"reauthenticate":true})))
 }

@@ -858,3 +858,29 @@ td {
 .replica-wizard dd {
   overflow-wrap: anywhere;
 }
+
+.setup-wizard {
+  width: min(700px, 100%);
+}
+.setup-wizard h2 {
+  margin: 20px 0 12px;
+}
+.setup-wizard details,
+.maintenance-progress details {
+  margin: 18px 0;
+}
+.maintenance-progress {
+  width: min(720px, 100%);
+}
+.maintenance-progress code {
+  display: block;
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+}
+.maintenance-progress > button,
+.maintenance-progress > a {
+  margin: 14px 12px 0 0;
+}
+.maintenance-progress .badge {
+  margin: 15px 0;
+}

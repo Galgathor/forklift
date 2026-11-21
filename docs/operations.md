@@ -1,118 +1,69 @@
-# Operations and recovery
+# Operations and recovery — 0.5
 
-## Encrypted, consistent backups
+All routine directory operations are in **Settings**. The old Python administrator CLI and certificate-renewal/primary-preparation scripts have been removed. Start the Docker deployment once; Forklift manages its own directory configuration thereafter. Infrastructure upgrades, DNS, firewall rules and Linux client deployment remain the responsibility of your hosting environment.
 
-Milestone 4 includes a local operator CLI, `scripts/forklift-admin.py`, and an isolated maintenance image. It never runs in the WebUI or receives Docker access through the manager. Requirements: Python 3.11+, local Docker access and this checkout. Build the toolbox before use:
+## Back up and verify
 
-```sh
-docker build -t forklift-maintenance -f docker/maintenance/Dockerfile .
-python3 scripts/forklift-admin.py keygen --output /safe/off-host-copy/forklift-recovery.txt
-```
+1. Open Settings and generate a recovery key. Your browser downloads the **private age recovery identity once**. Store it in a password manager or protected offline location. Forklift retains only the public encryption recipient.
+2. Create an encrypted backup. Forklift drains administrative API requests, checkpoints/closes SQLite, pauses the primary, records a coherent snapshot and restarts the directory. The progress dialog remains available. Healthy replicas continue serving authentication.
+3. Download the archive and its creation receipt. Keep the receipt/checksum in a trusted location separately from the ciphertext. Downloaded keys and backups do not belong in Git or bug reports.
+4. Test verification: upload the archive, enter the trusted creation-time SHA-256 checksum and select its private recovery key. Verification checks authenticated age decryption, strict archive paths/types/count/size/hash limits, schema-5 SQLite integrity and native OpenLDAP configuration/data readability. It does not replace live data.
 
-Use a real private destination outside this checkout; the example path must exist or be writable. Key generation creates a new mode-0600 age X25519 identity and prints **only its public recipient** and file location. Copy the identity to independent protected storage. Losing both this identity and its safe copies makes backups unrecoverable. The backup host only needs the public recipient; keep the private identity off-host between recovery drills.
+Recovery keys are transmitted only over HTTPS or localhost and held in temporary memory/tmpfs during decryption. They are excluded from persistent job records. Archives contain directory data, metadata, service secrets and the signing authority; protect them accordingly. Backup encryption is native age, not a custom protocol. There is no backup scheduler yet.
 
-```sh
-python3 scripts/forklift-admin.py backup \
-  --recipient age1YOUR_PUBLIC_RECIPIENT \
-  --output /private/backups/forklift-2026-11-20.tar.gz.age
-```
+Uploads are limited to 8 GiB ciphertext and extracted snapshots default to 8 GiB (bounded configurable limit). Ensure adequate space for the archive, staging, current directory and rollback snapshot. Set your reverse proxy's upload limit appropriately. Losing the private recovery identity makes the archive unrecoverable.
 
-The CLI discovers the actual primary/manager containers and named volumes, takes a local lock, remembers which containers were running, stops the manager then primary cleanly, checkpoints metadata and snapshots the directory, metadata, `.env` and **all installation secrets including the CA key**. It streams directly into age encryption; it creates no plaintext archive on the host. It records image IDs, checkout revision, architecture, schema and individual file hashes in an encrypted manifest. The new ciphertext file is mode 0600 and cannot overwrite an existing backup. The CLI restarts only the containers that were previously running, LDAP first, and waits for health. Expect a brief primary/management outage; configured synchronized replicas continue authentication independently. This is an offline backup, without a scheduler or online snapshot promise.
+## Restore
 
-Save the printed JSON receipt, especially its SHA-256, in independent trusted storage. Settings shows recorded maintenance results, but an attacker with host/metadata access can change them. **age recipient encryption authenticates ciphertext integrity, not the identity of its creator.** Verification therefore requires the trusted creation-time checksum; do not replace it with a checksum supplied beside an untrusted archive. Copy receipts and ciphertext off-host. A backup on the same disk is insufficient recovery protection.
+Use the first-launch wizard's **Restore from backup** option on a fresh deployment, or Settings on an existing installation. Initial restoration uses the local one-time installation key; no temporary dummy directory or admin account is necessary.
 
-For non-default deployments, global options precede the subcommand:
+Before confirming:
 
-```sh
-python3 scripts/forklift-admin.py --root /srv/forklift --project forklift \
-  --file /srv/forklift/compose.yaml --file /srv/forklift/deploy/primary/clients.compose.yaml \
-  backup --recipient age1YOUR_PUBLIC_RECIPIENT --output /private/backups/forklift.tar.gz.age
-```
+- Stop/fence the original primary and all old replicas. Prevent old hosts from presenting stale identities; restored metadata alone cannot stop remote machines. Never create two writable primaries.
+- Choose the target's private listener in the form. Its certificate is renewed for that address automatically; the target's current browser origin is preserved.
+- Supply a future Unix ID floor greater than every allocation ever made, including allocations after the snapshot. The archive cannot know that later history.
+- Confirm replacement of the target's data, upload the archive, and supply its separately trusted checksum and private age identity.
 
-Use your actual overrides; `clients.compose.yaml` is the repository's optional private LDAPS publication override. Named directory/metadata volumes and the standard installation-secret mounts are required. Custom secret sources or customized slapd configurations need a separately reviewed recovery strategy. Do not copy live MDB files or SQLite journals independently. The default uncompressed snapshot limit is 8 GiB, configurable with `--max-gib` (1–64); the helper uses bounded memory and file-count limits. Backups cover the primary installation, not replica volumes or Linux client machines.
+Forklift validates before replacing anything, pauses the primary, saves a coherent rollback snapshot, publishes validated state, renews the target certificate and verifies native startup. It keeps staging/rollback until the manager reopens and integrity-checks metadata. Restored passwords and existing numeric IDs survive; sessions and pending enrollments are revoked, old replica records are quarantined, and normal writes require the WebUI recovery review. Sign in with an administrator from the snapshot, review Settings, fence/reseed old replicas, regenerate affected host bundles, then explicitly enable writes.
 
-## Verify and rehearse restoration
+A live restore revokes your old session. Initial restore similarly transitions from the bootstrap key to the archived administrator identity. The private key is never stored for later use.
 
-```sh
-python3 scripts/forklift-admin.py verify \
-  --archive /private/backups/forklift.tar.gz.age \
-  --identity /private/recovery/forklift-recovery.txt \
-  --sha256 YOUR_TRUSTED_CREATION_TIME_SHA256
-```
+## Interrupted operations
 
-Verification decrypts into a temporary Docker volume, checks the complete age authentication stream, strict regular-file paths, duplicate/size/hash constraints, SQLite integrity and schema, the fixed generated LDAP configuration and native `slaptest`/`slapcat` readability. It rejects unsupported architectures/configurations. Plan free Docker storage for decrypted staging plus restored volumes. Plaintext staging is protected and removed afterward; deletion is not secure erasure, and the Docker host/storage are trusted. SIGKILL or a host crash can leave a staging volume labeled `io.forklift.maintenance=restore-stage`; inspect and remove only confirmed abandoned staging volumes. Retain appropriate encrypted backups before upgrades and rehearse this procedure regularly on an isolated Docker host.
+The progress dialog records the actual durable phase and offers **Resume** or, for eligible restores, **Roll back**. Reloading/restarting the manager or worker preserves the recorded operation. A verified restore can resume without re-entering its private key. Interruption before verification requires selecting the archive/key again.
 
-To restore, use a **fresh checkout at the matching release**, build the manager, LDAP and maintenance images, and use a fresh Compose project with no existing containers, named volumes, `.env` or `.secrets`. Do not run the installer there. Never merge archives into a live installation.
+A protected offline marker outside replaced directory storage prevents native startup during incomplete replacement. The manager blocks unrelated APIs while maintenance is active. Recovery authorization is limited to the initiating session (or installation key), its expiry, recorded job and CSRF nonce. It permits status/resume/rollback only; it cannot start arbitrary new privileged work while LDAP authorization is unavailable. Completed jobs cannot be replayed. If that session expires and you cannot sign in, use the local emergency recovery exception below.
 
-Before starting a restored primary, fence the original primary **and every old replica** at the network/host level. Reconnecting an old replica after rollback can leave obsolete identities and revocations; clients must not authenticate against unfenced old nodes. If rehearsing while production remains available, isolate the entire drill from production networks and clients.
+Do not manually delete job journals, markers, staging or rollback storage. Preserve all volumes if recovery fails. Repeatedly recreating data volumes is not a recovery procedure.
 
-```sh
-docker compose build
-docker build -t forklift-maintenance -f docker/maintenance/Dockerfile .
-python3 scripts/forklift-admin.py --project forklift-recovered restore \
-  --archive /private/backups/forklift.tar.gz.age \
-  --identity /private/recovery/forklift-recovery.txt \
-  --sha256 YOUR_TRUSTED_CREATION_TIME_SHA256 \
-  --uid-floor 1000000 --original-fenced
-# Review restored .env, port/interface publication, DNS, firewall and certificates.
-docker compose -p forklift-recovered up -d --no-build
-```
+## Credentials, certificates and addresses
 
-`--original-fenced` is an explicit operator acknowledgment, not remote proof. **Choose a UID/GID floor above every ID ever allocated**, including IDs created and deleted after the snapshot. The tool verifies it exceeds archived LDAP IDs and the allocator, but cannot reconstruct lost history. The numeric example is suitable only if you know no historical allocation reached it. New allocations start at that floor; restored identities retain their original IDs. Do not lower it afterward.
+Settings can rotate the manager's LDAP service credential with a durable journal, verify the new bind, and revoke administrative sessions. Sign in again afterward. The credential is stored in protected mounted secret files because LDAP binds require it; it is never stored in SQLite or logs.
 
-Restore clears all manager sessions and pending enrollment credentials, quarantines recorded replicas as `restore_required`, increments host configuration revisions and records recovery review as required. Services remain stopped until you explicitly start them. Log in using an administrator credential from the snapshot, verify users/groups/IDs and direct LDAP authentication, then complete the review in Settings to enable administrative writes. Review passwords and access revoked after the snapshot: rollback restores their older state. Remove quarantined replica records only after fencing their old nodes; enroll replacement nodes into **empty independent volumes** and confirm synchronization. Redeploy host configuration/trust bundles before returning clients to service. Removing a record never erases its remote disk or terminates existing connections.
+Primary certificate renewal keeps the installation CA and existing DNS/IP SANs so clients keep trusting the same CA. Changing the private listener checks that the address belongs to this host and the port is available, signs the selected identity and restarts the supervised directory. Existing host endpoints are revised; regenerate/deploy affected host bundles. Directory Servers shows replicas needing **Reconnect primary** after an address change.
 
-A database copy and environment publication use durable incomplete markers. A partially restored volume cannot silently start. `resume` can finish a fully prepared restore after interrupted environment publication. If preparation failed before reaching that stage, preserve the failed target for diagnosis and restore into another fresh target; there is no automatic destructive cleanup. Keep the same explicit project/options on every command. The published environment must retain the target's volume names; review `docker compose config` before starting.
+Replica credential/certificate operations use the node's pinned-TLS fixed-operation control service. Staging a replica certificate adds both pins and marks affected SSH host bundles for export. Deploy combined trust before activating, then deploy the final bundle after retirement. See [replication](replication.md).
 
-## Interrupted maintenance and service credential rotation
+## Persistent storage and upgrades
 
-Upgrade to Milestone 4 manager/primary images first. The CLI requires their startup-barrier support. Keep a matching encrypted backup and a local recovery login.
+Named volumes separate directory data, manager metadata, manager credentials, runtime directory credentials, signing authority, encrypted backups, uploads, work journals and protected control/LDAPI sockets. The CA private key is mounted only into the non-root, network-isolated custodian. Manager and directory containers cannot read it.
+
+Version 0.5 uses metadata schema **5** and encrypted archive format **2**. Earlier storage/archives are deliberately refused. Preserve old data and use its matching release; deploy fresh volumes for 0.5. Do not mount old directory data beside new empty metadata, which would lose Unix allocation history.
+
+For future updates, create/download/verify a matching backup first and test restoration on an isolated, fenced installation. Deploy the new images through your Docker hosting UI. Do not roll back only one database or use an older binary against newer metadata. Container recreation preserves volumes; volume deletion does not.
+
+The LDAP control health check reports supervisor reachability so the management plane can stay up before setup/during recovery. `/health` is manager liveness; `/ready` performs a real directory read and metadata check when normal operation is available. Directory Servers reports actual LDAPS reachability and synchronization evidence. Failed readiness during offline maintenance is expected.
+
+## Emergency console exception
+
+Only when no administrator can sign in:
 
 ```sh
-python3 scripts/forklift-admin.py rotate-service
-# After an interrupted operation, using identical root/project/file options:
-python3 scripts/forklift-admin.py resume
+./scripts/emergency-recovery.sh
 ```
 
-Service rotation stops both services, journals a new random secret in protected installation storage and updates the manager LDAP identity plus the derived monitor identity, when present, using native offline `slapmodify`. It preserves mounted file inodes/ownership, clears manager sessions, restarts the original running containers and verifies an actual TLS-protected service bind. The journal remains until this acknowledgment; startup barriers prevent a mixed LDAP/file state from serving. Resume rolls the same credential forward rather than generating another. An orphaned helper from an interrupted CLI is labeled with its operation ID; resume and service startup refuse to overlap an active helper. Wait for it to finish and retry; investigate a stuck native writer before stopping anything. Never delete journals or incomplete markers to bypass failed maintenance. Do not run overlapping manual maintenance or multiple managers against the same volumes.
+The console tool prompts without password echo, can finish or roll back an existing interrupted job, resets an **existing** account, enables it and restores explicit administrator membership. It revokes sessions and audits recovery. If needed, enter the corrected WebUI origin. The wrapper restarts the manager to reload that origin. No public API exposes this action; it requires local Docker access and protected Unix control credentials. It cannot create a new directory or reset UID allocation.
 
-User passwords remain unchanged. The monitor password reaches replicas through Syncrepl; wait for confirmed synchronization afterward. Existing LDAP binds/SSH sessions are not forcibly disconnected by password changes. Host read credentials rotate on host-bundle export. Replica replication credentials rotate separately as below. The CLI does not rotate the CA or recover a lost administrator password; retain independently protected administrator access and recovery material.
+## Diagnostics
 
-## Primary TLS renewal
-
-Settings displays configured certificate expiry/fingerprints and stored replica pins, with renewal warnings below 30 days. Configured expiry is not proof that a remote server presents that certificate. For primary leaf renewal, keep the installation CA and every required DNS SAN:
-
-```sh
-./scripts/renew-ldap-certificate.sh ldap1.homelab.internal
-docker compose restart ldap
-curl --fail http://localhost:8080/ready
-```
-
-The script retains existing DNS SANs plus `ldap` and adds the provided hostname. It validates the new pair and preserves restricted ownership, replacing both bind-mounted file contents. Run in a maintenance window; a durable local journal rolls interrupted pair replacement forward when you rerun with the same requested hostname, before starting LDAP. The CA key remains local and is never mounted into long-running services. Verify actual client binds and manager readiness after restart. Clients trusting the unchanged CA need no new CA bundle for primary leaf renewal. NPM HTTPS certificates are independent. CA root rotation is a planned manual migration, not an automated feature; renew before expiry and never disable TLS verification.
-
-## Replica certificate and replication credential lifecycle
-
-Upgrade the standalone replica runtime before using lifecycle commands: copy `backend/assets/replica.py` to its private deployment directory as `replica.py`, then `docker compose build replica` and recreate it. New bundles already contain the current runtime. Keep private enrollment/update files excluded from source control and image contexts. Run commands on the **replica Docker host**; no manager-to-host SSH or Docker API is needed.
-
-1. Generate a candidate locally: `docker compose run --rm --no-deps replica stage-certificate > replica-next.crt`. Only the public certificate is printed; its private key stays in the replica volume.
-2. In Directory Servers, upload that public file under **Credentials & certificate rotation**. Forklift validates its hostname, lifetime and leaf constraints, trusts current and candidate pins, and increments affected host revisions.
-3. Export and redeploy each affected host bundle; these include both certificates. Bundle export rotates that host's read password, so deploy the entire bundle. Check all clients before activation.
-4. Stop the replica: `docker compose stop replica`. Activate using `docker compose run --rm --no-deps replica activate-certificate`, then start with `docker compose up -d --no-build`. A local journal resumes a torn pair replacement on startup.
-5. Confirm synchronization, then choose **Verify & finalize certificate**. The manager verifies the actual peer presents the staged certificate before retiring its old pin. This marks hosts for a second export/redeployment containing only final trust. Existing deployed host bundles retain old trust until redeployed.
-6. Once final trust is deployed and verified, run `docker compose run --rm --no-deps replica retire-certificate` to remove the previous private pair. This command does not prove deployment to clients.
-
-Do not activate before client trust deployment. If activation fails, preserve the journal/candidate and rerun activation or normal startup to roll forward; do not invent a new unpinned certificate. A compromised replica key requires fencing that node, reviewing directory secrets and reseeding from a trusted primary; ordinary overlap is not a compromise-recovery protocol.
-
-**Rotate replication credential** immediately replaces the provider bind password and returns a private update archive. Transfer it privately to the replica host and follow its README: update/build the included runtime, stop the replica, pipe `credential-update.json` into `docker compose run --rm -T --no-deps replica apply-credential`, then start/recreate the replica. Updates are scoped to node/base/provider and monotonically increasing epochs; stale/replayed updates are refused. Check that a newly created directory change synchronizes, proving reconnection with the new credential. Delete transported plaintext update files after protected storage/deployment review. Losing a download can be recovered by issuing a newer update. Existing bound connections can remain alive until disconnected. The dashboard reports **issuance**, never a fabricated remote-deployment receipt.
-
-## Audit, sessions, upgrades and diagnostics
-
-Settings provides literal actor/action/target search, cursor-paginated audit history and NDJSON export. `GET /api/audit` defaults to 50 events (maximum 200); `before` is an exclusive event-ID cursor. `GET /api/audit/export` exports at most 5,000 matching events, with `X-Next-Cursor` for older pages. Both require an LDAP-authorized administrative session. Revoke all administrative sessions from Settings after suspected exposure; this includes your current session. The audit database is local and can be tampered with by host/DB administrators. Arrange external retention for stronger assurance; automatic audit deletion/rotation and tamper-resistant shipping are not implemented.
-
-Before upgrades, create and verify a matching backup and record image IDs/revision. Test the new release on an isolated restored installation. Recreate with `docker compose up -d --build`. Schema 4 upgrades preserve existing identities, hosts, sessions and ID allocation; older code refuses a newer metadata schema. Rollback requires restoring an entire matching snapshot with the recovery precautions above, never only an older image or metadata file.
-
-`docker compose logs --tail=100 manager ldap` shows operational failures. Default primary/manager/generated replica logs rotate at 10 MiB × 3 files per container. API errors omit raw LDAP diagnostics and passwords. `/health` proves process liveness; `/ready` verifies metadata and authenticated verified-TLS directory access, including available replicas. Failed LDAP connectivity/authorization fails closed. Check DNS SANs, expiry, CA files, mounted permissions and clocks for TLS errors. Never disable verification.
-
-Origin errors require matching the exact scheme/hostname/port in `FORKLIFT_PUBLIC_URL`. HTTPS enables Secure cookies; use the proxy hostname. Persistent login throttles apply globally (20 attempts/5 minutes) and per exact username (10/5 minutes); restarts do not clear them. A hostile caller can exhaust this budget, so restrict management network access.
-
-Partial initial setup never resets a directory automatically. If LDAP completed but metadata did not, retry with the same bootstrap token, base and original administrator credentials. For a failed native initialization, preserve the entire volume and inspect logs before any deliberate replacement. Lost metadata requires a matching backup; repeating setup cannot reconstruct historical UID allocation or auditing. Keep local Linux recovery accounts: the management process is unnecessary for normal LDAP authentication, but disconnected replicas and client caches cannot receive new revocations. See [Linux clients](linux-clients.md) and [replication](replication.md).
+The WebUI displays actionable LDAP/TLS, listener and replication errors. Your Docker hosting UI provides container health/logs; credentials and request bodies are not logged. An unavailable primary makes writes unavailable; verified enrolled replicas can still serve read management and Linux authentication. No automatic promotion occurs. For SSSD caching/revocation limits, see [Linux clients](linux-clients.md).

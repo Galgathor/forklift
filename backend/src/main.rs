@@ -1,4 +1,5 @@
 mod hosts;
+mod maintenance;
 mod operations;
 mod replica_setup;
 mod replicas;
@@ -22,8 +23,10 @@ use std::{
 use tower_http::services::{ServeDir, ServeFile};
 #[derive(Clone)]
 struct App {
-    db: Arc<Mutex<Connection>>,
-    url: String,
+    db: Arc<Mutex<maintenance::Database>>,
+    url: Arc<std::sync::RwLock<String>>,
+    jobs: Arc<maintenance::Jobs>,
+    configured: Arc<std::sync::atomic::AtomicBool>,
     gate: Arc<tokio::sync::Mutex<()>>,
 }
 type Result<T> = std::result::Result<T, Error>;
@@ -95,6 +98,8 @@ fn base_valid(s: &str) -> bool {
 fn config(a: &App) -> Option<Value> {
     a.db.lock()
         .unwrap()
+        .0
+        .as_ref()?
         .query_row(
             "SELECT value FROM settings WHERE key='directory'",
             [],
@@ -111,7 +116,7 @@ fn base(a: &App) -> Result<String> {
 async fn connect() -> anyhow::Result<Ldap> {
     let (conn, ldap) = LdapConnAsync::with_settings(
         ldap3::LdapConnSettings::new().set_conn_timeout(std::time::Duration::from_secs(5)),
-        "ldaps://ldap:636",
+        "ldapi://%2Frun%2Fldap-socket%2Fldap.sock",
     )
     .await?;
     ldap3::drive!(conn);
@@ -169,8 +174,60 @@ async fn search(l: &mut Ldap, b: &str, f: &str) -> anyhow::Result<Vec<Value>> {
 fn attrs(v: &Value, k: &str) -> String {
     v["attrs"][k][0].as_str().unwrap_or("").into()
 }
+fn public_url(a: &App) -> String {
+    a.url.read().unwrap().clone()
+}
+fn valid_public_url(raw: &str) -> bool {
+    if raw.len() > 2048 {
+        return false;
+    }
+    reqwest::Url::parse(raw).is_ok_and(|url| {
+        ["http", "https"].contains(&url.scheme())
+            && url.host_str().is_some()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && raw.trim_end_matches('/') == url.origin().ascii_serialization()
+    })
+}
+fn request_origin(h: &HeaderMap) -> Result<String> {
+    let value = h
+        .get("origin")
+        .and_then(|s| s.to_str().ok())
+        .ok_or(bad("A browser origin is required"))?;
+    if !valid_public_url(value) {
+        return Err(bad("Use an HTTP(S) origin without a path or credentials"));
+    }
+    Ok(value.into())
+}
+fn bootstrap(a: &App, h: &HeaderMap, raw: &str) -> Result<()> {
+    if config(a).is_some() {
+        return Err(bad("Already configured"));
+    }
+    if digest(raw) != digest(&secret("bootstrap")) {
+        return Err(unauthorized());
+    }
+    request_origin(h)?;
+    Ok(())
+}
+#[derive(Deserialize)]
+struct Inspect {
+    token: String,
+}
+async fn inspect_setup(
+    State(a): State<App>,
+    h: HeaderMap,
+    Json(p): Json<Inspect>,
+) -> Result<Json<Value>> {
+    bootstrap(&a, &h, &p.token)?;
+    Ok(Json(
+        maintenance::local("/inspect", Some(&json!({}))).await?,
+    ))
+}
 fn origin(a: &App, h: &HeaderMap) -> Result<()> {
-    if h.get("origin").and_then(|s| s.to_str().ok()) != Some(a.url.as_str()) {
+    if h.get("origin").and_then(|s| s.to_str().ok()) != Some(public_url(a).as_str()) {
         return Err(Error(StatusCode::FORBIDDEN, "Origin rejected".into()));
     }
     Ok(())
@@ -244,6 +301,19 @@ async fn health() -> Json<Value> {
     Json(json!({"status":"ok"}))
 }
 async fn ready(State(a): State<App>) -> Result<Json<Value>> {
+    if a.jobs.active.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(Error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Directory maintenance is active".into(),
+        ));
+    }
+    let _lease = a.jobs.lease.read().await;
+    if a.jobs.active.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(Error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Directory maintenance is active".into(),
+        ));
+    }
     if config(&a).is_some() {
         let mut l = service(&a).await?;
         l.search(&base(&a)?, Scope::Base, "(objectClass=*)", vec!["dc"])
@@ -259,10 +329,14 @@ async fn ready(State(a): State<App>) -> Result<Json<Value>> {
     ))
 }
 async fn status(State(a): State<App>) -> Json<Value> {
-    Json(json!({"configured":config(&a).is_some(),"version":env!("CARGO_PKG_VERSION")}))
+    Json(
+        json!({"configured":a.configured.load(std::sync::atomic::Ordering::SeqCst),"maintenance":a.jobs.active.load(std::sync::atomic::Ordering::SeqCst),"maintenance_bootstrap":a.jobs.ticket.read().unwrap().as_ref().is_some_and(|t|t.bootstrap),"public_url":public_url(&a),"version":env!("CARGO_PKG_VERSION")}),
+    )
 }
 #[derive(Deserialize)]
 struct Setup {
+    network: Value,
+    public_url: String,
     token: String,
     name: String,
     base: String,
@@ -270,7 +344,10 @@ struct Setup {
     password: String,
 }
 async fn setup(State(a): State<App>, h: HeaderMap, Json(p): Json<Setup>) -> Result<Json<Value>> {
-    origin(&a, &h)?;
+    bootstrap(&a, &h, &p.token)?;
+    if !valid_public_url(&p.public_url) || request_origin(&h)? != p.public_url {
+        return Err(bad("Use the current browser origin as the public URL"));
+    }
     let _guard = a.gate.lock().await;
     if config(&a).is_some() {
         return Err(bad("Already configured"));
@@ -292,27 +369,42 @@ async fn setup(State(a): State<App>, h: HeaderMap, Json(p): Json<Setup>) -> Resu
             "Use a valid username, dc-based base DN, directory name and password of at least 14 characters",
         ));
     }
-    let client = reqwest::Client::builder()
-        .add_root_certificate(
-            reqwest::Certificate::from_pem(
-                &std::fs::read("/run/secrets/ca.crt").map_err(anyhow::Error::from)?,
+    let readiness = maintenance::local("/inspect", Some(&json!({}))).await?;
+    let pending =
+        a.db.lock()
+            .unwrap()
+            .query_row(
+                "SELECT value FROM settings WHERE key='setup_pending'",
+                [],
+                |r| r.get::<_, String>(0),
             )
-            .map_err(anyhow::Error::from)?,
-        )
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(anyhow::Error::from)?;
-    let r = client
-        .post("https://ldap:8090/initialize")
-        .bearer_auth(secret("provision"))
-        .json(&json!({"base":p.base,"username":p.username,"password":p.password}))
-        .send()
-        .await
-        .map_err(anyhow::Error::from)?;
-    // A successful helper call may precede a manager crash. Authenticate the original identity before completing recovery.
-    if !r.status().is_success() && r.status() != reqwest::StatusCode::CONFLICT {
-        return Err(bad("Directory provisioning failed; inspect local state"));
+            .ok();
+    if readiness["initialized"] == true && pending.is_none() {
+        return Err(bad(
+            "Directory data exists without matching metadata. Restore a complete backup instead of resetting ID allocation.",
+        ));
     }
+    if let Some(pending) = pending {
+        let previous: Value = serde_json::from_str(&pending).map_err(anyhow::Error::from)?;
+        if previous["base"] != p.base || previous["username"] != p.username {
+            return Err(bad(
+                "Retry interrupted setup with its original base DN and administrator identity",
+            ));
+        }
+    }
+    a.db.lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO settings VALUES('setup_pending',?) ON CONFLICT(key) DO NOTHING",
+            [json!({"base":p.base,"username":p.username}).to_string()],
+        )
+        .map_err(anyhow::Error::from)?;
+    let network = maintenance::local("/configure", Some(&p.network)).await?;
+    maintenance::directory(
+        "/initialize",
+        &json!({"base":p.base,"username":p.username,"password":p.password}),
+    )
+    .await?;
     let mut l = connect().await?;
     l.simple_bind(
         &format!("uid={},ou=people,{}", p.username, p.base),
@@ -320,14 +412,46 @@ async fn setup(State(a): State<App>, h: HeaderMap, Json(p): Json<Setup>) -> Resu
     )
     .await?
     .success()?;
-    let value = json!({"name":p.name,"base":p.base});
-    a.db.lock()
-        .unwrap()
-        .execute(
+    if search(
+        &mut l,
+        &format!("ou=groups,{}", p.base),
+        &format!("(&(cn=administrators)(memberUid={}))", p.username),
+    )
+    .await?
+    .is_empty()
+    {
+        return Err(bad(
+            "Use the original directory administrator to complete setup",
+        ));
+    }
+    let value = json!({"name":p.name,"base":p.base,"network":network});
+    {
+        let mut db = a.db.lock().unwrap();
+        let tx = db.transaction().map_err(anyhow::Error::from)?;
+        tx.execute(
             "INSERT INTO settings(key,value) VALUES('directory',?)",
             [value.to_string()],
         )
         .map_err(anyhow::Error::from)?;
+        tx.execute(
+            "INSERT INTO settings VALUES('public_url',?)",
+            [json!(p.public_url).to_string()],
+        )
+        .map_err(anyhow::Error::from)?;
+        tx.execute("DELETE FROM settings WHERE key='setup_pending'", [])
+            .map_err(anyhow::Error::from)?;
+        tx.commit().map_err(anyhow::Error::from)?;
+    }
+    *a.url.write().unwrap() = p.public_url;
+    hosts::sync_directory(
+        &a,
+        "primary",
+        "Primary directory",
+        network["hostname"].as_str().unwrap_or(""),
+        "primary",
+    )?;
+    a.configured
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     audit(&a, &p.username, "setup", "directory")?;
     Ok(Json(json!({"ok":true})))
 }
@@ -419,7 +543,7 @@ async fn login(State(a): State<App>, h: HeaderMap, Json(p): Json<Login>) -> Resu
     audit(&a, &p.username, "login", "session")?;
     let cookie = format!(
         "forklift_session={raw}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800{}",
-        if a.url.starts_with("https://") {
+        if public_url(&a).starts_with("https://") {
             "; Secure"
         } else {
             ""
@@ -838,64 +962,126 @@ async fn delete_group(
 }
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !std::path::Path::new("/data/restore-incomplete").exists()
-            && !std::path::Path::new("/data/service-rotation-incomplete").exists(),
-        "Offline maintenance is incomplete; use the local recovery command"
-    );
-    let db = Connection::open("/data/forklift.db")?;
-    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    anyhow::ensure!(
-        version <= 4,
-        "Metadata was created by a newer Forklift release; refusing downgrade"
-    );
-    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,username TEXT NOT NULL,csrf TEXT NOT NULL,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempts(at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL); CREATE TABLE IF NOT EXISTS allocator(value INTEGER NOT NULL); INSERT INTO allocator SELECT 10000 WHERE NOT EXISTS(SELECT 1 FROM allocator);")?;
-    hosts::migrate(&db)?;
-    replicas::migrate(&db)?;
-    operations::migrate(&db)?;
-    let url = std::env::var("FORKLIFT_PUBLIC_URL")
+    let initial_url = std::env::var("FORKLIFT_PUBLIC_URL")
         .unwrap_or("http://localhost:8080".into())
         .trim_end_matches('/')
-        .to_string();
-    let parsed = reqwest::Url::parse(&url)?;
+        .to_owned();
     anyhow::ensure!(
-        ["http", "https"].contains(&parsed.scheme())
-            && parsed.host_str().is_some()
-            && parsed.path() == "/"
-            && parsed.query().is_none()
-            && parsed.fragment().is_none()
-            && parsed.username().is_empty()
-            && parsed.password().is_none(),
-        "FORKLIFT_PUBLIC_URL must be an HTTP(S) origin without a path or credentials"
+        valid_public_url(&initial_url),
+        "Invalid FORKLIFT_PUBLIC_URL"
     );
+    let state = maintenance::local("/status", None)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.1))?;
+    let active = ["running", "needs_resume", "awaiting_ack"]
+        .contains(&state["job"]["status"].as_str().unwrap_or(""));
+    let mut db = maintenance::Database(None);
+    if !active {
+        let connection = Connection::open("/data/forklift.db")?;
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        anyhow::ensure!(
+            version == 0 || version == 5,
+            "Forklift 0.5 requires fresh storage; preserve old volumes and use the previous release for old backups"
+        );
+        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,username TEXT NOT NULL,csrf TEXT NOT NULL,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempts(at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL); CREATE TABLE IF NOT EXISTS allocator(value INTEGER NOT NULL); INSERT INTO allocator SELECT 10000 WHERE NOT EXISTS(SELECT 1 FROM allocator);")?;
+        hosts::migrate(&connection)?;
+        replicas::migrate(&connection)?;
+        operations::migrate(&connection)?;
+        db = maintenance::Database(Some(connection));
+    }
+    let jobs = maintenance::Jobs::new(active);
+    let url = if active {
+        jobs.ticket
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|t| t.public_url.clone())
+            .unwrap_or(initial_url)
+    } else {
+        db.query_row(
+            "SELECT value FROM settings WHERE key='public_url'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(initial_url)
+    };
+    let configured = if active {
+        jobs.ticket
+            .read()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|t| !t.bootstrap)
+    } else {
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE key='directory')",
+            [],
+            |r| r.get::<_, bool>(0),
+        )?
+    };
     let a = App {
         db: Arc::new(Mutex::new(db)),
-        url,
+        url: Arc::new(std::sync::RwLock::new(url)),
         gate: Arc::new(tokio::sync::Mutex::new(())),
+        jobs: Arc::new(jobs),
+        configured: Arc::new(std::sync::atomic::AtomicBool::new(configured)),
     };
+    if !active && let Some(directory) = config(&a) {
+        hosts::sync_directory(
+            &a,
+            "primary",
+            "Primary directory",
+            directory["network"]["hostname"].as_str().unwrap_or(""),
+            "primary",
+        )
+        .map_err(|e| anyhow::anyhow!(e.1))?;
+        for node in replicas::records(&a).map_err(|e| anyhow::anyhow!(e.1))? {
+            hosts::sync_directory(
+                &a,
+                &node.id,
+                &node.name,
+                &hosts::endpoint_hostname(&node.endpoint).map_err(|e| anyhow::anyhow!(e.1))?,
+                "replica",
+            )
+            .map_err(|e| anyhow::anyhow!(e.1))?;
+        }
+    }
+    maintenance::watch(a.clone());
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/api/{*path}", axum::routing::any(|| async { (StatusCode::NOT_FOUND, Json(json!({"error":"API endpoint not found"}))) }))
         .route("/api/status", get(status))
         .route("/api/setup", post(setup))
+        .route("/api/setup/inspect", post(inspect_setup))
         .route("/api/login", post(login))
         .route("/api/me", get(me))
         .route("/api/logout", post(logout))
         .route("/api/overview", get(overview))
+        .route("/api/maintenance", get(maintenance::index))
+        .route("/api/maintenance/inspect", get(maintenance::inspect))
+        .route("/api/maintenance/current", get(maintenance::current))
+        .route("/api/maintenance/jobs", post(maintenance::launch))
+        .route("/api/maintenance/recover", post(maintenance::resume))
+        .route("/api/maintenance/keys", post(maintenance::keygen))
+        .route("/api/maintenance/uploads", post(maintenance::upload).layer(axum::extract::DefaultBodyLimit::max(8*1024*1024*1024usize)))
+        .route("/api/maintenance/backups/{id}", get(maintenance::download).delete(maintenance::remove))
         .route("/api/operations", get(operations::status))
+        .route("/api/settings/public-url", post(operations::set_public_url))
         .route("/api/audit", get(operations::audit_page))
         .route("/api/audit/export", get(operations::audit_export))
         .route("/api/sessions/revoke", post(operations::revoke_sessions))
         .route("/api/recovery/complete", post(operations::complete_recovery))
         .route("/api/replication/setup", get(replica_setup::status))
-        .route("/api/replication/primary/check", post(replica_setup::check))
         .route("/api/directory-servers", get(replicas::index).post(replicas::create))
         .route("/api/replicas/{id}/bundle", post(replicas::bundle))
         .route("/api/replicas/{id}/enroll", post(replicas::enroll))
         .route("/api/replicas/{id}/certificate", post(replicas::stage_certificate))
         .route("/api/replicas/{id}/certificate/finalize", post(replicas::finalize_certificate))
         .route("/api/replicas/{id}/credential", post(replicas::rotate_credential))
+        .route("/api/replicas/{id}/reconnect", post(replicas::reconnect))
+        .route("/api/replicas/{id}/restart", post(replicas::restart))
         .route("/api/replicas/{id}", axum::routing::delete(replicas::delete))
         .route("/api/hosts", get(hosts::index).post(hosts::create))
         .route("/api/hosts/{id}", put(hosts::update).delete(hosts::delete))
@@ -915,6 +1101,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(header::CONTENT_SECURITY_POLICY, axum::http::HeaderValue::from_static("default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")))
         .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store")))
+        .layer(axum::middleware::from_fn_with_state(a.clone(),maintenance::fence))
         .with_state(a);
     let listener = tokio::net::TcpListener::bind(
         std::env::var("FORKLIFT_LISTEN").unwrap_or("0.0.0.0:8080".into()),

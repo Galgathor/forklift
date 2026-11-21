@@ -1,4 +1,4 @@
-"""Local, offline operator toolbox. No HTTP server or arbitrary-command interface."""
+"""Internal offline storage primitives. Invoked only by the constrained custodian."""
 import hashlib
 import hmac
 import io
@@ -18,7 +18,7 @@ from argon2 import PasswordHasher
 from primary import configuration, valid_base
 
 MAX_MANIFEST = 16 * 1024 * 1024
-ROOTS = {'directory': Path('/directory'), 'metadata': Path('/metadata'), 'secrets': Path('/secrets'), 'installation': Path('/installation')}
+ROOTS = {name: Path('/'+name) for name in ['directory','metadata','secrets','directory-secrets','authority']}
 EVENT_SCHEMA = '''CREATE TABLE IF NOT EXISTS maintenance_events(operation_id TEXT PRIMARY KEY,at INTEGER NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL,artifact TEXT NOT NULL DEFAULT '',sha256 TEXT NOT NULL DEFAULT '',detail TEXT NOT NULL DEFAULT '');'''
 
 
@@ -64,8 +64,6 @@ def safe_name(name):
         raise ValueError('Unsafe archive path')
     if len(path.parts) < 2 or path.parts[0] not in ROOTS:
         raise ValueError('Unknown archive scope')
-    if path.parts[0] == 'installation' and name != 'installation/.env':
-        raise ValueError('Unsupported installation file')
     return path
 
 
@@ -79,6 +77,8 @@ def files():
             if prefix == 'secrets' and relative == '.maintenance.lock':
                 continue
             mode = path.lstat().st_mode
+            if prefix == 'directory' and path.name in ['slapd.pid','slapd.args']:
+                continue
             if stat.S_ISDIR(mode):
                 continue
             if not stat.S_ISREG(mode):
@@ -110,16 +110,16 @@ def pack(p):
         raise ValueError('Snapshot exceeds the configured limit')
     db = sqlite3.connect('file:/metadata/forklift.db?mode=ro', uri=True)
     version = db.execute('PRAGMA user_version').fetchone()[0]
-    if not 1 <= version <= 4 or db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+    if not version == 5 or db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
         raise ValueError('Unsupported or inconsistent metadata')
     db.close()
-    manifest = {'format': 1, 'created_at': int(time.time()), 'architecture': platform.machine(), 'metadata_schema': version,
+    manifest = {'format': 2, 'created_at': int(time.time()), 'architecture': platform.machine(), 'metadata_schema': version,
                 'operation_id': p['operation_id'], 'source': p['source'], 'files': entries}
     encoded = json.dumps(manifest, sort_keys=True).encode()
     if len(encoded) > MAX_MANIFEST:
         raise ValueError('Manifest exceeds its limit')
-    destination = Path('/output')/p['filename']
-    partial = Path('/output')/('.'+p['operation_id']+'.partial')
+    destination = Path('/backups')/p['filename']
+    partial = Path('/backups')/('.'+p['operation_id']+'.partial')
     if destination.exists():
         raise ValueError('Backup already exists')
     fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -185,12 +185,12 @@ def validate_config(directory, secrets):
 
 
 def unpack(p):
-    if sha('/backup.age') != p['sha256']:
+    if sha(p['archive_path']) != p['sha256']:
         raise ValueError('Ciphertext checksum differs from the trusted backup record')
-    work = Path('/work')
+    work = Path('/work/stage')
     if any(work.iterdir()):
         raise ValueError('Restore staging area is not empty')
-    decrypt = subprocess.Popen(['age', '-d', '-i', '/identity', '/backup.age'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    decrypt = subprocess.Popen(['age', '-d', '-i', p['identity_path'], p['archive_path']], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     manifest = None
     seen = set()
     try:
@@ -199,7 +199,7 @@ def unpack(p):
             if first is None or first.name != 'manifest.json' or not first.isfile() or first.size > MAX_MANIFEST:
                 raise ValueError('Missing/invalid manifest')
             manifest = json.load(tar.extractfile(first))
-            if manifest.get('format') != 1 or manifest.get('architecture') != platform.machine() or not 1 <= manifest.get('metadata_schema', 0) <= 4:
+            if manifest.get('format') != 2 or manifest.get('architecture') != platform.machine() or manifest.get('metadata_schema') != 5:
                 raise ValueError('Unsupported snapshot format, architecture or schema')
             entries = manifest.get('files', [])
             if not entries or len(entries) > 50000 or sum(e['size'] for e in entries) > p['max_bytes']:
@@ -241,108 +241,37 @@ def unpack(p):
         if decrypt.poll() is None:
             decrypt.kill()
             decrypt.wait()
-    for name in ['secrets/ca.crt', 'secrets/ca.key', 'secrets/ldap.key', 'secrets/ldap.crt', 'secrets/service', 'secrets/bootstrap', 'secrets/provision', 'metadata/forklift.db', 'directory/complete', 'installation/.env']:
+    for name in ['authority/ca.key', 'authority/ca.crt', 'directory-secrets/ldap.key', 'directory-secrets/ldap.crt', 'secrets/ca.crt', 'secrets/service', 'secrets/bootstrap', 'secrets/provision', 'secrets/maintenance', 'secrets/node-control-key', 'secrets/initialized-v5', 'directory-secrets/service', 'directory-secrets/provision', 'directory-secrets/ca.crt', 'secrets/ldap.crt', 'directory/layout-v5', 'metadata/forklift.db', 'directory/complete', 'directory/network.json']:
         if name not in seen:
             raise ValueError('Snapshot lacks required installation state')
+    for copies in [['authority/ca.crt','secrets/ca.crt','directory-secrets/ca.crt'],['secrets/service','directory-secrets/service'],['secrets/provision','directory-secrets/provision'],['secrets/ldap.crt','directory-secrets/ldap.crt']]:
+        if len({(work/name).read_bytes() for name in copies})!=1:raise ValueError('Snapshot has inconsistent credentials or trust')
+    def public_key(path,certificate=False):
+        if certificate:
+            pem=subprocess.run(['openssl','x509','-in',str(path),'-pubkey','-noout'],capture_output=True,check=True).stdout
+            return subprocess.run(['openssl','pkey','-pubin','-outform','DER'],input=pem,capture_output=True,check=True).stdout
+        return subprocess.run(['openssl','pkey','-in',str(path),'-pubout','-outform','DER'],capture_output=True,check=True).stdout
+    for key,cert in [('authority/ca.key','authority/ca.crt'),('directory-secrets/ldap.key','directory-secrets/ldap.crt')]:
+        if public_key(work/key)!=public_key(work/cert,True):raise ValueError('Snapshot has an inconsistent certificate/private key pair')
+    subprocess.run(['openssl','verify','-no_check_time','-CAfile',str(work/'authority/ca.crt'),str(work/'directory-secrets/ldap.crt')],capture_output=True,check=True)
     db = sqlite3.connect(work/'metadata/forklift.db')
     if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok' or db.execute('PRAGMA user_version').fetchone()[0] != manifest['metadata_schema']:
         raise ValueError('Metadata integrity/schema mismatch')
     db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
     allocator = db.execute('SELECT value FROM allocator').fetchone()[0]
     db.close()
-    base, largest = validate_config(work/'directory', work/'secrets')
+    base, largest = validate_config(work/'directory', work/'directory-secrets')
     manifest['base'] = base
     manifest['id_high_water'] = max(allocator, largest)
     atomic(work/'validated.json', json.dumps(manifest).encode())
     return {'operation_id': manifest['operation_id'], 'base': base, 'metadata_schema': manifest['metadata_schema'], 'id_high_water': manifest['id_high_water'], 'files': len(seen), 'validated': True}
 
 
-def restore(p):
-    work = Path('/work')
-    manifest = json.loads((work/'validated.json').read_text())
-    floor = p['uid_floor']
-    if not manifest['id_high_water'] < floor <= 2147483647:
-        raise ValueError('Unix ID floor must exceed the archived high-water mark and fit a signed POSIX ID')
-    for root in ROOTS.values():
-        if any(root.iterdir()):
-            raise ValueError('Restore target is not empty')
-    for prefix in ['directory', 'metadata']:
-        atomic(ROOTS[prefix]/'restore-incomplete',p['operation_id'].encode())
-    db = sqlite3.connect(work/'metadata/forklift.db')
-    db.execute('DELETE FROM sessions')
-    db.execute('UPDATE allocator SET value=?', (floor-1,))
-    db.execute("INSERT INTO settings(key,value) VALUES('recovery_required','true') ON CONFLICT(key) DO UPDATE SET value='true'")
-    if db.execute("SELECT count(*) FROM sqlite_master WHERE name='directory_servers'").fetchone()[0]:
-        db.execute("UPDATE directory_servers SET enrollment_hash=NULL,enrollment_expires=0,state='restore_required',last_error='Restored snapshot: fence and reseed this replica before reenrollment'")
-    if db.execute("SELECT count(*) FROM sqlite_master WHERE name='hosts'").fetchone()[0]:
-        for host_id, data in db.execute('SELECT id,data FROM hosts').fetchall():
-            host = json.loads(data)
-            host['revision'] += 1
-            db.execute('UPDATE hosts SET data=? WHERE id=?', (json.dumps(host), host_id))
-    db.commit()
-    db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-    db.close()
-    for prefix, target in ROOTS.items():
-        source = work/prefix
-        for path in source.rglob('*'):
-            relative = path.relative_to(source)
-            dest = target/relative
-            if path.is_dir():
-                dest.mkdir(exist_ok=True, parents=True, mode=0o700)
-            else:
-                dest.parent.mkdir(exist_ok=True, parents=True, mode=0o700)
-                shutil.copyfile(path, dest)
-                os.chmod(dest, 0o644 if prefix == 'secrets' and dest.suffix == '.crt' else 0o600)
-                if prefix in ['directory', 'metadata'] or (prefix == 'secrets' and relative.as_posix() in ['service', 'bootstrap', 'provision', 'ldap.key']):
-                    os.chown(dest, 10001, 10001)
-                else:
-                    os.chown(dest, p['owner_uid'], p['owner_gid'])
-                with open(dest, 'rb') as durable:
-                    os.fsync(durable.fileno())
-        if prefix in ['directory', 'metadata']:
-            for path in [target, *[x for x in target.rglob('*') if x.is_dir()]]:
-                os.chown(path, 10001, 10001)
-                os.chmod(path, 0o700)
-        else:
-            for path in [target, *[x for x in target.rglob('*') if x.is_dir()]]:
-                os.chown(path, p['owner_uid'], p['owner_gid'])
-                os.chmod(path, 0o700)
-    validate_config(Path('/directory'), Path('/secrets'))
-    event(p, 'restore', 'prepared', p['artifact'], p['sha256'], 'Recovery review required; sessions/enrollments invalidated; replicas quarantined; new Unix ID floor '+str(floor))
-    for scope in ROOTS.values():
-        for folder in [scope, *[x for x in scope.rglob('*') if x.is_dir()]]:
-            descriptor=os.open(folder,os.O_DIRECTORY);os.fsync(descriptor);os.close(descriptor)
-    atomic(Path('/metadata/restore-ready.json'), json.dumps({'operation_id':p['operation_id'],'sha256':p['sha256']}).encode())
-    return {'prepared': True, 'recovery_required': True, 'uid_floor': floor}
-
-
-def publish_restore(p):
-    ready=Path('/metadata/restore-ready.json')
-    if not ready.exists():
-        db=sqlite3.connect('/metadata/forklift.db')
-        completed=db.execute("SELECT status FROM maintenance_events WHERE operation_id=? AND sha256=?",(p['operation_id'],p['sha256'])).fetchone()
-        db.close()
-        if completed==('completed',) and not (Path('/directory')/'restore-incomplete').exists():
-            return {'restored':True,'recovery_required':True}
-        raise ValueError('Restore is incomplete; preserve it and restore into a fresh destination')
-    state=json.loads(ready.read_text())
-    if state['operation_id']!=p['operation_id'] or state['sha256']!=p['sha256'] or not Path('/installation/.env').is_file():
-        raise ValueError('Restore publication does not match its prepared state')
-    event(p,'restore','completed',p['artifact'],p['sha256'],'Sessions/enrollments invalidated; replicas quarantined; recovery review required')
-    for marker in [Path('/metadata/restore-incomplete'),Path('/directory/restore-incomplete')]:
-        if marker.exists() and marker.read_text()!=p['operation_id']:raise ValueError('Restore barrier mismatch')
-    for marker in [Path('/metadata/restore-incomplete'),Path('/directory/restore-incomplete')]:
-        marker.unlink(missing_ok=True)
-        descriptor=os.open(marker.parent,os.O_DIRECTORY);os.fsync(descriptor);os.close(descriptor)
-    ready.unlink()
-    return {'restored':True,'recovery_required':True,'uid_floor':p['uid_floor']}
-
-
 def rotate_service(p):
     directory, secrets = Path('/directory'), Path('/secrets')
     if (secrets/'certificate-renewal.json').exists():
         raise ValueError('Finish certificate renewal before service rotation')
-    base, _ = validate_config(directory, secrets)
+    base, _ = validate_config(directory, Path('/directory-secrets'))
     journal = secrets/'service-rotation.json'
     if journal.exists():
         state = json.loads(journal.read_text())
@@ -374,7 +303,7 @@ def rotate_service(p):
         entries.append((f'cn=monitor,{base}', monitor_hash))
     ldif = '\n\n'.join(f'dn: {dn}\nchangetype: modify\nreplace: userPassword\nuserPassword: {value}\n' for dn, value in entries).encode()
     # Run native writers as the directory UID; no root-created MDB/index files.
-    result = subprocess.run(['slapmodify', '-w', '-f', '/directory/slapd.conf', '-b', base], input=ldif, capture_output=True, user=10001, group=10001)
+    result = subprocess.run(['slapmodify', '-w', '-f', '/directory/slapd.conf', '-b', base], input=ldif, capture_output=True)
     if result.returncode:
         raise ValueError('Native credential update failed; keep services stopped and resume using the journal')
     # Keep the existing bind-mounted inode, including after an interrupted previous write.
@@ -397,57 +326,3 @@ def rotate_service(p):
         marker.unlink(missing_ok=True)
         fd=os.open(marker.parent,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
     return {'rotated': True, 'operation_id': p['operation_id'], 'pending_ack': True}
-
-
-def dispatch(action, p):
-    if action == 'pack':
-        return pack(p)
-    if action == 'unpack':
-        return unpack(p)
-    if action == 'restore':
-        return restore(p)
-    if action == 'publish-restore':
-        return publish_restore(p)
-    if action == 'rotate-service':
-        return rotate_service(p)
-    if action == 'ack-service':
-        path=Path('/secrets/service-rotation.json')
-        if not path.exists():
-            db=sqlite3.connect('/metadata/forklift.db')
-            done=db.execute("SELECT status FROM maintenance_events WHERE operation_id=? AND kind='rotate service credential'", (p['operation_id'],)).fetchone()
-            db.close()
-            if done == ('completed',):
-                return {'acknowledged': True}
-            raise ValueError('No completed rotation matches this recovery state')
-        state=json.loads(path.read_text())
-        if state['operation_id'] != p['operation_id'] or not state.get('completed') or Path('/secrets/service').read_text().strip()!=state['credential']:
-            raise ValueError('Rotation has not completed')
-        path.unlink()
-        fd=os.open(path.parent,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
-        return {'acknowledged':True}
-    if action == 'markers':
-        return {'rotation_pending':Path('/secrets/service-rotation.json').exists(), 'incomplete': any((Path('/'+scope)/marker).exists() for scope in ['directory','metadata'] for marker in ['restore-incomplete','service-rotation-incomplete'])}
-    if action == 'event':
-        event(p, p['kind'], p['status'], p.get('artifact', ''), p.get('sha256', ''), p.get('detail', ''))
-        return {'recorded': True}
-    if action == 'empty':
-        return {'empty': all(not any(root.iterdir()) for root in ROOTS.values())}
-    if action == 'recipient':
-        result = subprocess.run(['age', '-r', p['recipient']], input=b'', capture_output=True)
-        if result.returncode:
-            raise ValueError('Invalid age recipient')
-        return {'valid': True}
-    raise ValueError('Unsupported maintenance action')
-
-
-if __name__ == '__main__':
-    os.umask(0o077)
-    if sys.argv[1:] == ['keygen']:
-        os.execvp('age-keygen', ['age-keygen'])
-    try:
-        result = dispatch(sys.argv[1], json.load(sys.stdin))
-        print(json.dumps(result))
-    except Exception as exc:
-        # No command output, plaintext, passwords, private keys or archive content in diagnostics.
-        print(json.dumps({'error': str(exc) if isinstance(exc, (ValueError, sqlite3.Error)) else type(exc).__name__}), file=sys.stderr)
-        sys.exit(1)

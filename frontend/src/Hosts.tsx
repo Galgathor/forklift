@@ -17,6 +17,8 @@ export type Host = {
   revision: number;
   exported_revision: number | null;
   exported_at: number | null;
+  directory_id?: string | null;
+  directory_role?: string | null;
 };
 type Props = {
   hosts: Host[];
@@ -70,7 +72,7 @@ export function Hosts({
       <section className="panel">
         <div className="table-toolbar">
           <h2>
-            Linux hosts <span className="muted">{hosts.length}</span>
+            Hosts <span className="muted">{hosts.length}</span>
           </h2>
           <button
             className="primary"
@@ -84,8 +86,10 @@ export function Hosts({
           </button>
         </div>
         <p className="hint">
-          Register a host, select its login groups, then generate and deploy its
-          configuration. Deployment and reachability are not monitored.
+          Directory machines appear automatically, including the primary. These
+          inventory records do not grant SSH access. Select login groups and
+          deploy client configuration only when you want centralized Linux
+          login.
         </p>
         <input
           aria-label="Search hosts"
@@ -124,10 +128,19 @@ export function Hosts({
                     <tr key={h.id}>
                       <td>
                         <strong>{h.name}</strong>
+                        {h.directory_role && (
+                          <span className="pill">
+                            {h.directory_role === "primary"
+                              ? "Primary directory"
+                              : "Directory replica"}
+                          </span>
+                        )}
                         <small>{h.hostname}</small>
                         <small>{h.endpoints.join(", ")}</small>
                       </td>
-                      <td>{h.allowed_groups.join(", ")}</td>
+                      <td>
+                        {h.allowed_groups.join(", ") || "SSH not configured"}
+                      </td>
                       <td>
                         <span
                           className={
@@ -137,7 +150,9 @@ export function Hosts({
                           }
                         >
                           {h.exported_revision === null
-                            ? "Not exported"
+                            ? h.directory_id && !h.allowed_groups.length
+                              ? "Inventory only"
+                              : "Not exported"
                             : h.revision === h.exported_revision
                               ? "Configuration exported"
                               : "Needs new export"}
@@ -153,7 +168,7 @@ export function Hosts({
                       <td>
                         <div className="actions">
                           <button
-                            disabled={busy}
+                            disabled={busy || !h.allowed_groups.length}
                             title="Generate configuration (rotates bind credential)"
                             aria-label="Generate configuration"
                             onClick={() => download(h)}
@@ -170,6 +185,12 @@ export function Hosts({
                             <Pencil size={16} />
                           </button>
                           <button
+                            disabled={!!h.directory_id}
+                            title={
+                              h.directory_id
+                                ? "Manage this machine through Directory Servers"
+                                : undefined
+                            }
                             aria-label="Delete host"
                             onClick={() => {
                               if (
@@ -270,6 +291,7 @@ export function Hosts({
                 Hostname
                 <input
                   name="hostname"
+                  readOnly={!!editing?.directory_id}
                   defaultValue={editing?.hostname || ""}
                   placeholder="backup.homelab.internal"
                   required
@@ -280,7 +302,7 @@ export function Hosts({
                 <input
                   name="endpoints"
                   defaultValue={editing?.endpoints.join(", ") || ""}
-                  placeholder="ldaps://ldap.homelab.internal:636"
+                  placeholder="ldaps://ldap.homelab.internal:1636"
                   required
                 />
               </label>

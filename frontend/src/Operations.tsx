@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { StorageControls, type DirectoryNetwork } from "./StorageControls";
 import { Download, RefreshCw, ShieldCheck } from "lucide-react";
 type Event = {
   id: number;
@@ -33,7 +34,8 @@ type Status = {
 type Props = {
   busy: boolean;
   readOnly: boolean;
-  directory: { name: string; base: string };
+  directory: { name: string; base: string; network: DirectoryNetwork };
+  csrf: string;
   api: (path: string, method?: string, body?: unknown) => Promise<unknown>;
   perform: (f: () => Promise<void>) => Promise<void>;
   refresh: () => Promise<void>;
@@ -45,6 +47,7 @@ export function Operations({
   busy,
   readOnly,
   directory,
+  csrf,
   api,
   perform,
   refresh,
@@ -94,13 +97,6 @@ export function Operations({
             <dd>administrators</dd>
           </div>
         </dl>
-        <p className="hint">
-          Create encrypted backups and restore into a fresh installation with
-          the local forklift-admin.py tool. Backups briefly stop the primary and
-          manager; configured replicas continue authentication. Keep the
-          recovery identity and trusted checksum separately. See
-          docs/operations.md.
-        </p>
         {status?.recovery_required && (
           <div className="recovery-review">
             <h3>Restored directory: review before enabling writes</h3>
@@ -152,6 +148,7 @@ export function Operations({
           </button>
         </div>
       </section>
+      <StorageControls csrf={csrf} api={api} network={directory.network} />
       <section className="panel">
         <h2>Certificate lifecycle</h2>
         <p className="hint">
@@ -198,7 +195,7 @@ export function Operations({
       <section className="panel">
         <h2>Maintenance history</h2>
         <p className="hint">
-          Local operator results recorded in this installation. Keep backup
+          Maintenance results recorded in this installation. Keep backup
           receipts outside the host; restoring a snapshot also restores its
           historical audit records.
         </p>

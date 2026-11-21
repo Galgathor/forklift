@@ -11,6 +11,7 @@ import time
 
 
 def exercise(project, request, compose, password, find_user):
+    endpoint=request('/api/directory-servers')['servers'][0]['endpoint']
     name = project + '-ubuntu'
     directory = tempfile.TemporaryDirectory(prefix='forklift-client-')
     bundle = Path(directory.name)
@@ -38,8 +39,8 @@ finally: os.close(r)
     try:
         print('Testing Ubuntu 24.04 Ansible, NSS, PAM and actual SSH passwords…',flush=True)
         request('/api/groups/ssh-allowed','PUT',dict(name='ssh-allowed',members=['bob']))
-        host=request('/api/hosts','POST',dict(name='Ubuntu client',hostname='ubuntu.integration.test',endpoints=['ldaps://ldap:1636','ldaps://ldap:636'],allowed_groups=['ssh-allowed']))
-        data=request(f"/api/hosts/{host['id']}/bundle",'POST',dict(revision=1,rotate=True),raw=True)
+        host=request('/api/hosts','POST',dict(name='Ubuntu client',hostname='ubuntu.integration.test',endpoints=['ldaps://127.0.0.1:1636',endpoint],allowed_groups=['ssh-allowed']))
+        data,_=request(f"/api/hosts/{host['id']}/bundle",'POST',dict(revision=1,rotate=True),raw=True)
         with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as archive:
             archive.extractall(bundle,filter='data')
         assert (bundle/'sssd.conf').stat().st_mode & 0o777 == 0o600
@@ -49,7 +50,7 @@ finally: os.close(r)
         # Ensure this identity is read-only and cannot read password hashes.
         code='''import json,subprocess,sys,os
 p=json.load(sys.stdin)
-base=['-x','-H','ldaps://ldap:636','-D',p['dn'],'-y','/dev/stdin']
+base=['-x','-H',p['endpoint'],'-D',p['dn'],'-y','/dev/stdin']
 env={**os.environ,'LDAPTLS_CACERT':'/run/secrets/ca.crt'}
 r=subprocess.run(['ldapsearch',*base,'-LLL','-b',p['base'],'(uid=bob)','userPassword'],input=p['pw'].encode(),env=env,capture_output=True)
 assert r.returncode==0 and b'userPassword:' not in r.stdout
@@ -61,9 +62,8 @@ r=subprocess.run(['ldapmodify',*base],input=ldif,pass_fds=(rfd,),env=env,capture
 os.close(rfd)
 assert r.returncode==50
 '''
-        compose('exec','-T','ldap','python3','-c',code,input=json.dumps(dict(dn=dn,pw=bind,base='dc=integration,dc=test')).encode())
-        docker('run','-d','--name',name,'--network',project+'_directory','-v',str(Path('ansible').resolve())+':/workspace/ansible:ro','forklift-ubuntu-client')
-        docker('network','connect',project+'_web',name)
+        compose('exec','-T','ldap','python3','-c',code,input=json.dumps(dict(dn=dn,pw=bind,base='dc=integration,dc=test',endpoint=endpoint)).encode())
+        docker('run','-d','--name',name,'--network','host','-v',str(Path('ansible').resolve())+':/workspace/ansible:ro','forklift-ubuntu-client')
         docker('cp',str(bundle)+'/.',name+':/bundle')
         command('sh','-c',"printf '[forklift_clients]\\nlocalhost ansible_connection=local\\n' > /tmp/inventory")
         ansible()
@@ -123,8 +123,8 @@ assert r.returncode==50
         restart_sssd();ssh('charlie',password)
         # A host read credential is not a host authentication ban: users have their own LDAP credentials.
         request(f"/api/hosts/{host['id']}",'DELETE')
-        revoked_test = "import subprocess,sys,os,json; p=json.load(sys.stdin); r=subprocess.run(['ldapwhoami','-x','-H','ldaps://ldap:636','-D',p['dn'],'-y','/dev/stdin'],input=p['pw'].encode(),env={**os.environ,'LDAPTLS_CACERT':'/run/secrets/ca.crt'},capture_output=True); assert r.returncode==49"
-        compose('exec','-T','ldap','python3','-c',revoked_test,input=json.dumps(dict(dn=dn,pw=bind)).encode())
+        revoked_test = "import subprocess,sys,os,json; p=json.load(sys.stdin); r=subprocess.run(['ldapwhoami','-x','-H',p['endpoint'],'-D',p['dn'],'-y','/dev/stdin'],input=p['pw'].encode(),env={**os.environ,'LDAPTLS_CACERT':'/run/secrets/ca.crt'},capture_output=True); assert r.returncode==49"
+        compose('exec','-T','ldap','python3','-c',revoked_test,input=json.dumps(dict(dn=dn,pw=bind,endpoint=endpoint)).encode())
         print('PASS: Ubuntu Ansible idempotence, UID/GID/NSS, home creation, SSH allow/deny, membership updates, account expiry, CA rejection, local recovery, endpoint fallback, outages and host credential revocation.',flush=True)
     finally:
         docker('rm','-f',name,check=False)

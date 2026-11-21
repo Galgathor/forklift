@@ -1,66 +1,136 @@
 services:
+  initialize:
+    image: forklift-maintenance:latest
+    build:
+      context: .
+      dockerfile: docker/maintenance/Dockerfile
+    command: [init]
+    user: "10001:10001"
+    network_mode: none
+    environment:
+      FORKLIFT_BOOTSTRAP_TOKEN: ${FORKLIFT_BOOTSTRAP_TOKEN:-}
+    volumes:
+      - directory:/directory
+      - metadata:/metadata
+      - manager_secrets:/secrets
+      - directory_secrets:/directory-secrets
+      - authority:/authority
+      - backups:/backups
+      - transfers:/transfers
+      - maintenance_work:/work
+      - ldap_control:/run/ldap-control
+      - maintenance_control:/run/maintenance-control
+      - ldap_socket:/run/ldap-socket
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
   ldap:
+    image: forklift-ldap:latest
     build:
       context: .
       dockerfile: docker/openldap/Dockerfile
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options: {max-size: "10m", max-file: "3"}
+    network_mode: host
+    depends_on:
+      initialize: {condition: service_completed_successfully}
     volumes:
       - directory:/directory
-      - ./.secrets/ca.crt:/run/secrets/ca.crt:ro
-      - ./.secrets/ldap.crt:/run/secrets/ldap.crt:ro
-      - ./.secrets/ldap.key:/run/secrets/ldap.key:ro
-      - ./.secrets/provision:/run/secrets/provision:ro
-      - ./.secrets/service:/run/secrets/service:ro
-    networks: [directory]
+      - directory_secrets:/run/secrets:ro
+      - ldap_control:/run/ldap-control
+      - ldap_socket:/run/ldap-socket
     read_only: true
     tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
     security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
     healthcheck:
-      test: [CMD, python3, -c, "import urllib.request, ssl; urllib.request.urlopen('https://ldap:8090/health', context=ssl.create_default_context(cafile='/run/secrets/ca.crt'))"]
-      interval: 10s
+      test: [CMD, python3, -c, "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/run/ldap-control/primary.sock'); s.close()"]
+      interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
+  maintenance:
+    image: forklift-maintenance:latest
+    build:
+      context: .
+      dockerfile: docker/maintenance/Dockerfile
+    restart: unless-stopped
+    user: "10001:10001"
+    network_mode: none
+    depends_on:
+      initialize: {condition: service_completed_successfully}
+      ldap: {condition: service_healthy}
+    volumes:
+      - directory:/directory
+      - metadata:/metadata
+      - manager_secrets:/secrets
+      - directory_secrets:/directory-secrets
+      - directory_secrets:/run/secrets:ro
+      - authority:/authority
+      - backups:/backups
+      - transfers:/transfers
+      - maintenance_work:/work
+      - ldap_control:/run/ldap-control
+      - maintenance_control:/run/maintenance-control
+      - ldap_socket:/run/ldap-socket
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=64m']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    healthcheck:
+      test: [CMD, python3, -c, "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/run/maintenance-control/maintenance.sock'); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   manager:
+    image: forklift-manager:latest
     build:
       context: .
       dockerfile: docker/manager/Dockerfile
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options: {max-size: "10m", max-file: "3"}
     environment:
       FORKLIFT_PUBLIC_URL: ${FORKLIFT_PUBLIC_URL:-http://localhost:8080}
-      LDAPTLS_CACERT: /run/secrets/ca.crt
-      SSL_CERT_FILE: /run/secrets/ca.crt
     ports:
       - '${FORKLIFT_BIND:-127.0.0.1}:${FORKLIFT_PORT:-8080}:8080'
     volumes:
       - metadata:/data
-      - ./.secrets/ldap.crt:/run/secrets/ldap.crt:ro
-      - ./.secrets/bootstrap:/run/secrets/bootstrap:ro
-      - ./.secrets/provision:/run/secrets/provision:ro
-      - ./.secrets/service:/run/secrets/service:ro
-      - ./.secrets/ca.crt:/run/secrets/ca.crt:ro
-    networks: [directory, web]
+      - manager_secrets:/run/secrets:ro
+      - ldap_socket:/run/ldap-socket
+      - ldap_control:/run/ldap-control
+      - maintenance_control:/run/maintenance-control
+      - transfers:/transfers
+      - backups:/backups:ro
     depends_on:
-      ldap: {condition: service_healthy}
+      maintenance: {condition: service_healthy}
     read_only: true
     tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
     healthcheck:
       test: [CMD, /usr/bin/curl, -fsS, 'http://localhost:8080/health']
-      interval: 15s
-      timeout: 5s
-      retries: 3
+      interval: 10s
+      timeout: 3s
+      retries: 5
 volumes:
   directory:
   metadata:
-networks:
-  directory:
-    internal: true
-  web:
+  manager_secrets:
+  directory_secrets:
+  authority:
+  backups:
+  transfers:
+  maintenance_work:
+  ldap_control:
+  maintenance_control:
+  ldap_socket:

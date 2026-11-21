@@ -2,34 +2,17 @@
 
 Forklift uses standard RFC2307 LDAP identities, SSSD, NSS, PAM and OpenSSH. Users enter their centrally managed password at `ssh username@server`. There is no resident Forklift authentication agent and the manager is not in the login path.
 
-## Expose a verified LDAPS endpoint
+## Use the directory address from setup
 
-The WebUI's Nginx Proxy Manager HTTPS endpoint cannot carry LDAP. Linux clients need a separate, privately reachable LDAPS endpoint. Publish only to your private LAN and restrict the port to client networks using Docker-aware firewall rules; Docker-published ports can bypass ordinary UFW rules.
+First-launch setup creates the primary's private LDAPS listener and matching certificate. No certificate script or Compose override is required. Use the address shown in Directory Servers, normally `ldaps://<private-IP>:1636`, or the optional DNS name selected in setup. NPM carries WebUI HTTPS only; LDAP connects directly to its private port. Restrict that port to intended client networks using the host firewall.
 
-1. Create internal DNS, for example `ldap.homelab.internal`, pointing to the primary Docker host's private IP. The installer certificate covers Docker's `ldap` name, so add the real DNS name using the existing local CA:
-
-   ```sh
-   docker compose build
-   ./scripts/renew-ldap-certificate.sh ldap.homelab.internal
-   docker compose restart ldap
-   ```
-
-   This is an offline operator action with a brief directory interruption. The script verifies the new certificate, keeps previous files in `.secrets`, preserves the CA, and never resets directory data. Only the local operator can access the CA key; the WebUI cannot sign certificates. Back up `.secrets` before renewal.
-
-2. Add these non-secret settings to `.env`, substituting the Docker host's actual private IP:
-
-   ```dotenv
-   COMPOSE_FILE=compose.yaml:deploy/primary/clients.compose.yaml
-   FORKLIFT_LDAPS_BIND=192.168.1.10
-   FORKLIFT_LDAPS_PORT=636
-   ```
-
-3. Apply with `docker compose up -d`. Retain `COMPOSE_FILE` for subsequent operations so the published directory port is preserved. Do not expose port 8090 (the provisioner) or the manager's service bind credential.
-4. Host configuration should use `ldaps://ldap.homelab.internal:636`, never an IP address that is absent from the certificate. Distribute the archive's `ca.crt` through your authenticated deployment channel. Do not disable TLS verification.
+Change the address or renew the certificate under Settings. Regenerate/deploy affected host bundles afterward. The certificate must match the configured DNS/IP address; never disable TLS verification.
 
 Additional endpoint URIs are accepted for SSSD failover in listed order. Every endpoint must hold the same directory data and host read identity and present a matching DNS certificate. Regenerated bundles trust the primary CA plus the pinned leaf certificates of enrolled replicas in the endpoint list. Provision and monitor replicas through Directory Servers; see [replication](replication.md). An endpoint list alone does not create a replica.
 
 ## Register and generate a host bundle
+
+Primary and replica machines appear automatically as **Inventory only** with no SSH grant. Edit one to assign allowed groups before generating a client bundle. For other machines, register a Linux host.
 
 Create at least one practical login group, such as `server-admins`, and assign users to it. In **Hosts**, register a friendly name, DNS hostname, ordered LDAPS endpoints, and permitted login groups. At least one group is required; an empty policy is refused.
 

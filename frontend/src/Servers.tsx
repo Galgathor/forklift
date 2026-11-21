@@ -25,6 +25,10 @@ export type DirectoryNode = {
   certificate_rotation_pending?: boolean;
   credential_rotated_at?: number | null;
   credential_epoch?: number;
+  address?: string;
+  control_port?: number;
+  pending_epoch?: number | null;
+  provider_needs_update?: boolean;
 };
 export type DirectoryHealth = {
   servers: DirectoryNode[];
@@ -70,29 +74,18 @@ export function Servers({
   async function rotateCredential(node: DirectoryNode) {
     if (
       !confirm(
-        "Replace the replication password now? Download and apply this private update on the replica, restart it, then verify a new directory change synchronizes. Existing bound connections may remain valid until disconnected.",
+        "Rotate and apply this replica's credentials now? Forklift restarts its directory and verifies the management response; check synchronization afterward.",
       )
     )
       return;
     await perform(async () => {
-      const r = await fetch(`/api/replicas/${node.id}/credential`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-        body: JSON.stringify({ acknowledge: true }),
+      await api(`replicas/${node.id}/credential`, "POST", {
+        acknowledge: true,
       });
-      if (!r.ok) {
-        const v = await r.json();
-        throw Error(v.error || "Unable to generate deployment");
-      }
-      const url = URL.createObjectURL(await r.blob());
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `forklift-replica-credential-${node.id}.tar.gz`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
       await refresh();
     });
   }
+
   return (
     <>
       <section className="panel">
@@ -189,7 +182,7 @@ export function Servers({
                 <div>
                   <dt>
                     {node.role === "primary"
-                      ? "Forklift’s internal connection"
+                      ? "Private directory address"
                       : "Private directory address"}
                   </dt>
                   <dd>{node.endpoint}</dd>
@@ -235,27 +228,65 @@ export function Servers({
                     </p>
                     <button
                       className="secondary"
-                      disabled={busy || readOnly}
+                      disabled={busy || readOnly || node.provider_needs_update}
                       onClick={() => rotateCredential(node)}
                     >
-                      Rotate replication credential
+                      {node.pending_epoch
+                        ? "Resume credential update"
+                        : "Rotate and apply credentials"}
+                    </button>
+                    {node.provider_needs_update && (
+                      <button
+                        className="secondary"
+                        disabled={busy || readOnly}
+                        onClick={() =>
+                          perform(async () => {
+                            await api(`replicas/${node.id}/reconnect`, "POST", {
+                              acknowledge: true,
+                            });
+                            await refresh();
+                          })
+                        }
+                      >
+                        Reconnect to current primary
+                      </button>
+                    )}
+                    <button
+                      className="secondary"
+                      disabled={busy || readOnly}
+                      onClick={() => {
+                        if (
+                          confirm(
+                            "Restart this replica's directory process while preserving its data?",
+                          )
+                        )
+                          perform(async () => {
+                            await api(`replicas/${node.id}/restart`, "POST", {
+                              acknowledge: true,
+                            });
+                            await refresh();
+                          });
+                      }}
+                    >
+                      Restart directory
                     </button>
                     {node.certificate_rotation_pending ? (
                       <>
                         <p className="hint">
-                          Both certificate pins are trusted. Redeploy affected
-                          host bundles, activate the candidate locally and
-                          restart this replica before finalizing. Finalization
-                          verifies its actual TLS certificate and marks hosts
-                          for final trust redeployment.
+                          The candidate certificate is already trusted by
+                          Forklift. Deploy updated trust bundles to affected
+                          Linux clients before activation. Activation verifies
+                          the actual new certificate, retires the previous
+                          private pair and marks client bundles for final trust
+                          export.
                         </p>
                         <button
                           className="secondary"
-                          disabled={busy || readOnly}
+                          disabled={busy || readOnly || !!node.pending_epoch}
                           onClick={() => {
                             if (
                               confirm(
-                                "Client trust has been deployed and the replica is serving its staged certificate. Retire the old manager pin and mark host bundles for final trust deployment?",
+                                "Client trust is deployed. Activate the candidate, verify it and retire the previous key?",
                               )
                             )
                               perform(async () => {
@@ -268,52 +299,32 @@ export function Servers({
                               });
                           }}
                         >
-                          Verify & finalize certificate
+                          Activate and verify certificate
                         </button>
                       </>
                     ) : (
                       <>
                         <p className="hint">
-                          Generate a candidate on the replica using
-                          stage-certificate. Upload only its public certificate,
-                          then redeploy host bundles before local activation.
-                          See docs/operations.md.
+                          Forklift generates the candidate directly on this
+                          server. Its private key stays there; no command or
+                          certificate upload is required.
                         </p>
-                        <label>
-                          Stage public certificate
-                          <input
-                            type="file"
-                            accept=".crt,.pem"
-                            disabled={busy || readOnly}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              e.target.value = "";
-                              if (!file) return;
-                              if (file.size > 16384) {
-                                perform(async () => {
-                                  throw Error("Certificate exceeds 16 KiB");
-                                });
-                                return;
-                              }
-                              if (
-                                confirm(
-                                  "Trust this candidate certificate alongside the current pin and mark affected hosts for trust redeployment?",
-                                )
-                              )
-                                perform(async () => {
-                                  await api(
-                                    `replicas/${node.id}/certificate`,
-                                    "POST",
-                                    {
-                                      certificate: await file.text(),
-                                      acknowledge: true,
-                                    },
-                                  );
-                                  await refresh();
-                                });
-                            }}
-                          />
-                        </label>
+                        <button
+                          className="secondary"
+                          disabled={busy || readOnly || !!node.pending_epoch}
+                          onClick={() =>
+                            perform(async () => {
+                              await api(
+                                `replicas/${node.id}/certificate`,
+                                "POST",
+                                { acknowledge: true },
+                              );
+                              await refresh();
+                            })
+                          }
+                        >
+                          Generate renewal certificate
+                        </button>
                       </>
                     )}
                   </details>
@@ -348,9 +359,7 @@ export function Servers({
         </div>
         <ol className="steps">
           <li>
-            Open Add server. The wizard prepares your existing Forklift
-            directory for private network access and checks its certificate and
-            connection.
+            Open Add server. The primary address comes from your initial setup.
           </li>
           <li>
             Enter the new machine’s name and private address. It only needs
@@ -358,8 +367,8 @@ export function Servers({
           </li>
           <li>
             Download the preconfigured bundle, transfer it to the new machine
-            and run <code>./start.sh</code>. Copyable instructions appear in the
-            wizard.
+            and start its Compose stack. Enrollment and permissions are
+            automatic.
           </li>
           <li>
             Wait for confirmed synchronization here, then update your Linux

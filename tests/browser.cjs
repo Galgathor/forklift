@@ -1,103 +1,34 @@
-// Optional real browser check. Credentials arrive only through stdin; no trace/video is retained.
-const { chromium } = require("playwright");
-const fs = require("node:fs");
+const { chromium } = require('playwright');
+const fs = require('fs');
 (async () => {
-  const input = JSON.parse(fs.readFileSync(0, "utf8"));
-  const browser = await chromium.launch({ headless: true });
-  try {
-    const page = await browser.newPage({
-      viewport: { width: 1440, height: 1100 },
-    });
-    const errors = [];
-    page.on("pageerror", (error) => errors.push(error.name));
-    await page.goto(input.url);
-    await page.getByLabel("Username", { exact: true }).fill("admin");
-    await page
-      .getByLabel("Password (14+ characters)", { exact: true })
-      .fill(input.password);
-    await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await page
-      .getByRole("heading", { name: "Your directory at a glance." })
-      .waitFor();
-    await page
-      .locator("nav")
-      .getByRole("button", { name: "Settings", exact: true })
-      .click();
-    await page
-      .getByRole("heading", { name: "Certificate lifecycle" })
-      .waitFor();
-    await page.getByText("v0.4.0 / 4", { exact: true }).waitFor();
-    await page
-      .getByText("Primary configured certificate", { exact: true })
-      .waitFor();
-    await page.getByRole("link", { name: "Export NDJSON" }).waitFor();
-    await page.getByLabel("Search events").fill("no-such-event-browser-test");
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    await page.getByText("No matching events.", { exact: true }).waitFor();
-    await page.screenshot({
-      path: "/output/settings-dark.png",
-      fullPage: true,
-    });
-    await page.getByRole("button", { name: "Toggle theme" }).click();
-    await page.screenshot({
-      path: "/output/settings-light.png",
-      fullPage: true,
-    });
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.screenshot({
-      path: "/output/settings-mobile.png",
-      fullPage: true,
-    });
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth > window.innerWidth + 1,
-    );
-    if (overflow) throw Error("Settings overflows mobile viewport");
-    await page
-      .locator("nav")
-      .getByRole("button", { name: "Directory Servers", exact: true })
-      .click();
-    await page
-      .getByRole("heading", { name: "Enroll a second Docker host" })
-      .waitFor();
-    await page.getByRole("button", { name: "Add server", exact: true }).click();
-    const setup = page.getByRole("dialog", { name: "Add directory server" });
-    await setup
-      .getByLabel("Existing server DNS name", { exact: true })
-      .fill("directory.home.arpa");
-    await setup
-      .getByLabel("Existing Docker host private IPv4 address", { exact: true })
-      .fill("192.168.1.10");
-    if (
-      !(await setup
-        .locator("pre")
-        .innerText()
-        .then((text) =>
-          text.includes(
-            "prepare-replication --hostname directory.home.arpa --bind 192.168.1.10",
-          ),
-        ))
-    )
-      throw Error("Missing primary preparation instructions");
-    if (
-      !(await setup
-        .getByRole("button", { name: "Check primary & continue", exact: true })
-        .isDisabled())
-    )
-      throw Error("HTTP enrollment should require WebUI HTTPS");
-    await setup
-      .getByRole("button", { name: "Close setup", exact: true })
-      .click();
-    if (errors.length || (await page.getByRole("alert").count()))
-      throw Error("Browser reported an application error");
-    console.log(
-      "PASS: real Chromium login, Settings API rendering, audit search/export link, dark/light themes, mobile layout and directory navigation.",
-    );
-  } finally {
-    await browser.close();
-  }
-})().catch(() => {
-  console.error(
-    "Browser verification failed; inspect the local screenshots/application.",
-  );
-  process.exit(1);
-});
+ const input=JSON.parse(fs.readFileSync(0,'utf8'));
+ const browser=await chromium.launch({headless:true,args:['--ignore-certificate-errors']});
+ const context=await browser.newContext({ignoreHTTPSErrors:true,acceptDownloads:true});
+ const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());page.on('requestfailed',r=>console.error('Request failed:',r.url(),r.failure()));page.on('response',r=>{if(r.status()>=400)console.error('HTTP failure:',r.status(),r.url());});
+ const button=(name)=>page.getByRole('button',{name,exact:true});
+ const job=async()=>{await page.getByRole('heading',{name:'Maintenance complete',exact:true}).waitFor({timeout:60000});};
+ const close=async()=>{await button('Back to management').click();await page.getByRole('dialog',{name:'Directory maintenance',exact:true}).waitFor({state:'hidden'});};
+ await page.goto(input.url);
+ await page.getByLabel('One-time installation key').fill(input.bootstrap);
+ await button('Check installation').click();await page.getByLabel('Private interface').selectOption(input.network.address);
+ await page.getByText('Advanced: encrypted directory port',{exact:true}).click();await page.getByLabel('Directory port',{exact:true}).fill(String(input.network.port));await button('Continue').click();
+ await page.getByLabel('Directory name',{exact:true}).fill('Browser directory');await page.getByLabel('Directory base DN').fill('dc=integration,dc=test');await page.getByLabel('Administrator username').fill('admin');await page.getByLabel('Administrator password').fill(input.password);await button('Initialize directory').click();
+ await page.getByLabel('Username',{exact:true}).fill('admin');await page.getByLabel('Password (14+ characters)',{exact:true}).fill(input.password);await button('Sign in').click();
+ await button('Hosts').click();await page.getByText('Inventory only',{exact:false}).first().waitFor();
+ await button('Settings').click();
+ const keyDownload=page.waitForEvent('download');await button('Generate recovery key').click();const key=await keyDownload;await key.saveAs('/output/recovery.txt');fs.chmodSync('/output/recovery.txt',0o600);
+ await button('Create encrypted backup').click();await job();
+ const receiptDownload=page.waitForEvent('download');await button('Save receipt').click();await (await receiptDownload).saveAs('/output/receipt.json');const receipt=JSON.parse(fs.readFileSync('/output/receipt.json','utf8'));
+ const archiveDownload=page.waitForEvent('download');await page.getByRole('link',{name:'Download encrypted backup',exact:true}).click();await (await archiveDownload).saveAs('/output/backup.age');
+ await close();await button('Settings').click();
+ await page.getByLabel('Encrypted archive (.age)',{exact:true}).setInputFiles('/output/backup.age');await page.getByLabel('Trusted creation-time SHA-256').fill(receipt.sha256);await page.getByLabel('Private recovery key file').setInputFiles('/output/recovery.txt');await button('Verify backup').click();await job();await close();
+ await button('Directory Servers').click();await button('Add server').click();await page.getByRole('heading',{name:'Add a replica',exact:true}).waitFor();
+ if(await page.getByText('Existing Server',{exact:true}).count())throw Error('Legacy Existing Server flow remains');
+ await page.getByLabel('Friendly name').fill('Browser replica');await page.getByLabel("New machine's private IPv4 address").fill(input.network.address);
+ await page.getByText('Advanced: DNS name and ports',{exact:true}).click();await page.getByLabel('Encrypted directory port',{exact:true}).fill(String(input.replicaPort));await page.getByLabel('Private management port',{exact:true}).fill(String(input.controlPort));
+ const bundle=page.waitForEvent('download');await button('Download deployment').click();await (await bundle).saveAs('/output/replica.tar.gz');
+ await button('Close setup').click();await button('Hosts').click();await page.getByText('Browser replica',{exact:true}).waitFor();await button('Toggle theme').click();await button('Toggle theme').click();
+ await page.setViewportSize({width:390,height:844});if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('Mobile layout overflows');
+ if(errors.length)throw Error(errors.join('\n'));
+ await browser.close();process.stdout.write('PASS: Chromium first-run primary setup, LDAP login, auto Hosts, recovery-key download, backup/receipt/download, archive verification, simple replica deployment and mobile layout.\n');
+})().catch(e=>{console.error(e);process.exit(1)});

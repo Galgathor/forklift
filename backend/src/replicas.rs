@@ -17,6 +17,9 @@ pub(super) struct Server {
     pub certificate_staged_at: Option<i64>,
     pub credential_rotated_at: Option<i64>,
     pub credential_epoch: i64,
+    pub address: String,
+    pub control_port: u16,
+    pub pending_epoch: Option<i64>,
 }
 pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -27,7 +30,7 @@ pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
 }
 pub(super) fn records(a: &App) -> Result<Vec<Server>> {
     let db = a.db.lock().unwrap();
-    let mut q=db.prepare("SELECT id,name,endpoint,provider,state,certificate,enrollment_expires,last_checked_at,last_sync_at,last_error,next_certificate,certificate_staged_at,credential_rotated_at,credential_epoch FROM directory_servers ORDER BY name").map_err(anyhow::Error::from)?;
+    let mut q=db.prepare("SELECT id,name,endpoint,provider,state,certificate,enrollment_expires,last_checked_at,last_sync_at,last_error,next_certificate,certificate_staged_at,credential_rotated_at,credential_epoch,address,control_port,pending_epoch FROM directory_servers ORDER BY name").map_err(anyhow::Error::from)?;
     Ok(q.query_map([], |r| {
         Ok(Server {
             id: r.get(0)?,
@@ -44,6 +47,9 @@ pub(super) fn records(a: &App) -> Result<Vec<Server>> {
             certificate_staged_at: r.get(11)?,
             credential_rotated_at: r.get(12)?,
             credential_epoch: r.get(13)?,
+            address: r.get(14)?,
+            control_port: r.get(15)?,
+            pending_epoch: r.get(16)?,
         })
     })
     .map_err(anyhow::Error::from)?
@@ -57,9 +63,9 @@ fn load(a: &App, id: &str) -> Result<Server> {
     ))
 }
 fn https_required(a: &App) -> Result<()> {
-    if !a.url.starts_with("https://") {
+    if !public_url(a).starts_with("https://") {
         return Err(bad(
-            "Configure FORKLIFT_PUBLIC_URL with HTTPS before replica enrollment",
+            "Configure the HTTPS WebUI address in Settings before replica enrollment",
         ));
     }
     Ok(())
@@ -67,8 +73,18 @@ fn https_required(a: &App) -> Result<()> {
 #[derive(Deserialize)]
 pub(super) struct Draft {
     name: String,
-    endpoint: String,
-    provider: String,
+    address: String,
+    hostname: Option<String>,
+    #[serde(default = "directory_port")]
+    port: u16,
+    #[serde(default = "control_port")]
+    control_port: u16,
+}
+fn directory_port() -> u16 {
+    1636
+}
+fn control_port() -> u16 {
+    9443
 }
 pub(super) async fn create(
     State(a): State<App>,
@@ -77,29 +93,47 @@ pub(super) async fn create(
 ) -> Result<Json<Value>> {
     let who = admin(&a, &h, true).await?;
     https_required(&a)?;
-    if p.name.trim().is_empty() || p.name.len() > 100 || p.name.chars().any(char::is_control) {
-        return Err(bad("Provide a directory server name"));
+    if p.name.trim().is_empty()
+        || p.name.len() > 100
+        || p.name.chars().any(char::is_control)
+        || p.port == 0
+        || p.control_port == 0
+        || p.port == p.control_port
+    {
+        return Err(bad("Choose a name and distinct directory/control ports"));
     }
-    hosts::endpoint_hostname(&p.endpoint)?;
-    hosts::endpoint_hostname(&p.provider)?;
-    if same_endpoint(&p.endpoint, &p.provider) {
-        return Err(bad("Primary and replica endpoints must be different"));
+    replica_setup::private_ipv4(&p.address)?;
+    let hostname = p
+        .hostname
+        .filter(|s| !s.is_empty())
+        .unwrap_or(p.address.clone());
+    let endpoint = format!("ldaps://{hostname}:{}", p.port);
+    hosts::endpoint_hostname(&endpoint)?;
+    let provider = config(&a)
+        .and_then(|v| v["network"]["endpoint"].as_str().map(str::to_owned))
+        .ok_or(bad(
+            "Complete the primary server configuration in initial setup",
+        ))?;
+    if same_endpoint(&endpoint, &provider) {
+        return Err(bad("Use a different machine or port for this replica"));
     }
     let _guard = a.gate.lock().await;
-    if records(&a)?.len() >= 8 {
-        return Err(bad("This release supports up to eight enrolled replicas"));
-    }
-    if records(&a)?
-        .iter()
-        .any(|r| same_endpoint(&r.endpoint, &p.endpoint))
+    if records(&a)?.len() >= 8
+        || records(&a)?
+            .iter()
+            .any(|r| same_endpoint(&r.endpoint, &endpoint))
     {
-        return Err(bad("Directory endpoint already registered"));
+        return Err(bad(
+            "This replica already exists or the eight-server limit was reached",
+        ));
     }
-    let id = token()[..32].to_string();
+    let id = token()[..32].to_owned();
     audit(&a, &who, "register replica", &id)?;
-    a.db.lock().unwrap().execute("INSERT INTO directory_servers(id,name,endpoint,provider,state,enrollment_expires) VALUES(?,?,?,?,'pending',0)",params![id,p.name,p.endpoint,p.provider]).map_err(anyhow::Error::from)?;
+    a.db.lock().unwrap().execute("INSERT INTO directory_servers(id,name,endpoint,provider,state,enrollment_expires,address,control_port) VALUES(?,?,?,?,'pending',0,?,?)",params![id,p.name,endpoint,provider,p.address,p.control_port]).map_err(anyhow::Error::from)?;
+    hosts::sync_directory(&a, &id, &p.name, &hostname, "replica")?;
     Ok(Json(json!(load(&a, &id)?)))
 }
+
 fn archive(files: Vec<(&str, Vec<u8>, u32)>) -> Result<Vec<u8>> {
     let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     let mut tar = tar::Builder::new(encoder);
@@ -123,7 +157,6 @@ const DOCKERFILE: &str = include_str!("../assets/replica.Dockerfile");
 #[derive(Deserialize)]
 pub(super) struct Bundle {
     acknowledge: bool,
-    bind_address: Option<String>,
 }
 pub(super) async fn bundle(
     State(a): State<App>,
@@ -145,25 +178,15 @@ pub(super) async fn bundle(
             "An enrolled or in-progress server cannot receive another enrollment token",
         ));
     }
-    let deployment = p
-        .bind_address
-        .as_deref()
-        .map(crate::replica_setup::private_ipv4)
-        .transpose()?;
     let raw = token();
     let expiry = now() + 900;
-    let enrollment = json!({"id":id,"token":raw,"hostname":hosts::endpoint_hostname(&server.endpoint)?,"provider":server.provider,"manager_url":a.url,"expires_at":expiry});
+    let enrollment = json!({"id":id,"token":raw,"hostname":hosts::endpoint_hostname(&server.endpoint)?,"provider":server.provider,"manager_url":public_url(&a),"expires_at":expiry,"address":server.address,"port":reqwest::Url::parse(&server.endpoint).map_err(|_|bad("Invalid endpoint"))?.port().unwrap_or(636),"control_port":server.control_port});
     let ca = std::fs::read("/run/secrets/ca.crt").map_err(anyhow::Error::from)?;
     let readme = format!(
-        "Forklift replica: {}\n\nPrivate enrollment bundle. Token expires at Unix time {} (15 minutes), is scoped to this server and can be redeemed once.\nExtract on the second Docker host. Keep this directory private. If .env is included, its private interface/port are already configured: run ./start.sh. Otherwise run ./prepare.sh, set FORKLIFT_REPLICA_BIND to a private interface in .env, then ./start.sh. Forklift installs OpenLDAP, creates certificates and configures replication; do not install another LDAP server first.\nThe DNS name {} must resolve to this host and its published LDAPS port must match {}. The provider {} must be reachable from the replica.\nManager HTTPS uses system trust; for private PKI place its public CA in enrollment/manager-ca.crt before startup.\nThe replica generates its own private TLS key. Its non-CA certificate is pinned during enrollment; the installation CA signing key is never distributed.\nWait for confirmed synchronization in Forklift before putting the replica in client endpoint lists. Regenerate host bundles so SSSD trusts the new server certificate.\nUse independent storage. Never share primary MDB files or promote this read-only server automatically.\nA consumed token cannot be replayed, even after an interrupted response. Stop the failed stack and reissue an unused enrollment, or remove/re-add a consumed server. Never erase a working directory to hide an error.\n",
-        server.name,
-        expiry,
-        hosts::endpoint_hostname(&server.endpoint)?,
-        server.endpoint,
-        server.provider
+        "Forklift replica: {}\n\nExtract this private archive on the new Docker host and start the included Compose stack using Docker Compose or your Docker hosting UI. Compose prepares enrollment permissions automatically; no administrator scripts or .env edits are required.\nOne-use enrollment expires at Unix time {}. Keep the deployment private. The directory binds {} on its configured port and its pinned-TLS control service uses port {}. Restrict both to the intended private networks.\nThe primary address is inherited from Forklift setup: {}. WebUI HTTPS must be reachable; for private HTTPS PKI place its public CA in enrollment/manager-ca.crt before starting.\nAfter enrollment, use Forklift for credentials, certificates and configuration. This node appears in Hosts automatically; that inventory record does not grant SSH access. Wait for confirmed synchronization before configuring Linux clients for failover.\n",
+        server.name, expiry, server.address, server.control_port, server.provider
     );
-    let prepare = include_bytes!("../assets/replica.prepare.sh");
-    let mut files = vec![
+    let files = vec![
         (
             ".gitignore",
             b".env\nenrollment/\ncredential-update.json\n".to_vec(),
@@ -181,7 +204,6 @@ pub(super) async fn bundle(
             include_bytes!("../assets/replica.py").to_vec(),
             0o600,
         ),
-        ("prepare.sh", prepare.to_vec(), 0o700),
         (
             "enrollment/enrollment.json",
             serde_json::to_vec_pretty(&enrollment).map_err(anyhow::Error::from)?,
@@ -189,23 +211,7 @@ pub(super) async fn bundle(
         ),
         ("enrollment/provider-ca.crt", ca, 0o644),
         ("README.txt", readme.into_bytes(), 0o600),
-        (
-            "start.sh",
-            include_bytes!("../assets/replica.start.sh").to_vec(),
-            0o700,
-        ),
     ];
-    if let Some(ip) = deployment {
-        let port = reqwest::Url::parse(&server.endpoint)
-            .map_err(|_| bad("Invalid replica endpoint"))?
-            .port()
-            .unwrap_or(636);
-        files.push((
-            ".env",
-            format!("FORKLIFT_REPLICA_BIND={ip}\nFORKLIFT_REPLICA_PORT={port}\n").into_bytes(),
-            0o600,
-        ));
-    }
     let bytes = archive(files)?;
     a.db.lock().unwrap().execute("UPDATE directory_servers SET enrollment_hash=?,enrollment_expires=?,state='pending',last_error=NULL WHERE id=?",params![digest(&raw),expiry,id]).map_err(anyhow::Error::from)?;
     audit(&a, &who, "issue replica enrollment", &id)?;
@@ -252,7 +258,17 @@ fn validate_certificate(pem: &str, hostname: &str) -> Result<()> {
         .subject_alternative_name()
         .map_err(|_| bad("Invalid certificate DNS names"))?
         .ok_or(bad("Certificate needs a DNS SAN"))?;
-    let expected = x509_parser::extensions::GeneralName::DNSName(hostname);
+    let ip = hostname.parse::<std::net::IpAddr>().ok();
+    let octets = match ip {
+        Some(std::net::IpAddr::V4(v)) => v.octets().to_vec(),
+        Some(std::net::IpAddr::V6(v)) => v.octets().to_vec(),
+        None => Vec::new(),
+    };
+    let expected = if octets.is_empty() {
+        x509_parser::extensions::GeneralName::DNSName(hostname)
+    } else {
+        x509_parser::extensions::GeneralName::IPAddress(&octets)
+    };
     let key = cert.public_key().map_err(anyhow::Error::from)?;
     if constraints.value.ca
         || usage.value.key_cert_sign()
@@ -266,7 +282,7 @@ fn validate_certificate(pem: &str, hostname: &str) -> Result<()> {
         || !cert.verify(&key).map_err(anyhow::Error::from)?
     {
         return Err(bad(
-            "Use a valid self-signed non-CA RSA certificate (2048+ bits), at most 397 days, with exactly the registered DNS SAN",
+            "Use a valid self-signed non-CA RSA certificate (2048+ bits), at most 397 days, with exactly the registered DNS/IP SAN",
         ));
     }
     Ok(())
@@ -312,7 +328,7 @@ pub(super) async fn enroll(
             a.db.lock().unwrap().execute("UPDATE directory_servers SET state='enrolled',certificate=?,credential_epoch=1,last_error=NULL WHERE id=?",params![p.certificate,id]).map_err(anyhow::Error::from)?;
             audit(&a, "enrollment", "enroll replica", &id)?;
             Ok(Json(
-                json!({"base":base(&a)?,"provider":server.provider,"credential":credential,"credential_epoch":1}),
+                json!({"base":base(&a)?,"provider":server.provider,"credential":credential,"credential_epoch":1,"control_token":node_secret(&id,1,"control")}),
             ))
         }
         Err(e) => {
@@ -378,7 +394,7 @@ async fn provision_reader(a: &App, id: &str) -> Result<String> {
         .success()?;
     }
     password(&mut l, &monitor_dn, &monitor_credential()).await?;
-    let raw = token();
+    let raw = node_secret(id, 1, "replication");
     password(&mut l, &dn, &raw).await?;
     Ok(raw)
 }
@@ -451,7 +467,7 @@ pub(super) async fn health(a: &App) -> Result<Value> {
     };
     let primary_csn = primary.as_ref().ok().cloned();
     let mut nodes = vec![
-        json!({"id":"primary","name":"Primary directory","endpoint":"ldaps://ldap:636","role":"primary","reachable":primary.is_ok(),"state":if primary.is_ok(){"ready"}else{"unreachable"},"context_csn":primary_csn,"checked_at":now(),"error":primary.as_ref().err().map(|_|"Primary LDAP/TLS connection failed; administrative writes unavailable")}),
+        json!({"id":"primary","name":"Primary directory","endpoint":config(a).map(|v|v["network"]["endpoint"].clone()),"role":"primary","reachable":primary.is_ok(),"state":if primary.is_ok(){"ready"}else{"unreachable"},"context_csn":primary_csn,"checked_at":now(),"error":primary.as_ref().err().map(|_|"Primary LDAP/TLS connection failed; administrative writes unavailable")}),
     ];
     let mut probes = tokio::task::JoinSet::new();
     for server in records(a)? {
@@ -515,7 +531,7 @@ async fn probe(a: App, s: Server, primary_csn: Option<Vec<String>>) -> Result<Va
         error = error.or(s.last_error);
     }
     Ok(
-        json!({"id":s.id,"name":s.name,"endpoint":s.endpoint,"provider":s.provider,"role":"replica","state":state,"enrollment_state":s.state,"reachable":reachable,"checked_at":if s.state=="enrolled"{Some(now())}else{None},"last_sync_at":sync,"context_csn":observed,"expires_at":s.expires_at,"certificate_rotation_pending":s.next_certificate.is_some(),"certificate_staged_at":s.certificate_staged_at,"credential_rotated_at":s.credential_rotated_at,"credential_epoch":s.credential_epoch,"error":error}),
+        json!({"id":s.id,"name":s.name,"endpoint":s.endpoint,"provider":s.provider,"role":"replica","state":state,"enrollment_state":s.state,"reachable":reachable,"checked_at":if s.state=="enrolled"{Some(now())}else{None},"last_sync_at":sync,"context_csn":observed,"expires_at":s.expires_at,"certificate_rotation_pending":s.next_certificate.is_some(),"certificate_staged_at":s.certificate_staged_at,"credential_rotated_at":s.credential_rotated_at,"credential_epoch":s.credential_epoch,"address":s.address,"control_port":s.control_port,"pending_epoch":s.pending_epoch,"provider_needs_update":config(&a).is_some_and(|v|v["network"]["endpoint"]!=s.provider),"error":error}),
     )
 }
 pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
@@ -543,6 +559,7 @@ pub(super) async fn delete(
         .unwrap()
         .execute("DELETE FROM directory_servers WHERE id=?", [&id])
         .map_err(anyhow::Error::from)?;
+    hosts::unlink_directory(&a, &id)?;
     audit(&a, &who, "remove replica", &id)?;
     Ok(Json(json!({"ok":true})))
 }
@@ -573,7 +590,6 @@ pub(super) fn client_trust(a: &App, endpoints: &[String]) -> Result<Vec<u8>> {
 
 #[derive(Deserialize)]
 pub(super) struct CertificateUpdate {
-    certificate: String,
     acknowledge: bool,
 }
 fn fingerprint(pem: &str) -> Result<Vec<u8>> {
@@ -585,11 +601,12 @@ fn fingerprint(pem: &str) -> Result<Vec<u8>> {
 fn host_trust_updates(a: &App, endpoint: &str) -> Result<Vec<(String, String)>> {
     let mut updates = Vec::new();
     for mut host in hosts::list(a)? {
-        if host
-            .draft
-            .endpoints
-            .iter()
-            .any(|e| same_endpoint(e, endpoint))
+        if !host.draft.allowed_groups.is_empty()
+            && host
+                .draft
+                .endpoints
+                .iter()
+                .any(|e| same_endpoint(e, endpoint))
         {
             host.revision += 1;
             host.updated_at = now();
@@ -615,13 +632,21 @@ pub(super) async fn stage_certificate(
     }
     let _guard = a.gate.lock().await;
     let server = load(&a, &id)?;
-    if server.state != "enrolled" || server.next_certificate.is_some() {
+    if server.state != "enrolled"
+        || server.next_certificate.is_some()
+        || server.pending_epoch.is_some()
+    {
         return Err(bad(
             "Use an enrolled server without an existing certificate transition",
         ));
     }
-    validate_certificate(&p.certificate, &hosts::endpoint_hostname(&server.endpoint)?)?;
-    if fingerprint(&p.certificate)? == fingerprint(server.certificate.as_deref().unwrap_or(""))? {
+    let generated = node_request(&a, &server, "/v1/certificate/stage", json!({"id":id})).await?;
+    let certificate = generated["certificate"]
+        .as_str()
+        .ok_or(bad("Replica did not return a public certificate"))?
+        .to_owned();
+    validate_certificate(&certificate, &hosts::endpoint_hostname(&server.endpoint)?)?;
+    if fingerprint(&certificate)? == fingerprint(server.certificate.as_deref().unwrap_or(""))? {
         return Err(bad("Certificate is already active"));
     }
     let updates = host_trust_updates(&a, &server.endpoint)?;
@@ -629,7 +654,7 @@ pub(super) async fn stage_certificate(
     let tx = db.transaction().map_err(anyhow::Error::from)?;
     tx.execute(
         "UPDATE directory_servers SET next_certificate=?,certificate_staged_at=? WHERE id=?",
-        params![p.certificate, now(), id],
+        params![certificate, now(), id],
     )
     .map_err(anyhow::Error::from)?;
     for (host, data) in &updates {
@@ -660,10 +685,20 @@ pub(super) async fn finalize_certificate(
     }
     let _guard = a.gate.lock().await;
     let server = load(&a, &id)?;
+    if server.pending_epoch.is_some() {
+        return Err(bad("Finish the pending credential update first"));
+    }
     let next = server
         .next_certificate
         .as_deref()
         .ok_or(bad("No staged certificate"))?;
+    node_request(
+        &a,
+        &server,
+        "/v1/certificate/activate",
+        json!({"id":id,"fingerprint":hex::encode(Sha256::digest(fingerprint(next)?))}),
+    )
+    .await?;
     let mut l = connection(&a, &server).await?;
     let presented = l
         .get_peer_certificate()
@@ -672,6 +707,7 @@ pub(super) async fn finalize_certificate(
     if presented != fingerprint(next)? {
         return Err(Error(StatusCode::CONFLICT,"Replica still presents a different certificate; activate the staged certificate and restart it first".into()));
     }
+    node_request(&a, &server, "/v1/certificate/retire", json!({"id":id})).await?;
     let updates = host_trust_updates(&a, &server.endpoint)?;
     let mut db = a.db.lock().unwrap();
     let tx = db.transaction().map_err(anyhow::Error::from)?;
@@ -695,62 +731,166 @@ pub(super) async fn rotate_credential(
     h: HeaderMap,
     Path(id): Path<String>,
     Json(p): Json<operations::Acknowledgment>,
-) -> Result<Response> {
+) -> Result<Json<Value>> {
     let who = admin(&a, &h, true).await?;
-    https_required(&a)?;
     if !p.acknowledge {
         return Err(bad(
-            "Acknowledge applying the credential update to the replica and restarting it",
+            "Acknowledge rotating and applying this replica's credentials",
         ));
     }
     let _guard = a.gate.lock().await;
-    let server = load(&a, &id)?;
+    let mut server = load(&a, &id)?;
     if server.state != "enrolled" {
-        return Err(bad("Replica is not enrolled"));
+        return Err(bad("Enroll this server first"));
     }
-    let raw = token();
-    let b = base(&a)?;
-    let epoch = server.credential_epoch + 1;
-    let mut l = service(&a).await?;
-    audit(&a, &who, "attempt rotate replication credential", &id)?;
-    password(&mut l, &format!("cn=replica-{id},{b}"), &raw).await?;
+    let epoch = server.pending_epoch.unwrap_or(server.credential_epoch + 1);
     a.db.lock()
         .unwrap()
         .execute(
-            "UPDATE directory_servers SET credential_rotated_at=?,credential_epoch=? WHERE id=?",
-            params![now(), epoch, id],
+            "UPDATE directory_servers SET pending_epoch=? WHERE id=?",
+            params![epoch, id],
         )
         .map_err(anyhow::Error::from)?;
-    let update = json!({"id":id,"base":b,"provider":server.provider,"credential":raw,"credential_epoch":epoch,"issued_at":now()});
-    let instructions=b"Private credential update. Replace the deployment context replica.py with the included current runtime, then run docker compose build replica. Pipe credential-update.json into: docker compose run --rm -T --no-deps replica apply-credential < credential-update.json . Then recreate/restart the normal replica and confirm a new directory change synchronizes. Do not commit this JSON file. Existing bound LDAP connections may outlive credential replacement; the issued timestamp is not a remote deployment receipt. Older update epochs are refused by the runtime.\n";
-    let bytes = archive(vec![
-        (
-            "credential-update.json",
-            serde_json::to_vec_pretty(&update).map_err(anyhow::Error::from)?,
-            0o600,
-        ),
-        (
-            "replica.py",
-            include_bytes!("../assets/replica.py").to_vec(),
-            0o600,
-        ),
-        ("README.txt", instructions.to_vec(), 0o600),
-        (".gitignore", b"credential-update.json\n".to_vec(), 0o600),
-        (".dockerignore", b"credential-update.json\n".to_vec(), 0o600),
-    ])?;
-    audit(&a, &who, "issue replication credential update", &id)?;
-    Ok((
-        [
-            (header::CONTENT_TYPE, "application/gzip".to_string()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"forklift-replica-credential-{id}.tar.gz\""),
-            ),
-        ],
-        bytes,
+    server.pending_epoch = Some(epoch);
+    audit(&a, &who, "attempt rotate replica credentials", &id)?;
+    let mut ldap = service(&a).await?;
+    password(
+        &mut ldap,
+        &format!("cn=replica-{id},{}", base(&a)?),
+        &node_secret(&id, epoch, "replication"),
     )
-        .into_response())
+    .await?;
+    node_request(&a,&server,"/v1/credential",json!({"id":id,"base":base(&a)?,"provider":server.provider,"credential_epoch":epoch,"credential":node_secret(&id,epoch,"replication"),"control_token":node_secret(&id,epoch,"control")})).await?;
+    a.db.lock().unwrap().execute("UPDATE directory_servers SET pending_epoch=NULL,credential_epoch=?,credential_rotated_at=? WHERE id=?",params![epoch,now(),id]).map_err(anyhow::Error::from)?;
+    audit(&a, &who, "apply replica credential update", &id)?;
+    Ok(Json(json!({"applied":true,"epoch":epoch})))
 }
+pub(super) async fn reconnect(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(p): Json<operations::Acknowledgment>,
+) -> Result<Json<Value>> {
+    let who = admin(&a, &h, true).await?;
+    if !p.acknowledge {
+        return Err(bad("Acknowledge reconnecting to the configured primary"));
+    }
+    let _guard = a.gate.lock().await;
+    let server = load(&a, &id)?;
+    let provider = config(&a)
+        .and_then(|v| v["network"]["endpoint"].as_str().map(str::to_owned))
+        .ok_or(bad("Primary configuration missing"))?;
+    node_request(
+        &a,
+        &server,
+        "/v1/provider",
+        json!({"id":id,"provider":provider}),
+    )
+    .await?;
+    a.db.lock()
+        .unwrap()
+        .execute(
+            "UPDATE directory_servers SET provider=? WHERE id=?",
+            params![provider, id],
+        )
+        .map_err(anyhow::Error::from)?;
+    audit(&a, &who, "reconnect replica provider", &id)?;
+    Ok(Json(json!({"applied":true})))
+}
+pub(super) async fn restart(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(p): Json<operations::Acknowledgment>,
+) -> Result<Json<Value>> {
+    let who = admin(&a, &h, true).await?;
+    if !p.acknowledge {
+        return Err(bad("Acknowledge restarting the replica"));
+    }
+    let _guard = a.gate.lock().await;
+    let server = load(&a, &id)?;
+    node_request(&a, &server, "/v1/restart", json!({"id":id})).await?;
+    audit(&a, &who, "restart replica directory", &id)?;
+    Ok(Json(json!({"restarted":true})))
+}
+fn node_secret(id: &str, epoch: i64, purpose: &str) -> String {
+    use hmac::{Hmac, Mac};
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret("node-control-key").as_bytes())
+        .expect("HMAC accepts the installation key");
+    mac.update(format!("forklift/node/v1/{purpose}/{id}/{epoch}").as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+async fn node_request(_a: &App, server: &Server, path: &str, body: Value) -> Result<Value> {
+    if server.state != "enrolled" {
+        return Err(bad("The replica must be enrolled before remote management"));
+    }
+    let mut builder = reqwest::Client::builder()
+        .use_native_tls()
+        .tls_built_in_root_certs(false)
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none());
+    for certificate in [
+        server.certificate.as_ref(),
+        server.next_certificate.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        builder = builder.add_root_certificate(
+            reqwest::Certificate::from_pem(certificate.as_bytes()).map_err(anyhow::Error::from)?,
+        );
+    }
+    let client = builder.build().map_err(anyhow::Error::from)?;
+    let hostname = hosts::endpoint_hostname(&server.endpoint)?;
+    let url = format!("https://{hostname}:{}{path}", server.control_port);
+    for epoch in [Some(server.credential_epoch), server.pending_epoch]
+        .into_iter()
+        .flatten()
+    {
+        let mut response = {
+            let mut received = None;
+            for attempt in 0..4 {
+                match client
+                    .post(&url)
+                    .bearer_auth(node_secret(&server.id, epoch, "control"))
+                    .json(&body)
+                    .send()
+                    .await
+                {
+                    Ok(response) => {
+                        received = Some(response);
+                        break;
+                    }
+                    Err(_) if attempt < 3 => {
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await
+                    }
+                    Err(_) => {}
+                }
+            }
+            received.ok_or(Error(StatusCode::SERVICE_UNAVAILABLE,"Cannot reach the replica control service. Check its private control port and pinned TLS certificate, then retry in Forklift.".into()))?
+        };
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            continue;
+        }
+        if !response.status().is_success() {
+            return Err(bad(
+                "Replica refused the requested transition; retry its current credential or certificate operation",
+            ));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(anyhow::Error::from)? {
+            if bytes.len() + chunk.len() > 32768 {
+                return Err(bad("Replica control response exceeded its limit"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        return serde_json::from_slice(&bytes)
+            .map_err(anyhow::Error::from)
+            .map_err(Error::from);
+    }
+    Err(Error(StatusCode::FORBIDDEN,"Replica control authorization failed; finish any pending credential update or reenroll a fenced server".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

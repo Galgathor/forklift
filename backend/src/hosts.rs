@@ -11,6 +11,10 @@ pub(super) struct HostDraft {
 #[derive(Clone, Deserialize, Serialize)]
 pub(super) struct Host {
     pub id: String,
+    #[serde(default)]
+    pub directory_id: Option<String>,
+    #[serde(default)]
+    pub directory_role: Option<String>,
     #[serde(flatten)]
     pub draft: HostDraft,
     pub revision: i64,
@@ -81,7 +85,7 @@ fn valid_id(s: &str) -> Result<()> {
 }
 pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    db.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS hosts(id TEXT PRIMARY KEY,hostname TEXT NOT NULL UNIQUE,data TEXT NOT NULL);")?;
+    db.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS hosts(id TEXT PRIMARY KEY,hostname TEXT NOT NULL,data TEXT NOT NULL);")?;
     db.pragma_update(None, "user_version", version.max(2))?;
     db.execute_batch("COMMIT;")?;
     Ok(())
@@ -132,10 +136,10 @@ async fn check_groups(a: &App, p: &HostDraft) -> Result<()> {
     }
     Ok(())
 }
-fn store(a: &App, h: &Host) -> Result<()> {
+pub(super) fn store(a: &App, h: &Host) -> Result<()> {
     if list(a)?
         .iter()
-        .any(|e| e.draft.hostname == h.draft.hostname && e.id != h.id)
+        .any(|e| h.directory_id.is_none() && e.draft.hostname == h.draft.hostname && e.id != h.id)
     {
         return Err(bad("A host with that hostname already exists"));
     }
@@ -156,6 +160,8 @@ pub(super) async fn create(
     let _guard = a.gate.lock().await;
     check_groups(&a, &p).await?;
     let host = Host {
+        directory_id: None,
+        directory_role: None,
         id: token()[..32].into(),
         draft: p,
         revision: 1,
@@ -185,6 +191,11 @@ pub(super) async fn update(
     validate(&p.draft)?;
     let _guard = a.gate.lock().await;
     let mut host = load(&a, &id)?;
+    if host.directory_id.is_some() && host.draft.hostname != p.draft.hostname {
+        return Err(bad(
+            "Directory hostnames are managed through Directory Servers",
+        ));
+    }
     if host.revision != p.revision {
         return Err(Error(
             StatusCode::CONFLICT,
@@ -208,6 +219,9 @@ pub(super) async fn delete(
     let who = admin(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     let host = load(&a, &id)?;
+    if host.directory_id.is_some() {
+        return Err(bad("Remove directory servers through Directory Servers"));
+    }
     audit(&a, &who, "attempt delete host", &id)?;
     let mut l = service(&a).await?;
     let b = base(&a)?;
@@ -261,6 +275,11 @@ pub(super) async fn bundle(
     let who = admin(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     let mut host = load(&a, &id)?;
+    if host.draft.allowed_groups.is_empty() {
+        return Err(bad(
+            "Choose SSH login groups before configuring this Linux host",
+        ));
+    }
     if p.revision != host.revision {
         return Err(Error(
             StatusCode::CONFLICT,
@@ -401,4 +420,65 @@ mod tests {
             2
         );
     }
+}
+
+/// Inventory registration does not install SSSD or grant SSH access.
+pub(super) fn sync_directory(
+    a: &App,
+    directory_id: &str,
+    name: &str,
+    hostname: &str,
+    role: &str,
+) -> Result<()> {
+    let records = list(a)?;
+    let existing = records.into_iter().find(|h| {
+        h.directory_id.as_deref() == Some(directory_id)
+            || (h.directory_id.is_none() && h.draft.hostname == hostname)
+    });
+    let primary = config(a)
+        .and_then(|c| c["network"]["endpoint"].as_str().map(str::to_owned))
+        .ok_or(bad("Configure the primary in setup"))?;
+    let mut host = existing.unwrap_or(Host {
+        id: if directory_id == "primary" {
+            "00000000000000000000000000000001".into()
+        } else {
+            directory_id.into()
+        },
+        directory_id: Some(directory_id.into()),
+        directory_role: Some(role.into()),
+        draft: HostDraft {
+            name: name.into(),
+            hostname: hostname.into(),
+            endpoints: vec![primary],
+            allowed_groups: vec![],
+        },
+        revision: 1,
+        exported_revision: None,
+        exported_at: None,
+        created_at: now(),
+        updated_at: now(),
+    });
+    host.directory_id = Some(directory_id.into());
+    host.directory_role = Some(role.into());
+    host.draft.hostname = hostname.into();
+    host.updated_at = now();
+    store(a, &host)
+}
+pub(super) fn unlink_directory(a: &App, directory_id: &str) -> Result<()> {
+    for mut host in list(a)?
+        .into_iter()
+        .filter(|h| h.directory_id.as_deref() == Some(directory_id))
+    {
+        if host.draft.allowed_groups.is_empty() {
+            a.db.lock()
+                .unwrap()
+                .execute("DELETE FROM hosts WHERE id=?", [host.id])
+                .map_err(anyhow::Error::from)?;
+        } else {
+            host.directory_id = None;
+            host.directory_role = None;
+            store(a, &host)?;
+        }
+    }
+    Ok(())
 }

@@ -1,131 +1,91 @@
 # Forklift
 
-Self-hosted OpenLDAP management for homelabs. A Rust/Axum API, React/TypeScript interface, SQLite metadata store, and a real OpenLDAP 2.6 directory deployed with Docker Compose.
+Self-hosted OpenLDAP management for homelabs. Rust/Axum, React/TypeScript, SQLite and OpenLDAP 2.6, deployed with Docker Compose.
 
-**Development release: Milestone 4.** Setup, LDAP administrator login, users/POSIX groups, Linux host configuration/Ansible, primary/replica Syncrepl, HTTPS enrollment and verified replication monitoring are implemented. This release adds encrypted offline backup/restore, guarded recovery, service/replication credential rotation, staged replica certificate renewal, certificate expiry, audit search/export and session revocation. SSH-key schema support remains planned. Host exports and credential issuance do not imply remote deployment. This is security-critical software without an external security audit; keep independently managed local Linux recovery accounts.
+**Development release 0.5 — breaking deployment change.** Initial setup, users/groups, POSIX identities, host configuration, primary/replica Syncrepl and directory maintenance are managed through the WebUI. Backups, restoration, service credentials, primary networking and certificates no longer require an administration script. SSH-key schema support and scheduled backups remain planned. This security-critical software has not received an external security audit.
 
-## Quick start
+## Install
 
-Requirements: Linux with Docker Engine and Compose v2, Git, OpenSSL, and about 2 GB of free memory for a source build. Docker access is needed only by the installer and deployment operator, never by the manager container.
+Requirements: **Linux**, Docker Engine and Compose v2, private network connectivity and about 2 GB free memory for a source build. Directory containers use Linux host networking so Forklift can configure their private listeners without Docker socket access. Docker Desktop is not supported by this deployment.
 
 ```sh
 git clone git@gitea-git:Galgathor/forklift.git
 cd forklift
-./scripts/install.sh
-# Edit .env if using a different hostname, port, or Nginx Proxy Manager.
+cp .env.example .env
+# Choose deployment settings in .env, then:
 docker compose up -d --build
 ```
 
-The installer creates `.env`, restricted installation secrets, a local certificate authority and a directory certificate. It displays a one-time bootstrap token; save it locally for the setup form. Nothing secret belongs in Git. Running the installer again preserves existing credentials and certificates. Builds use lockfiles and pinned base image digests; operating system security packages still follow the Debian repositories. On a slow machine the first source build can exceed ten minutes.
+You can also deploy the Compose project through your Docker hosting UI. Starting containers and managing the host's DNS/firewall remain infrastructure tasks. Ongoing directory administration takes place in Forklift.
 
-Open `http://localhost:8080` on the Docker host. From a remote workstation, an SSH tunnel is suitable for initial local setup:
+| Deployment setting         | Default                 | Purpose                                                             |
+| -------------------------- | ----------------------- | ------------------------------------------------------------------- |
+| `FORKLIFT_BIND`            | `127.0.0.1`             | Specific host interface publishing the management port              |
+| `FORKLIFT_PORT`            | `8080`                  | Published management HTTP port                                      |
+| `FORKLIFT_PUBLIC_URL`      | `http://localhost:8080` | Initial browser origin; setup saves the actual browser origin       |
+| `FORKLIFT_BOOTSTRAP_TOKEN` | generated               | Optional random one-time installation key of at least 32 characters |
 
-```sh
-ssh -L 8080:127.0.0.1:8080 your-docker-host
-```
+Choose the installation key with a password manager. If omitted, the initializer writes a generated key to its **local container log**, available through your Docker hosting UI. Protect that log and deployment settings. Real `.env` files, keys and persistent data must never be committed.
 
-The setup form asks for the bootstrap token, directory name, a base DN such as `dc=homelab,dc=internal`, and the initial administrator username/password. Names use lowercase Unix-compatible characters. Passwords require at least 14 characters. Base DNs currently support two or more lowercase `dc=` components; choose carefully because changing the suffix is not supported.
+Open the management URL (default `http://localhost:8080` on the Docker host). For remote use, configure NPM or bind the management port to a specific private LAN interface before deployment. Use HTTPS outside localhost.
 
-Setup provisions schemas, directory containers, a service account, the initial POSIX administrator and the `administrators` group. Connections verify the directory certificate. After setup, sign in with the administrator account. The bootstrap endpoint refuses further setup. The token does not grant access to an initialized manager.
+The first-launch wizard:
 
-The manager and LDAP containers run as UID/GID 10001, with all capabilities dropped and no Docker socket. Docker volumes retain both databases across `up --force-recreate` and `down`. **Do not use `docker compose down -v` on an installation you want to preserve.**
+1. Checks your installation key, directory supervisor and storage.
+2. Selects this Docker host's private interface and an IP or optional DNS name. Forklift creates the LDAPS listener and certificate automatically. **You do not need an existing LDAP endpoint.** The default directory port is **1636**.
+3. Creates a directory name, base DN such as `dc=homelab,dc=internal`, and administrator password (14+ characters), or restores a supported encrypted backup.
+4. Initializes schemas, access rules, service identities and the administrator group. Sign in to open the dashboard.
 
-## Configuration
+Choose the base DN carefully: suffix changes are unsupported. Setup refuses to overwrite a configured directory. Container recreation preserves state; deleting persistent volumes destroys it. A partial setup can be retried with its original base DN and administrator identity. Missing metadata beside an initialized directory requires recovery of a matching backup.
 
-Copy `.env.example` via the installer. Settings:
-
-| Setting               | Default                 | Purpose                                                               |
-| --------------------- | ----------------------- | --------------------------------------------------------------------- |
-| `FORKLIFT_PUBLIC_URL` | `http://localhost:8080` | Exact browser origin; HTTPS activates Secure cookies. No path prefix. |
-| `FORKLIFT_BIND`       | `127.0.0.1`             | Host address for the published management port.                       |
-| `FORKLIFT_PORT`       | `8080`                  | Published management port.                                            |
-
-The Rust process defaults to `0.0.0.0:8080` inside its container. Advanced deployments can set `FORKLIFT_LISTEN` in a Compose override and adjust the container target port and health check together. It is not necessary to change this when changing the published host port.
-
-`GET /health` is process liveness. `GET /ready` checks metadata access and, after setup, an authenticated directory read over verified TLS. The directory container health check verifies its helper and that its slapd child has not exited; the manager readiness endpoint verifies actual LDAP operations. Check with:
-
-```sh
-docker compose ps
-curl --fail http://localhost:8080/ready
-docker compose logs --tail=100 manager ldap
-```
+**0.4 storage and backups are incompatible with 0.5.** Use fresh volumes for this development release. Preserve old volumes and use their matching release if you need to recover them. There is no automatic conversion or reset. The development/test suites use isolated projects and never delete default installation volumes.
 
 ## Nginx Proxy Manager
 
-1. Set `FORKLIFT_PUBLIC_URL=https://forklift.example.com` and recreate the manager with `docker compose up -d`.
-2. If NPM is on the Docker host itself, forward its Proxy Host to `http://127.0.0.1:8080`. If NPM runs in a container, its loopback refers to that container; use a shared Docker network or a reachable private host address instead.
-3. For a separate NPM machine/container using the LAN, set `FORKLIFT_BIND` to the Docker host's specific private address. Allow the port only from NPM at the host firewall. Forward to that private address and the selected published port.
-4. Add a Proxy Host for `forklift.example.com`, scheme **http**, forwarding target as above, port **8080** (or `FORKLIFT_PORT`). Enable Block Common Exploits. Request/select a TLS certificate on the SSL tab and enable Force SSL. WebSocket support is unnecessary.
-5. Browse through the configured HTTPS hostname. Origin validation requires that exact origin, including any non-default public port.
+1. Publish the manager to an address reachable by NPM. A container's loopback is its own; use a shared Docker network forwarding to `manager:8080`, or publish on a specific private host address. Restrict that management port to NPM at the firewall.
+2. In NPM, add a Proxy Host for your public hostname, scheme **http**, selected private forwarding address and port **8080** (or the published `FORKLIFT_PORT`). Enable Block Common Exploits.
+3. Select/request an SSL certificate and enable Force SSL. WebSockets are unnecessary. Finish initial Forklift setup using that HTTPS hostname.
+4. For large backup uploads, set an appropriate `client_max_body_size` in the Proxy Host's Advanced configuration, up to Forklift's 8 GiB encrypted upload limit. Allow enough proxy read timeout for downloads; long maintenance work itself uses short progress polls.
 
-Forklift derives security decisions from the configured public URL and **does not trust any forwarded headers**. `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Proto` cannot change the request origin, cookie policy or rate-limit identity. No trusted-proxy configuration is needed in this release because no such headers are consumed. Login throttling is persisted in SQLite (20 attempts globally and 10 per exact username per five minutes), not client-IP based; this avoids proxy spoofing but permits temporary denial of login by a hostile caller. Restrict access to your management network.
+To change the public hostname later, prepare the new Proxy Host, then use **Settings → WebUI address**. Forklift saves the new origin, revokes sessions and redirects for sign-in. Do not change only the deployment environment after initial setup; the saved setting is authoritative.
 
-Never send LDAP authentication traffic through NPM's HTTP Proxy Host. LDAPS is a separate protocol and certificate. The default stack publishes no directory ports. The optional client Compose override publishes LDAPS on an explicitly configured private address; see [Linux clients](docs/linux-clients.md).
+Security decisions use the exact saved browser origin and Secure/HttpOnly/SameSite cookies with CSRF protection. Forwarded headers are not consumed or trusted. LDAP traffic **does not pass through NPM's HTTP Proxy Host**. Linux clients and replicas connect directly to the separate private LDAPS address selected in setup. Restrict the selected directory port and replica control port to their intended private networks. Permit the manager’s Docker network to reach replica LDAPS/control ports; host firewalls may block bridge-to-host traffic even when the LAN can reach it.
 
-## Users and groups
+## Daily management
 
-The Users page creates, edits, disables and deletes LDAP accounts, changes/reset passwords, displays timestamps, and searches current account attributes. Supported attributes include display name, email, description, primary GID, home directory and a restricted shell selection. UIDs are allocated automatically. Username changes are intentionally unsupported. UID/GID overrides and SSH public keys are not supported yet.
+- **Users / Groups:** create, edit, disable, delete, reset passwords and manage POSIX group membership. UIDs/GIDs are allocated monotonically and never automatically reused. Disabling removes the password hash and expires the account. Re-enabling requires a new password. Account renames, manual UID overrides and SSH-key attributes remain unsupported.
+- **Hosts:** every primary and replica appears automatically. Its initial state is **Inventory only**; registration grants no SSH access. Select allowed login groups and generate a protected SSSD/PAM/NSS bundle when configuring Linux authentication. Ansible/manual deployment is supported; Forklift does not claim to remotely deploy those files. SSH eligibility and sudo authorization are separate.
+- **Directory Servers:** add a new machine by friendly name and private address, download its short-lived deployment bundle, and deploy the included Compose stack through Docker Compose or your hosting UI. The primary connection is inherited from setup. After enrollment, rotate credentials, restart the directory, reconnect the primary or renew certificates in Forklift.
+- **Settings:** generate/download a recovery key, create/download/delete encrypted backups, verify/restore archives, rotate the service credential, renew the primary certificate, change its private listener, review recovery, inspect/export audit events and revoke sessions.
 
-Groups are `posixGroup` entries with `memberUid` usernames. Create or rename a group, edit its member usernames, and delete unused groups. Primary-group references prevent deletion. Supplemental membership is managed on the group form. The `administrators` group authorizes the WebUI independently of the user's primary GID. Administrators cannot delete/disable themselves or remove their own current administrator membership.
+Backup operations briefly pause the primary for a consistent snapshot; healthy replicas continue independently. The WebUI remains available with durable progress and recovery controls. Restoration requires fencing old writers/replicas, a trusted creation-time checksum and a future Unix ID floor above **all** historical allocations. Keep the private recovery key and checksum separately from the encrypted archive.
 
-A shared monotonic allocator starts after UID/GID 10000. Deleted IDs are not reused. Do not create entries outside Forklift, run multiple managers against one directory, or restore metadata from an older point than directory data; uncoordinated changes can create duplicate numeric identities. Supported restoration requires a future ID floor above all allocations, including those after the snapshot.
+Linux hosts authenticate using ordinary SSSD/PAM password prompts. Generated configurations validate certificates and disable offline password caching by default. The manager is outside the authentication path. Asynchronous replicas cannot apply revocations while disconnected; cached identities and existing sessions can outlive changes. Keep an independent local Linux recovery account.
 
-Disabling an account removes its password hash and sets `shadowExpire=1`, blocking subsequent LDAP binds. Re-enabling requires a new password. Password reset and disabling revoke that account's Forklift sessions. Administrator membership is checked against LDAP on every privileged request, so removed administrators immediately lose API access. Previously issued host/offline credentials remain subject to the destination system's policies.
+Detailed instructions: [Linux clients](docs/linux-clients.md), [replication](docs/replication.md), [backups and recovery](docs/operations.md), [security](docs/security.md), [architecture](docs/architecture.md).
 
-Password modifications use the LDAP Password Modify extended operation; OpenLDAP's Argon2 module hashes the result. Plaintext user passwords are used only during request processing and are never written to the metadata store or application logs. The manager's reusable service credential is a restricted mounted secret file, necessary to bind to LDAP; protect host storage and backups. LDAP and SQLite operations cannot form a shared transaction. A failed multi-step edit can be partial; refresh and inspect the account before retrying. A newly created account without a completed password operation cannot authenticate.
+## Locked out?
 
-## Linux authentication and SSH
+The only local administration tool is [emergency account recovery](scripts/emergency-recovery.sh), for when no administrator can sign in. It finishes a recorded interrupted operation if necessary, resets an existing account, restores administrator membership and revokes sessions. It can also correct an unreachable saved WebUI origin. Routine operations belong in the WebUI.
 
-Register Linux hosts with friendly names, DNS hostnames, permitted login groups and ordered LDAPS endpoints. Generate a protected configuration archive containing a dedicated read-only host bind credential, certificate authority, SSSD identity/password settings and SSH/PAM group access rules. Deploy with the Ubuntu Ansible role or manual instructions. Every export rotates the host credential; edits require redeployment. Referenced groups are protected against rename/deletion.
-
-Users authenticate through conventional SSH password prompts using their LDAP password. Destination PAM enforces login groups and SSSD checks account expiration. Local recovery accounts retain their existing policy, and sudo remains separate. Offline password caching is disabled in generated configurations; group/identity data has a 60-second cache interval.
-
-Complete private LDAPS publication, DNS/certificate setup, Ansible deployment, manual setup, authorization and outage guidance: [Linux clients](docs/linux-clients.md).
-
-## Replication
-
-Open **Directory Servers → Add server** for guided setup. Your existing Forklift directory is already the primary; the new machine only needs Linux and Docker. The wizard generates a one-time primary preparation command, checks its private connection/certificate, then asks for the new machine's name and private address. Download its preconfigured bundle, transfer it privately and run `./start.sh`. Forklift installs OpenLDAP, creates its certificate and configures synchronization. No existing replica LDAPS endpoint, manual certificate setup or LDIF editing is required. LAN DNS/private routing and WebUI HTTPS must be available; the wizard explains each requirement before issuing the 15-minute enrollment credential.
-
-Monitoring compares actual nonempty OpenLDAP `contextCSN` sets and records last-confirmed synchronization. The manager can serve replica-backed read-only data during a primary outage; all writes wait for the primary. There is no automatic promotion or multi-provider mode. Linux clients use ordered endpoints and pinned replica certificate trust from regenerated host bundles. Asynchronous replication cannot apply revocations while disconnected.
-
-Prerequisites, private networking, certificate trust, deployment, monitoring semantics, upgrade/recovery and limitations: [Replication guide](docs/replication.md).
-
-## Backups, recovery and upgrades
-
-See [operations](docs/operations.md) for offline backup/restore, partial initialization and TLS recovery. The local operator CLI creates age-encrypted coherent snapshots and restores into fresh, fenced targets. Settings shows maintenance history and the required post-restore review. There is no online backup scheduler or remote restore execution. Back up directory data/configuration, metadata **and** installation secrets together. Keep archives encrypted and offline. The CA private key is retained on the installation host but is never mounted into either service.
-
-Before upgrading: create and verify a matching encrypted backup, test the new revision on an isolated recovery project, then build the new revision. Recreate services with `docker compose up -d --build`. Milestone 4 automatically migrates metadata through schema 4 while preserving identities, sessions and the ID allocator. Metadata schema is versioned; a newer schema is refused by older code. Rollback requires restoring a matching complete backup, not just an older image.
-
-## Development and verification
+## Development and checks
 
 ```sh
-cd frontend
-npm ci
-npm run build
-cd ../backend
+npm ci --prefix frontend
+npm run build --prefix frontend
+cd backend
 cargo fmt --check
 cargo test --locked
 cargo clippy --locked -- -D warnings
 cd ..
 docker compose build
 python3 tests/integration.py
-# Optional, comprehensive Ubuntu client checks:
-docker build -t forklift-ubuntu-client -f tests/ubuntu/Dockerfile .
-FORKLIFT_TEST_UBUNTU=1 python3 tests/integration.py
-python3 tests/certificates.py
-# Real HTTPS enrollment, Syncrepl, and fresh Ubuntu SSH failover:
-python3 tests/replication.py
-# Real encrypted recovery/fault drills (fresh installation secrets):
-docker build -t forklift-maintenance -f docker/maintenance/Dockerfile .
 python3 tests/hardening.py
-# Actual Milestone 2 and 3 image/data upgrades (requires Git history):
-python3 tests/upgrade.py
+python3 tests/replication.py
 ```
 
-The integration suite requires the installer-created secret files and built `forklift-manager:latest` / `forklift-ldap:latest` images. It creates a randomly named Compose project with fresh volumes and a temporary loopback port, then removes **only its test volumes**. It does not initialize or delete your default installation. Replication and hardening suites generate their own installation secrets; they never rotate checkout secrets. Test credentials are random and never printed. Ubuntu mode also runs the Ansible role twice and actual NSS/PAM/SSH password and access-policy checks. Checks include bootstrap replay/origin rejection, authenticated and unauthenticated authorization, CSRF, LDAP bind/password/disable behavior, group CRUD, administrator revocation, non-reused IDs, container recreation, independent LDAP operation, directory outages, certificate rejection and login throttling.
+These scripts require built manager, directory and maintenance images. Each creates a random Compose project, private fixtures and fresh volumes, and cleans up only its own resources. No installer-generated secrets are required. See [verification](docs/verification.md) for exercised checks and browser/Ubuntu options.
 
-Vite development mode proxies `/api` to localhost:8080; configure `FORKLIFT_PUBLIC_URL` to the actual development browser origin (usually `http://localhost:5173`). The production UI is embedded in the manager image. No external fonts, CDNs, runtime mock records or WebSockets are required.
+Vite proxies `/api` to localhost:8080. For a development frontend, use its actual browser origin during setup (normally `http://localhost:5173`). The manager serves the production bundle without CDNs, external fonts, mock data or WebSockets.
 
-Milestone 4 test results and optional browser checks: [verification](docs/verification.md).
-
-Architecture and phased implementation: [docs/architecture.md](docs/architecture.md). Security boundaries and remaining limitations: [docs/security.md](docs/security.md). License: [MIT](LICENSE).
+License: [MIT](LICENSE).
