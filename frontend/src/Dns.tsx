@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DnsServers } from "./DnsServers";
 import { Plus, RefreshCw, Pencil, Trash2, X, Download } from "lucide-react";
 type RecordSet = {
   name: string;
@@ -159,7 +160,10 @@ export function Dns({ api }: { api: Api }) {
               </div>
               <div>
                 <dt>Role / replication</dt>
-                <dd>Standalone authoritative · replication not configured</dd>
+                <dd>
+                  {overview.server.role.replaceAll("_", " ")} ·{" "}
+                  {overview.server.replication.replaceAll("_", " ")}
+                </dd>
               </div>
             </dl>
             <p className="hint">
@@ -189,6 +193,12 @@ export function Dns({ api }: { api: Api }) {
           </>
         )}
       </section>
+      <DnsServers
+        api={api}
+        zones={
+          overview?.zones.filter((z) => z.managed).map((z) => z.name) || []
+        }
+      />
       {!!overview?.host_tasks?.length && (
         <section className="panel">
           <h2>Host DNS tasks</h2>
@@ -846,8 +856,8 @@ function SoaForm({
   return (
     <Dialog title="DNS zone settings" close={close} error={error}>
       <p className="hint">
-        SOA serials increase automatically on API changes. This is a standalone
-        zone; secondary enrollment and transfers are not configured.
+        SOA serials increase automatically on API changes. Assign this zone to a
+        DNS secondary in DNS servers to enable authenticated transfers.
       </p>
       <form
         onSubmit={(e) => {

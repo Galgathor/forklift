@@ -282,7 +282,7 @@ pub(super) async fn deployment(
     ))
 }
 
-fn validate_certificate(pem: &str, hostname: &str) -> Result<()> {
+pub(crate) fn validate_certificate(pem: &str, hostname: &str) -> Result<()> {
     let trimmed = pem.trim();
     if !trimmed.starts_with("-----BEGIN CERTIFICATE-----")
         || !trimmed.ends_with("-----END CERTIFICATE-----")

@@ -446,7 +446,7 @@ async fn plan(a: &App, state: &State) -> Result<(Change, Vec<Binding>)> {
                 });
                 if config.reverse {
                     let ptr = reverse(value.parse().map_err(|_| bad("Invalid host address"))?);
-                    let z=list.iter().filter(|z|z["account"]=="forklift"&&z["kind"]=="Native").filter_map(|z|z["name"].as_str()).filter(|z|within(&ptr,z)).max_by_key(|z|z.len()).ok_or(bad("No managed reverse zone covers the host address. Create it or disable reverse registration."))?;
+                    let z=list.iter().filter(|z|z["account"]=="forklift"&&matches!(z["kind"].as_str(),Some("Native"|"Primary"))).filter_map(|z|z["name"].as_str()).filter(|z|within(&ptr,z)).max_by_key(|z|z.len()).ok_or(bad("No managed reverse zone covers the host address. Create it or disable reverse registration."))?;
                     desired.push(Binding {
                         zone: z.into(),
                         name: ptr,

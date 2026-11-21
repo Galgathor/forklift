@@ -1,0 +1,647 @@
+import { useEffect, useState } from "react";
+import { Copy, Plus, RefreshCw, X } from "lucide-react";
+type Api = (path: string, method?: string, body?: unknown) => Promise<any>;
+type Probe = {
+  responding: boolean;
+  authoritative: boolean;
+  serial: number | null;
+};
+type Node = {
+  id: string;
+  name: string;
+  address: string;
+  dns_port: number;
+  control_port: number;
+  zones: string[];
+  revision: number;
+  state: string;
+  checked_at?: number;
+  last_sync_at?: number;
+  error?: string;
+  transfers_revoked: boolean;
+  certificate_expires_at?: string;
+  report: {
+    state?: string;
+    api_available?: boolean | null;
+    zones?: {
+      name: string;
+      synchronized: boolean;
+      expected_serial: number | null;
+      udp: Probe;
+      tcp: Probe;
+      primary: Probe;
+      last_check?: number;
+    }[];
+  };
+};
+type Inventory = {
+  primary: { address: string; dns_port: number } | null;
+  servers: Node[];
+};
+export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
+  const [inventory, setInventory] = useState<Inventory | null>(null),
+    [editing, setEditing] = useState<Node | null | undefined>(),
+    [joining, setJoining] = useState<Node | null>(null),
+    [join, setJoin] = useState<{
+      join_config: string;
+      expires_at: number;
+    } | null>(null),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [busy, setBusy] = useState(false);
+  async function load() {
+    setInventory(await api("dns/servers"));
+  }
+  useEffect(() => {
+    void load().catch((e) => setError(e.message));
+  }, []);
+  async function perform(fn: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const date = (v?: number) =>
+    v ? new Date(v * 1000).toLocaleString() : "Never confirmed";
+  return (
+    <section className="panel">
+      <div className="panel-title">
+        <h2>DNS servers</h2>
+        <button
+          disabled={busy}
+          aria-label="Refresh DNS servers"
+          onClick={() => perform(load)}
+        >
+          <RefreshCw size={17} />
+        </button>
+      </div>
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      {notice && (
+        <p role="status" className="hint">
+          {notice}
+        </p>
+      )}
+      <p className="hint">
+        The primary accepts changes. Secondaries answer synchronized zones
+        independently of Forklift and LDAP. Checks compare authoritative SOA
+        responses; a connected management service alone does not confirm
+        synchronization.
+      </p>
+      {inventory && (
+        <details open={!inventory.primary}>
+          <summary>Primary DNS endpoint</summary>
+          <form
+            key={JSON.stringify(inventory.primary)}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const f = new FormData(e.currentTarget);
+              void perform(async () => {
+                await api("dns/primary", "PUT", {
+                  address: String(f.get("address")),
+                  dns_port: Number(f.get("dns_port")),
+                  acknowledge: f.has("acknowledge"),
+                });
+                await load();
+                setNotice(
+                  "Primary endpoint saved. Reconcile enrolled nodes if the address changed.",
+                );
+              });
+            }}
+          >
+            <label>
+              Primary private IPv4 address
+              <input
+                aria-label="Primary private IPv4 address"
+                name="address"
+                defaultValue={inventory.primary?.address || ""}
+                placeholder="192.168.1.2"
+                required
+              />
+            </label>
+            <label>
+              Published primary DNS port
+              <input
+                aria-label="Published primary DNS port"
+                name="dns_port"
+                type="number"
+                min="1"
+                max="65535"
+                defaultValue={inventory.primary?.dns_port || 53}
+                required
+              />
+            </label>
+            <p className="hint">
+              This is the existing PowerDNS container on the Forklift host. In
+              your Docker deployment settings, publish its DNS port on a private
+              interface using FORKLIFT_DNS_BIND and FORKLIFT_DNS_PORT. The
+              default localhost binding cannot accept transfers from another
+              machine. Do not use the LDAP or WebUI port. If another resolver
+              owns port 53, choose a separate address or port.
+            </p>
+            <label className="checkbox">
+              <input name="acknowledge" type="checkbox" required />
+              This endpoint is reachable from the secondary over TCP and UDP.
+            </label>
+            <button className="primary" disabled={busy}>
+              Save primary DNS endpoint
+            </button>
+          </form>
+        </details>
+      )}
+      <div className="table-toolbar">
+        <h3>Secondary servers</h3>
+        <button
+          className="primary"
+          disabled={busy || !inventory?.primary}
+          onClick={() => {
+            setError("");
+            setEditing(null);
+          }}
+        >
+          <Plus size={17} />
+          Add DNS secondary
+        </button>
+      </div>
+      {!inventory ? (
+        <p className="hint">Loading servers…</p>
+      ) : !inventory.servers.length ? (
+        <p className="hint">
+          No secondaries enrolled. Save the reachable primary endpoint, then add
+          a machine and deploy its join configuration.
+        </p>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Server / role</th>
+                <th>State</th>
+                <th>Last check / confirmed sync</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inventory.servers.map((n) => (
+                <tr key={n.id}>
+                  <td>
+                    <strong>{n.name}</strong>
+                    <small>
+                      {n.address}:{n.dns_port} · Secondary
+                    </small>
+                    <small>
+                      Private HTTPS management: {n.address}:{n.control_port}
+                    </small>
+                    <small>{n.zones.length} assigned zones</small>
+                    {n.certificate_expires_at && (
+                      <small>
+                        Certificate expires {n.certificate_expires_at}
+                      </small>
+                    )}
+                  </td>
+                  <td>
+                    <span
+                      className={
+                        n.report.state === "synchronized" ? "pill" : "badge"
+                      }
+                    >
+                      {n.state === "enrolled"
+                        ? n.report.state?.replaceAll("_", " ") || "Not checked"
+                        : n.state}
+                    </span>
+                    {n.error && <small role="status">{n.error}</small>}
+                    {n.transfers_revoked && (
+                      <small>Primary transfer authorization revoked</small>
+                    )}
+                  </td>
+                  <td>
+                    <small>Checked: {date(n.checked_at)}</small>
+                    <small>Confirmed sync: {date(n.last_sync_at)}</small>
+                  </td>
+                  <td>
+                    <div className="actions">
+                      {["pending", "failed"].includes(n.state) && (
+                        <button
+                          disabled={busy}
+                          onClick={() => {
+                            setJoining(n);
+                            setJoin(null);
+                            setError("");
+                          }}
+                        >
+                          Generate DNS join
+                        </button>
+                      )}
+                      {n.state === "enrolled" && (
+                        <>
+                          <button disabled={busy} onClick={() => setEditing(n)}>
+                            Assign zones
+                          </button>
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              perform(async () => {
+                                const result = await api(
+                                  `dns/servers/${n.id}/reconcile`,
+                                  "POST",
+                                  {},
+                                );
+                                setNotice(
+                                  result.error ||
+                                    "Configuration applied; check synchronization next.",
+                                );
+                                await load();
+                              })
+                            }
+                          >
+                            Reconcile DNS server
+                          </button>
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              perform(async () => {
+                                await api(
+                                  `dns/servers/${n.id}/check`,
+                                  "POST",
+                                  {},
+                                );
+                                await load();
+                              })
+                            }
+                          >
+                            Check synchronization
+                          </button>
+                        </>
+                      )}
+                      <button
+                        disabled={busy}
+                        onClick={() =>
+                          perform(async () => {
+                            if (
+                              !confirm(
+                                `Revoke ${n.name}'s zone transfers and delete its managed secondary zones? Stop/remove its Docker stack separately.`,
+                              )
+                            )
+                              return;
+                            const result = await api(
+                              `dns/servers/${n.id}`,
+                              "DELETE",
+                              { acknowledge: true },
+                            );
+                            setNotice(
+                              result.removed
+                                ? "DNS node removed."
+                                : result.server.error,
+                            );
+                            await load();
+                          })
+                        }
+                      >
+                        {n.state === "removing"
+                          ? "Retry removal"
+                          : "Remove DNS server"}
+                      </button>
+                      {n.state === "removing" && n.transfers_revoked && (
+                        <button
+                          disabled={busy}
+                          onClick={() =>
+                            perform(async () => {
+                              if (
+                                !confirm(
+                                  "Forget this node while retaining its cached DNS data? Its transfers are revoked. Stop/remove its stack in your Docker hosting interface; it may otherwise answer old data until zones expire.",
+                                )
+                              )
+                                return;
+                              await api(`dns/servers/${n.id}`, "DELETE", {
+                                acknowledge: true,
+                                retain_data: true,
+                              });
+                              await load();
+                            })
+                          }
+                        >
+                          Keep data; forget node
+                        </button>
+                      )}
+                    </div>
+                    {n.report.zones && (
+                      <details>
+                        <summary>Zone diagnostics</summary>
+                        {n.report.zones.map((z) => (
+                          <div key={z.name}>
+                            <strong>{z.name}</strong>
+                            <small>
+                              {z.synchronized
+                                ? "Synchronization confirmed"
+                                : "Synchronization not confirmed"}{" "}
+                              · primary serial {z.expected_serial ?? "unknown"}
+                            </small>
+                            <small>
+                              Secondary UDP{" "}
+                              {z.udp.authoritative
+                                ? z.udp.serial
+                                : "no authoritative SOA"}{" "}
+                              · TCP{" "}
+                              {z.tcp.authoritative
+                                ? z.tcp.serial
+                                : "no authoritative SOA"}
+                            </small>
+                            <small>
+                              Primary from secondary:{" "}
+                              {z.primary.authoritative
+                                ? z.primary.serial
+                                : "unreachable / no authoritative SOA"}
+                            </small>
+                          </div>
+                        ))}
+                      </details>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="hint">
+        Transfers use per-node TSIG authentication over your trusted private
+        network or VPN. TSIG does not encrypt zone contents. Restrict the
+        private HTTPS management port to the Forklift host. DNS traffic uses
+        TCP/UDP directly; the management WebUI remains the only service behind
+        your HTTP reverse proxy.
+      </p>
+      {editing !== undefined && (
+        <div className="overlay">
+          <section
+            className="dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={editing ? "Assign DNS zones" : "Add DNS secondary"}
+          >
+            <div className="panel-title">
+              <h2>{editing ? "Assign DNS zones" : "Add DNS secondary"}</h2>
+              <button
+                aria-label="Close DNS server dialog"
+                onClick={() => setEditing(undefined)}
+              >
+                <X />
+              </button>
+            </div>
+            {error && (
+              <div className="error" role="alert">
+                {error}
+              </div>
+            )}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget);
+                void perform(async () => {
+                  const selected = f.getAll("zones").map(String);
+                  if (editing)
+                    await api(`dns/servers/${editing.id}/assignments`, "PUT", {
+                      zones: selected,
+                      revision: editing.revision,
+                    });
+                  else {
+                    const n = await api("dns/servers", "POST", {
+                      name: String(f.get("name")),
+                      address: String(f.get("address")),
+                      dns_port: Number(f.get("dns_port")),
+                      control_port: Number(f.get("control_port")),
+                      zones: selected,
+                    });
+                    setJoining(n);
+                    setJoin(null);
+                  }
+                  setEditing(undefined);
+                  await load();
+                  setNotice(
+                    editing
+                      ? "Assignments saved. Reconcile this server to apply zone additions/removals."
+                      : "Server registered. Generate its one-time join configuration.",
+                  );
+                });
+              }}
+            >
+              {!editing && (
+                <>
+                  <label>
+                    DNS server name
+                    <input
+                      aria-label="DNS server name"
+                      name="name"
+                      placeholder="Secondary DNS"
+                      maxLength={100}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Secondary private IPv4 address
+                    <input
+                      aria-label="Secondary private IPv4 address"
+                      name="address"
+                      placeholder="192.168.1.3"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Secondary DNS port
+                    <input
+                      aria-label="Secondary DNS port"
+                      name="dns_port"
+                      type="number"
+                      min="1"
+                      max="65535"
+                      defaultValue={53}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Private DNS management port
+                    <input
+                      aria-label="Private DNS management port"
+                      name="control_port"
+                      type="number"
+                      min="1"
+                      max="65535"
+                      defaultValue={9544}
+                      required
+                    />
+                  </label>
+                  <p className="hint">
+                    Use the second Docker host’s private interface. Forklift
+                    creates its PowerDNS database, transfer keys and HTTPS
+                    certificate automatically. No preexisting DNS service is
+                    required. Both ports must be available on that machine.
+                  </p>
+                </>
+              )}
+              <fieldset className="host-groups">
+                <legend>Zones to replicate</legend>
+                {[...new Set([...zones, ...(editing?.zones || [])])].map(
+                  (z) => (
+                    <label key={z} className="checkbox">
+                      <input
+                        name="zones"
+                        type="checkbox"
+                        value={z}
+                        defaultChecked={
+                          editing
+                            ? editing.zones.includes(z)
+                            : zones.length <= 32
+                        }
+                      />
+                      {z}
+                    </label>
+                  ),
+                )}
+              </fieldset>
+              <p className="hint">
+                Assign up to 32 zones. Removing an assignment deletes only that
+                enrollment’s secondary copy. New zones need an assignment here.
+                Primary records are unchanged. Publish appropriate NS records
+                through DNS and configure your resolver to use both
+                authoritative endpoints.
+              </p>
+              <button className="primary" disabled={busy}>
+                Save DNS server
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+      {joining && (
+        <div className="overlay">
+          <section
+            className="dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Deploy DNS secondary"
+          >
+            <div className="panel-title">
+              <h2>Deploy DNS secondary</h2>
+              <button
+                aria-label="Close DNS enrollment"
+                onClick={() => {
+                  setJoining(null);
+                  setJoin(null);
+                }}
+              >
+                <X />
+              </button>
+            </div>
+            <p>
+              {joining.name} · {joining.address}:{joining.dns_port}
+            </p>
+            {!join ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const f = new FormData(e.currentTarget);
+                  void perform(async () => {
+                    setJoin(
+                      await api(
+                        `dns/servers/${joining.id}/deployment`,
+                        "POST",
+                        {
+                          acknowledge: f.has("acknowledge"),
+                          manager_ca:
+                            String(f.get("manager_ca") || "").trim() || null,
+                        },
+                      ),
+                    );
+                    await load();
+                  });
+                }}
+              >
+                <p className="hint">
+                  The new machine must reach Forklift’s public HTTPS URL with
+                  certificate validation. For private HTTPS PKI, supply its
+                  public CA certificate. Leave blank for a publicly trusted
+                  HTTPS certificate.
+                </p>
+                <label>
+                  Manager HTTPS CA (optional)
+                  <textarea
+                    aria-label="Manager HTTPS CA (optional)"
+                    name="manager_ca"
+                    placeholder="-----BEGIN CERTIFICATE-----"
+                  />
+                </label>
+                <label className="checkbox">
+                  <input type="checkbox" name="acknowledge" required />I will
+                  keep the one-time join configuration private.
+                </label>
+                <button className="primary" disabled={busy}>
+                  Generate DNS join configuration
+                </button>
+              </form>
+            ) : (
+              <>
+                <ol>
+                  <li>
+                    On the second Docker host, open a checkout of this
+                    repository and deploy{" "}
+                    <code>deploy/dns-secondary/compose.yaml</code> with your
+                    Docker Compose hosting tool.
+                  </li>
+                  <li>
+                    Paste the following environment setting into that stack
+                    before starting it. The stack builds the pinned PowerDNS
+                    image from the repository; no archive transfer or LDAP
+                    configuration is needed.
+                  </li>
+                  <li>
+                    Start the stack before {date(join.expires_at)}. Keep its
+                    independent persistent volume. Returning containers use
+                    saved credentials and do not need a new join.
+                  </li>
+                  <li>
+                    Return here and choose{" "}
+                    <strong>Check synchronization</strong>. Only use the new DNS
+                    endpoint after the assigned zones are confirmed in sync.
+                  </li>
+                </ol>
+                <label>
+                  DNS join configuration
+                  <textarea
+                    aria-label="DNS join configuration"
+                    readOnly
+                    value={join.join_config}
+                  />
+                </label>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    perform(async () => {
+                      await navigator.clipboard.writeText(join.join_config);
+                      setNotice("DNS join configuration copied.");
+                    })
+                  }
+                >
+                  <Copy size={17} />
+                  Copy DNS join configuration
+                </button>
+              </>
+            )}
+            {error && (
+              <div className="error" role="alert">
+                {error}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}

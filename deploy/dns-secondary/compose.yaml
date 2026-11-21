@@ -1,0 +1,30 @@
+services:
+  dns-secondary:
+    image: forklift-dns:latest
+    build:
+      context: ../..
+      dockerfile: docker/powerdns/Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 30s
+    network_mode: host
+    user: "10001:10001"
+    environment:
+      FORKLIFT_DNS_SECONDARY: "1"
+      FORKLIFT_DNS_JOIN: ${FORKLIFT_DNS_JOIN:-}
+    volumes:
+      - dns_secondary:/dns
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    healthcheck:
+      test: [CMD, python3, /supervisor.py, health]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  dns_secondary:

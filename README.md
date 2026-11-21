@@ -46,11 +46,11 @@ PowerDNS is a standard part of the management stack. Open **DNS** to create forw
 
 Set `FORKLIFT_DNS_BIND` and `FORKLIFT_DNS_PORT` in deployment settings before starting. Defaults publish **both TCP and UDP** on `127.0.0.1:53`. If another DNS service already owns port 53, use a suitable private address/nonstandard port such as `192.168.1.2:1053`; do not replace your current resolver. Configure resolver conditional forwarding for managed forward/reverse zones. No host resolver settings are changed automatically.
 
-The PowerDNS HTTP API binds to container loopback and is reached only through protected Unix transport. It is never published through Docker or NPM. DNS keeps answering when Forklift/LDAP is down; DNS failures do not block LDAP readiness or authentication.
+The primary PowerDNS HTTP API binds to container loopback and is reached only through protected Unix transport. It is never published through Docker or NPM. DNS keeps answering when Forklift/LDAP is down; DNS failures do not block LDAP readiness or authentication.
 
-**Phase 2 adds host DNS registration.** Hosts can manage A/AAAA and matching PTR values, safely update names/addresses, defer or retry changes, and explicitly retain/delete owned records. DNS remains single-node; secondary enrollment/transfers and integrated encrypted DNS backups/import remain later phases. The existing LDAP replica stack does not deploy a DNS secondary yet. Existing encrypted Forklift backups do **not** include DNS database/secrets volumes; maintain a separate consistent infrastructure backup until DNS recovery is integrated.
+**Phase 2 adds host DNS registration.** Hosts can manage A/AAAA and matching PTR values, safely update names/addresses, defer or retry changes, and explicitly retain/delete owned records. **Phase 3 adds DNS secondaries:** use DNS servers for copyable HTTPS enrollment, zone assignments, TSIG-authenticated transfers and verified synchronization. Deploy `deploy/dns-secondary/compose.yaml` independently on the second host; the LDAP replica stack remains separate. Integrated encrypted DNS backups/import and in-place secondary credential/certificate rotation remain later work. Existing encrypted Forklift backups do **not** include DNS database/secrets volumes; maintain a separate consistent infrastructure backup until DNS recovery is integrated.
 
-Networking/resolver examples, supported records and reverse boundaries, PTR reconciliation, backups, AD migration and limitations: [DNS operations](docs/dns.md).
+Networking/resolver examples, supported records and reverse boundaries, PTR reconciliation, backups, AD migration and limitations: [DNS operations](docs/dns.md). Secondary deployment, firewall requirements and outage behavior: [DNS replication](docs/dns-replication.md).
 
 ## Nginx Proxy Manager
 

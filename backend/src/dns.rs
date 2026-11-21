@@ -1,5 +1,6 @@
 //! PowerDNS REST management. No DNS database writes or dependency in the LDAP login path.
 pub(crate) mod host_records;
+pub(crate) mod replication;
 use super::*;
 use axum::http::Method;
 use serde::Serialize;
@@ -97,8 +98,29 @@ async fn request(method: Method, path: &str, body: Option<&Value>) -> Result<Val
         Ok(Value::Null)
     } else {
         serde_json::from_slice(&data)
+            .map(normalize_kind)
             .map_err(|_| unavailable("PowerDNS returned an invalid response"))
     }
+}
+fn normalize_kind(mut value: Value) -> Value {
+    match &mut value {
+        Value::Array(values) => {
+            for v in values {
+                *v = normalize_kind(v.take());
+            }
+        }
+        Value::Object(object) => {
+            if let Some(kind) = object.get_mut("kind") {
+                match kind.as_str() {
+                    Some("Master") => *kind = json!("Primary"),
+                    Some("Slave") => *kind = json!("Secondary"),
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    value
 }
 fn name(raw: &str, owner: bool) -> Result<String> {
     let s = raw.trim().trim_end_matches('.').to_ascii_lowercase();
@@ -156,8 +178,8 @@ async fn zones() -> Result<Vec<Value>> {
         .ok_or(unavailable("Invalid PowerDNS zone list"))
 }
 fn managed(z: &Value) -> Result<()> {
-    if z["account"] != "forklift" || z["kind"] != "Native" {
-        return Err(bad("This zone is not a Forklift-managed standalone zone"));
+    if z["account"] != "forklift" || !matches!(z["kind"].as_str(), Some("Native" | "Primary")) {
+        return Err(bad("This zone is not a Forklift-managed writable zone"));
     }
     Ok(())
 }
@@ -521,7 +543,7 @@ pub(super) async fn create(
     }
     audit(&a, &who, "DNS attempt create zone", &z)?;
     match request(Method::POST,"/zones",Some(&json!({"name":z,"kind":"Native","account":"forklift","nameservers":[],"rrsets":records,"soa_edit_api":"INCREASE"}))).await {
-        Ok(_)=>{audit(&a,&who,"DNS create zone",&z)?;Ok(Json(decorated(zone(&z).await?)))},Err(e)=>{audit(&a,&who,"DNS failed create zone",&z)?;Err(e)}
+        Ok(_)=>{audit(&a,&who,"DNS create zone",&z)?;replication::after_zone_change(&a,&who).await;Ok(Json(decorated(zone(&z).await?)))},Err(e)=>{audit(&a,&who,"DNS failed create zone",&z)?;Err(e)}
     }
 }
 #[derive(Serialize, Deserialize, Clone)]
@@ -627,6 +649,10 @@ async fn apply(a: &App, who: &str, c: &Change) -> Result<Value> {
         tx.commit().map_err(anyhow::Error::from)?;
     }
     save(a, c, "completed", None)?;
+    for z in c.steps.iter().map(|s| &s.zone).collect::<HashSet<_>>() {
+        // Native notifications are best-effort; SOA refresh remains independent of Forklift.
+        let _ = request(Method::PUT, &format!("{}/notify", zone_path(z)), None).await;
+    }
     audit(a, who, "DNS complete record change", &change_target(c))?;
     Ok(json!({"id":c.id,"status":"completed","warnings":c.warnings}))
 }
@@ -786,7 +812,7 @@ pub(super) async fn records(
                 .parse::<IpAddr>()
                 .map_err(|_| bad("Invalid address"))?;
             let ptr = reverse(ip);
-            let rz=list.iter().filter(|v|v["account"]=="forklift"&&v["kind"]=="Native").filter_map(|v|v["name"].as_str()).filter(|z|within(&ptr,z)).max_by_key(|z|z.len()).ok_or(bad("No managed reverse zone covers this address. Create the reverse zone first or disable automatic PTR."))?.to_owned();
+            let rz=list.iter().filter(|v|v["account"]=="forklift"&&matches!(v["kind"].as_str(),Some("Native"|"Primary"))).filter_map(|v|v["name"].as_str()).filter(|z|within(&ptr,z)).max_by_key(|z|z.len()).ok_or(bad("No managed reverse zone covers this address. Create the reverse zone first or disable automatic PTR."))?.to_owned();
             let reverse_zone = zone(&rz).await?;
             if find(&reverse_zone, &ptr, "CNAME").is_some() {
                 return Err(bad(
@@ -945,6 +971,7 @@ pub(super) async fn delete(
         tx.commit().map_err(anyhow::Error::from)?;
     }
     audit(&a, &who, "DNS delete zone", &z)?;
+    replication::after_zone_change(&a, &who).await;
     Ok(Json(json!({"deleted":true})))
 }
 #[derive(Deserialize)]
@@ -1222,6 +1249,16 @@ pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Val
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_role_aliases_remain_writable_and_canonical() {
+        let zones = normalize_kind(
+            json!([{"kind":"Master","account":"forklift"},{"kind":"Slave","account":"forklift"}]),
+        );
+        assert_eq!(zones[0]["kind"], "Primary");
+        assert_eq!(zones[1]["kind"], "Secondary");
+        assert!(managed(&zones[0]).is_ok());
+        assert!(managed(&zones[1]).is_err());
+    }
     #[test]
     fn reverse_boundaries_and_owners() {
         assert_eq!(

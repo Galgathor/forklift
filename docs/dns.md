@@ -19,7 +19,7 @@ For LAN DNS use the Docker host's specific private address. If another service o
 
 Docker publishes host ports, not an additional LAN IP for a container. A service bound to `0.0.0.0:53` may conflict even if PowerDNS uses a specific host IP. Use a nonstandard port plus conditional forwarding, a separate host/IP, or reconfigure the existing service through its own management interface. Ordinary clients generally expect port 53 and cannot use a custom port supplied through standard DHCP DNS settings. Docker-published ports may bypass some host firewall rules; restrict intended client networks using appropriate Docker-aware rules. IPv4 is the current publishing default; AAAA data can still be served over IPv4 DNS transport.
 
-The PowerDNS REST API binds **only to container loopback**. Forklift accesses it over an authenticated protected Unix socket; there is no API TCP port published or exposed through NPM. Internal supervisor operations are fixed health/rotation actions, not arbitrary commands or configuration directives. Runtime UID is 10001 with no capabilities and a read-only root filesystem. API credentials are generated locally, stored in restricted volume files and never sent to the browser. Settings in the DNS page can rotate the API credential, briefly restarting DNS.
+The primary PowerDNS REST API binds **only to container loopback**. Forklift accesses it over an authenticated protected Unix socket; there is no API TCP port published or exposed through NPM. Internal supervisor operations are fixed health/rotation actions, not arbitrary commands or configuration directives. Runtime UID is 10001 with no capabilities and a read-only root filesystem. API credentials are generated locally, stored in restricted volume files and never sent to the browser. Settings in the DNS page can rotate the API credential, briefly restarting DNS.
 
 ## Zones and record sets
 
@@ -29,11 +29,11 @@ Open **DNS → Create zone**. Choose:
 - Private IPv4 reverse: an aligned RFC1918 `/8`, `/16` or `/24`, such as `192.168.1.0/24` → `1.168.192.in-addr.arpa.`. Classless RFC2317 delegation is not implemented.
 - ULA IPv6 reverse: a nibble-form zone within `c.f.ip6.arpa.` or `d.f.ip6.arpa.`, for example `d.f.ip6.arpa.` for `fd00::/8`.
 
-Specify the primary nameserver and, when it belongs to the new zone, its IPv4/IPv6 address. Forklift creates SOA, NS and any in-zone nameserver address. Additional NS values can be edited afterward. Zone settings expose SOA mailbox/name/timers; SOA serials increase through PowerDNS's `INCREASE` API policy. Zone kinds are **Native / standalone**, not replicated primaries or secondaries.
+Specify the primary nameserver and, when it belongs to the new zone, its IPv4/IPv6 address. Forklift creates SOA, NS and any in-zone nameserver address. Additional NS values can be edited afterward. Zone settings expose SOA mailbox/name/timers; SOA serials increase through PowerDNS's `INCREASE` API policy. Unassigned zones are **Native / standalone**; assigned zones become **Primary**. Add native secondary replication through [DNS servers](dns-replication.md).
 
 Select a zone to manage A, AAAA, CNAME, PTR, TXT, MX, SRV and NS record sets. Enter one value per line; editing replaces that selected set, not other types at the same owner. Relative names belong to the selected zone; `@` means its apex. Absolute names must stay inside that zone, and owners covered by a more specific configured zone must be edited there. CNAMEs cannot coexist with other records or occupy the apex. Duplicate values are rejected. TXT values use quoted DNS presentation strings; MX uses `priority target`, SRV uses `priority weight port target`. Hostname targets are treated as full names, not silently appended to the zone.
 
-Read-only revisions reject stale edits. Only Forklift-owned Native zones (`account=forklift`) are editable. Avoid concurrent external API/database writers: PowerDNS does not provide transactional compare-and-swap across independent clients. Zone deletion requires typing its exact name and checking its current revision. It removes that zone’s records; PTR records in other zones are retained for separate review. The final apex NS and SOA cannot be removed through ordinary record forms.
+Read-only revisions reject stale edits. Only Forklift-owned Native/Primary zones (`account=forklift`) are editable. Avoid concurrent external API/database writers: PowerDNS does not provide transactional compare-and-swap across independent clients. Zone deletion requires typing its exact name and checking its current revision. It removes that zone’s records; PTR records in other zones are retained for separate review. The final apex NS and SOA cannot be removed through ordinary record forms.
 
 ## Automatic PTR and partial changes
 
@@ -84,8 +84,8 @@ For AD DNS migration, retain AD until independently verified. Export zone record
 
 ## Status and remaining phases
 
-API connectivity, local authoritative UDP probe, SOA serials and record counts use actual backend state. A healthy process/API does not establish replication health. The single-node deployment explicitly reports **replication not configured**. The local probe does not prove clients can cross your firewall or published port; integration tests query both published UDP and TCP sockets.
+API connectivity, local authoritative UDP probe, SOA serials and record counts use actual backend state. A healthy process/API does not establish replication health. Unassigned single-node deployments report **replication not configured**; assigned primaries report replication configured, while per-secondary synchronization is verified separately in DNS servers. The local probe does not prove clients can cross your firewall or published port; integration tests query both published UDP and TCP sockets.
 
-This release supports at most 128 zones, 100 values per edited set, bounded DNS API responses and 256 KiB record-change requests. Large-directory/load and multi-host DNS replication tests are not yet covered.
+This release supports at most 128 zones, 100 values per edited set, bounded DNS API responses and 256 KiB record-change requests. Large-directory/load and separate physical-host network/firewall tests are not yet covered.
 
-Secondary enrollment/TSIG transfers/failover, bulk import and integrated encrypted DNS recovery remain unimplemented. No simulated synchronization or secondary health is shown.
+Primary/secondary enrollment, TSIG transfers and verified serial monitoring are described in [DNS replication](dns-replication.md). Bulk import, in-place secondary credential/certificate rotation and integrated encrypted DNS recovery remain unimplemented. No simulated synchronization or secondary health is shown.

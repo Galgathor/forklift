@@ -17,8 +17,10 @@ import threading
 import time
 
 DATA = Path('/dns')
-SECRETS = Path('/run/dns-secrets')
-CONTROL = Path('/run/dns-control')
+SECONDARY = os.environ.get('FORKLIFT_DNS_SECONDARY') == '1'
+SECRETS = DATA / 'secrets' if SECONDARY else Path('/run/dns-secrets')
+CONTROL = DATA / 'control' if SECONDARY else Path('/run/dns-control')
+API_PORT = 8081
 SCHEMA = Path('/usr/local/share/doc/pdns/schema.sqlite3.sql')
 child = None
 lock = threading.RLock()
@@ -88,13 +90,17 @@ def initialize():
 
 
 def configuration():
+    settings = json.loads((DATA / 'secondary.json').read_text()) if SECONDARY else None
+    address = settings['address'] if settings else '0.0.0.0'
+    port = settings['dns_port'] if settings else 5353
     return f'''launch=gsqlite3
+gsqlite3-dnssec=yes
 gsqlite3-database=/dns/pdns.sqlite3
 gsqlite3-pragma-journal-mode=WAL
 gsqlite3-pragma-synchronous=FULL
-local-address=0.0.0.0
-local-port=5353
-socket-dir=/run/dns-control
+local-address={address}
+local-port={port}
+socket-dir={CONTROL}
 daemon=no
 guardian=no
 write-pid=no
@@ -102,13 +108,16 @@ api=yes
 api-key={secret('api-key')}
 webserver=yes
 webserver-address=127.0.0.1
-webserver-port=8081
+webserver-port={API_PORT}
 webserver-allow-from=127.0.0.1
 webserver-loglevel=none
-primary=no
-secondary=no
-disable-axfr=yes
+primary={"no" if SECONDARY else "yes"}
+secondary={"yes" if SECONDARY else "no"}
+disable-axfr={"yes" if SECONDARY else "no"}
+allow-notify-from={settings["primary"]["address"] if settings else ""}
 allow-axfr-ips=
+send-signed-notify=no
+allow-unsigned-notify={"yes" if SECONDARY else "no"}
 dnsupdate=no
 enable-lua-records=no
 version-string=anonymous
@@ -119,7 +128,7 @@ loglevel=4
 
 
 def native(method, path, body=None, key=None):
-    connection = http.client.HTTPConnection('127.0.0.1', 8081, timeout=5)
+    connection = http.client.HTTPConnection('127.0.0.1', API_PORT, timeout=5)
     try:
         connection.request(method, path, body=body, headers={'X-API-Key': key or secret('api-key'), 'Content-Type': 'application/json'})
         response = connection.getresponse()
@@ -165,15 +174,18 @@ def inspect():
     if code != 200:
         raise ValueError('PowerDNS zone listing failed')
     zones = json.loads(body)
+    settings = json.loads((DATA / 'secondary.json').read_text()) if SECONDARY else None
+    address = settings['address'] if settings else '127.0.0.1'
+    port = settings['dns_port'] if settings else 5353
     name = zones[0]['name'] if zones else '.'
-    query = subprocess.run(['dig', '@127.0.0.1', '-p', '5353', name, 'SOA', '+time=1', '+tries=1'], capture_output=True, timeout=3)
+    query = subprocess.run(['dig', '@'+address, '-p', str(port), name, 'SOA', '+time=1', '+tries=1'], capture_output=True, timeout=3)
     answer = query.stdout.decode(errors='replace')
     responding = query.returncode == 0 and ('status: NOERROR' in answer if zones else 'status: REFUSED' in answer)
     flags = answer.split('flags:', 1)[1].split(';', 1)[0].split() if 'flags:' in answer else []
     authoritative = responding and 'aa' in flags if zones else None
     return {'api_available': True, 'service_available': responding, 'authoritative_answer': authoritative,
             'probe_zone': name if zones else None, 'version': server.get('version'), 'checked_at': int(time.time()),
-            'replication': 'not_configured', 'role': 'standalone'}
+            'replication': 'configured' if SECONDARY or any(z['kind'] in ['Primary', 'Master'] for z in zones) else 'not_configured', 'role': 'secondary' if SECONDARY else 'primary' if any(z['kind'] in ['Primary', 'Master'] for z in zones) else 'standalone'}
 
 
 class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
@@ -244,10 +256,17 @@ if __name__ == '__main__':
     os.umask(0o077)
     if sys.argv[1:] == ['health']:
         try:
+            if SECONDARY:
+                import secondary
+                raise SystemExit(secondary.health())
             value = inspect()
             raise SystemExit(0 if value['service_available'] else 1)
         except Exception:
             raise SystemExit(1)
+    if SECONDARY:
+        import secondary
+        secondary.run(sys.modules[__name__])
+        raise SystemExit(0)
     initialize()
     start()
     signal.signal(signal.SIGTERM, shutdown)
