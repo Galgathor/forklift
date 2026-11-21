@@ -90,6 +90,32 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  dns:
+    image: forklift-dns:latest
+    build:
+      context: .
+      dockerfile: docker/powerdns/Dockerfile
+    restart: unless-stopped
+    user: "10001:10001"
+    ports:
+      - '${FORKLIFT_DNS_BIND:-127.0.0.1}:${FORKLIFT_DNS_PORT:-53}:5353/udp'
+      - '${FORKLIFT_DNS_BIND:-127.0.0.1}:${FORKLIFT_DNS_PORT:-53}:5353/tcp'
+    volumes:
+      - dns_data:/dns
+      - dns_secrets:/run/dns-secrets
+      - dns_control:/run/dns-control
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=32m']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    healthcheck:
+      test: [CMD, python3, /supervisor.py, health]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   manager:
     image: forklift-manager:latest
     build:
@@ -98,6 +124,8 @@ services:
     restart: unless-stopped
     environment:
       FORKLIFT_PUBLIC_URL: ${FORKLIFT_PUBLIC_URL:-http://localhost:8080}
+      FORKLIFT_DNS_BIND: ${FORKLIFT_DNS_BIND:-127.0.0.1}
+      FORKLIFT_DNS_PORT: ${FORKLIFT_DNS_PORT:-53}
     ports:
       - '${FORKLIFT_BIND:-127.0.0.1}:${FORKLIFT_PORT:-8080}:8080'
     volumes:
@@ -108,6 +136,8 @@ services:
       - maintenance_control:/run/maintenance-control
       - transfers:/transfers
       - backups:/backups:ro
+      - dns_secrets:/run/dns-secrets:ro
+      - dns_control:/run/dns-control
     depends_on:
       maintenance: {condition: service_healthy}
     read_only: true
@@ -134,3 +164,6 @@ volumes:
   ldap_control:
   maintenance_control:
   ldap_socket:
+  dns_data:
+  dns_secrets:
+  dns_control:

@@ -847,3 +847,13 @@ td {
 .maintenance-progress .badge {
   margin: 15px 0;
 }
+
+.dns-value {
+  max-width: 480px;
+  overflow-wrap: anywhere;
+}
+
+.dns-heading,
+.dns-heading .actions {
+  flex-wrap: wrap;
+}

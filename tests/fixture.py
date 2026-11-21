@@ -14,7 +14,7 @@ class Stack:
         self.project='forklift-v5-test-'+secrets.token_hex(4);self.temp=tempfile.TemporaryDirectory(prefix=self.project);self.root=Path(self.temp.name)
         self.bootstrap=secrets.token_urlsafe(40);self.password=secrets.token_urlsafe(30);self.csrf='';self.checks=0
         self.url=('https' if https else 'http')+'://localhost:'+str(port());self.https=https
-        self.env={**os.environ,'FORKLIFT_PUBLIC_URL':self.url,'FORKLIFT_PORT':str(port() if https else self.url.rsplit(':',1)[1]),'FORKLIFT_BOOTSTRAP_TOKEN':self.bootstrap,'FORKLIFT_BIND':'127.0.0.1'}
+        self.env={**os.environ,'FORKLIFT_PUBLIC_URL':self.url,'FORKLIFT_PORT':str(port() if https else self.url.rsplit(':',1)[1]),'FORKLIFT_BOOTSTRAP_TOKEN':self.bootstrap,'FORKLIFT_BIND':'127.0.0.1','FORKLIFT_DNS_BIND':'127.0.0.1','FORKLIFT_DNS_PORT':str(port())}
         self.jar=http.cookiejar.CookieJar();self.context=None
         if https:
             def openssl(*args):return run(['openssl',*args],cwd=self.root)

@@ -49,3 +49,11 @@ Destination SSSD/PAM/OpenSSH enforce group access and shadow expiry. Local accou
 No MFA, automatic CA root rotation, remote secret erasure, automatic Linux client deployment, scheduled backups, distributed LDAP/SQLite transactions, multi-manager coordination, large-directory paging or independent audit certification. Interrupted multi-step directory edits may be partial; audit attempts and completions help inspect them. Local database/host administrators can alter audit history. Test supported recovery on your actual infrastructure before relying on it.
 
 The sole local tool is emergency account recovery for an administrator who cannot sign in. It requires Docker/Unix-secret access, restores an existing account and audits/revokes sessions. There is no public HTTP endpoint for this action. See [operations](operations.md).
+
+## Authoritative DNS boundary
+
+PowerDNS is a standard, independently supervised non-root container with separate SQLite data/configuration, secrets and Unix-control volumes. The native REST API binds only to its container loopback; authenticated requests travel through protected Unix transport. No API TCP port is published, and API credentials never reach the browser. Only DNS UDP/TCP ports are configurable. Transfers, DNS UPDATE, primary/secondary automation and Lua records are disabled in Phase 1.
+
+DNS mutations recheck the existing LDAP administrator role, require Origin/CSRF and respect recovery review. DNS traffic never depends on that authentication path. Only Forklift-owned Native zones are editable; validated record types/names/values and stale-revision checks prevent accidental set loss. Management assumes one Forklift writer; external simultaneous API/database writers cannot receive transactional compare-and-swap guarantees from PowerDNS. Durable before/after plans guard partial forward/PTR operations and refuse conflicts. Explicit manual PTR edits relinquish tracked ownership.
+
+The existing LDAP backup does not contain DNS data/secrets. See [DNS recovery scope](dns.md) before relying on a full infrastructure recovery. TSIG-authenticated replication, host-owned lifecycle records, bulk import and integrated encrypted DNS recovery remain unimplemented phases.

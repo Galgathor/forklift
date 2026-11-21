@@ -20,6 +20,7 @@ import {
   Pencil,
 } from "lucide-react";
 import "./style.css";
+import { Dns } from "./Dns";
 import { Hosts, type Host } from "./Hosts";
 import { Servers, type DirectoryHealth } from "./Servers";
 import { Operations } from "./Operations";
@@ -228,6 +229,7 @@ function App() {
     ["Groups", UsersRound],
     ["Hosts", Server],
     ["Directory Servers", Database],
+    ["DNS", Database],
     ["Settings", Settings],
   ] as const;
   return (
@@ -595,6 +597,7 @@ function App() {
                   perform={perform}
                 />
               )}
+              {page === "DNS" && <Dns api={api} />}
               {page === "Settings" && (
                 <Operations
                   busy={busy}

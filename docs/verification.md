@@ -4,7 +4,7 @@ Validated on Linux/amd64 with Docker Engine, native OpenLDAP 2.6.10 and isolated
 
 | Check                                                                     | Result                                                                                                                                        |
 | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Locked Rust unit tests, formatting and Clippy with warnings denied        | Passed; 8 unit tests                                                                                                                          |
+| Locked Rust unit tests, formatting and Clippy with warnings denied        | Passed; 10 unit tests                                                                                                                         |
 | Strict TypeScript/Vite production build                                   | Passed                                                                                                                                        |
 | Python compilation, emergency shell syntax, Compose validation            | Passed                                                                                                                                        |
 | Manager, primary and network-isolated maintenance images                  | Built successfully                                                                                                                            |
@@ -23,6 +23,18 @@ The extended recovery suite also passed wrong-key and trusted-checksum rejection
 ## Copyable replica enrollment
 
 The standalone `deploy/replica/compose.yaml` stack was built and exercised without transferring an archive. Tests passed for authenticated/CSRF-protected join generation, private-key input rejection, local and server-side expiration, superseded/consumed-token rejection, private HTTPS CA validation before redemption, and absence of plaintext enrollment tokens from SQLite. Native Syncrepl, credential/certificate lifecycle and provider changes passed. The replica was recreated with an empty join setting while both primary and manager were stopped and still authenticated a directory user. Chromium verified generation, public-trust packaging, clipboard copy and mobile layout.
+
+## Integrated DNS Phase 1
+
+DNS is a standard deployment component. Real PowerDNS Authoritative 5.1.5 tests passed for initialization; forward, private IPv4 and ULA IPv6 reverse zones; published UDP/TCP queries; A/AAAA/CNAME/PTR/TXT/MX/SRV/NS sets; SOA settings and serial increases; relative owners; duplicate/CNAME/ownership validation; stale revisions; confirmed zone deletion; automatic PTR cleanup and manual-value preservation; BIND zone export; API authentication/rotation; and refusal of AXFR and unauthenticated DNS UPDATE. The API port is not published.
+
+Failure tests passed for unavailable DNS while LDAP remained usable, interrupted forward/reverse plan retries through the real API, unexpected native-process exit/restart, container recreation/persistence, and DNS answers with both manager and LDAP stopped. Chromium passed zone creation, in-dialog validation, A/PTR forms, zone selection and mobile layout, alongside the existing account/backup/replica enrollment flow. Core LDAP regression passed 90 HTTP checks plus native binds.
+
+`tests/dns_upgrade.py` built the actual pre-DNS manager from commit `804bb40`, populated LDAP/schema-5 metadata, then upgraded the deployment. Passwords, Unix IDs, groups, host policy and the administrator session were preserved while DNS initialized without resetting LDAP or changing the schema version.
+
+Run `python3 tests/dns.py` and `python3 tests/dns_upgrade.py` after building images. The upgrade fixture needs Git history. DNS tests use random loopback TCP/UDP ports, isolated volumes and the native `dig`/`nsupdate` clients. No existing DNS/AdGuard service or default installation is modified.
+
+Unimplemented DNS phases: host lifecycle integration, secondary enrollment/TSIG transfers/failover, bulk zone import and integrated encrypted DNS backup/restore. The existing encrypted LDAP snapshot excludes separate DNS data/secrets volumes. Multi-host DNS, schema-changing PowerDNS upgrades, infrastructure DNS restoration, large/load tests and an external security audit remain unverified. See [DNS operations](dns.md) for deployment, AdGuard forwarding and recovery boundaries.
 
 ## Run the suites
 

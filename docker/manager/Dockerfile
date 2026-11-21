@@ -10,7 +10,7 @@ COPY backend/ ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release --locked && cp target/release/forklift /tmp/forklift
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 LABEL io.forklift.maintenance-version="1"
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 curl && rm -rf /var/lib/apt/lists/* && mkdir /data /app && chown 10001:10001 /data
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 curl && rm -rf /var/lib/apt/lists/* && mkdir -p /data /app /run/dns-secrets /run/dns-control && chown 10001:10001 /data /run/dns-secrets /run/dns-control
 COPY --from=rust /tmp/forklift /app/forklift
 COPY --from=web /web/dist /app/web
 USER 10001:10001

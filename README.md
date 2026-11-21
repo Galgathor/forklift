@@ -1,6 +1,6 @@
 # Forklift
 
-Self-hosted OpenLDAP management for homelabs. Rust/Axum, React/TypeScript, SQLite and OpenLDAP 2.6, deployed with Docker Compose.
+Self-hosted OpenLDAP management for homelabs. Rust/Axum, React/TypeScript, SQLite, OpenLDAP 2.6 and PowerDNS Authoritative, deployed with Docker Compose.
 
 **Development release 0.5 — breaking deployment change.** Initial setup, users/groups, POSIX identities, host configuration, primary/replica Syncrepl and directory maintenance are managed through the WebUI. Backups, restoration, service credentials, primary networking and certificates no longer require an administration script. SSH-key schema support and scheduled backups remain planned. This security-critical software has not received an external security audit.
 
@@ -39,6 +39,18 @@ The first-launch wizard:
 Choose the base DN carefully: suffix changes are unsupported. Setup refuses to overwrite a configured directory. Container recreation preserves state; deleting persistent volumes destroys it. A partial setup can be retried with its original base DN and administrator identity. Missing metadata beside an initialized directory requires recovery of a matching backup.
 
 **0.4 storage and backups are incompatible with 0.5.** Use fresh volumes for this development release. Preserve old volumes and use their matching release if you need to recover them. There is no automatic conversion or reset. The development/test suites use isolated projects and never delete default installation volumes.
+
+## Integrated DNS
+
+PowerDNS is a standard part of the management stack. Open **DNS** to create forward/private reverse zones, manage record sets and matching PTR records, edit SOA/NS, inspect real service health, export zones and rotate the DNS API credential. Its own SQLite data persists independently of LDAP. Existing schema-5 installations can upgrade without resetting any directory/metadata volumes.
+
+Set `FORKLIFT_DNS_BIND` and `FORKLIFT_DNS_PORT` in deployment settings before starting. Defaults publish **both TCP and UDP** on `127.0.0.1:53`. If AdGuard Home or another DNS service already owns port 53, use a suitable private address/nonstandard port such as `10.0.20.2:1053`; do not replace your current resolver. Configure AdGuard conditional forwarding for managed forward/reverse zones. No host resolver or AdGuard settings are changed automatically.
+
+The PowerDNS HTTP API binds to container loopback and is reached only through protected Unix transport. It is never published through Docker or NPM. DNS keeps answering when Forklift/LDAP is down; DNS failures do not block LDAP readiness or authentication.
+
+**Phase 1 is single-node DNS.** Host lifecycle registration, DNS secondary enrollment/transfers and integrated encrypted DNS backups/import remain later phases. The existing LDAP replica stack does not deploy a DNS secondary yet. Existing encrypted Forklift backups do **not** include DNS database/secrets volumes; maintain a separate consistent infrastructure backup until DNS recovery is integrated.
+
+Networking/AdGuard examples, supported records and reverse boundaries, PTR reconciliation, backups, AD migration and limitations: [DNS operations](docs/dns.md).
 
 ## Nginx Proxy Manager
 
@@ -82,6 +94,7 @@ docker compose build
 python3 tests/integration.py
 python3 tests/hardening.py
 python3 tests/replication.py
+python3 tests/dns.py
 ```
 
 These scripts require built manager, directory and maintenance images. Each creates a random Compose project, private fixtures and fresh volumes, and cleans up only its own resources. No installer-generated secrets are required. See [verification](docs/verification.md) for exercised checks and browser/Ubuntu options.

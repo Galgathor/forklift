@@ -1,3 +1,4 @@
+mod dns;
 mod hosts;
 mod maintenance;
 mod operations;
@@ -1059,6 +1060,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/me", get(me))
         .route("/api/logout", post(logout))
         .route("/api/overview", get(overview))
+        .route("/api/dns", get(dns::index))
+        .route("/api/dns/zones", post(dns::create))
+        .route("/api/dns/zones/{zone}", get(dns::get_zone).delete(dns::delete).put(dns::settings))
+        .route("/api/dns/zones/{zone}/records", post(dns::records).layer(axum::extract::DefaultBodyLimit::max(262144)))
+        .route("/api/dns/zones/{zone}/export", get(dns::export))
+        .route("/api/dns/changes/{id}/retry", post(dns::retry))
+        .route("/api/dns/changes/{id}/abandon", post(dns::abandon))
+        .route("/api/dns/rotate", post(dns::rotate))
         .route("/api/maintenance", get(maintenance::index))
         .route("/api/maintenance/inspect", get(maintenance::inspect))
         .route("/api/maintenance/current", get(maintenance::current))

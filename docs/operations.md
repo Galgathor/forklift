@@ -67,3 +67,7 @@ The console tool prompts without password echo, can finish or roll back an exist
 ## Diagnostics
 
 The WebUI displays actionable LDAP/TLS, listener and replication errors. Your Docker hosting UI provides container health/logs; credentials and request bodies are not logged. An unavailable primary makes writes unavailable; verified enrolled replicas can still serve read management and Linux authentication. No automatic promotion occurs. For SSSD caching/revocation limits, see [Linux clients](linux-clients.md).
+
+## DNS recovery scope
+
+The standard PowerDNS service has separate DNS data and credential volumes. Existing encrypted LDAP/Forklift backups do not include those DNS volumes. Until integrated DNS backup/restore is implemented, use a consistent infrastructure backup of the stopped DNS service and matching credentials, as described in [DNS operations](dns.md). Restoring LDAP metadata alone must not be treated as restoring DNS; review any restored pending DNS operations against current zone revisions.
