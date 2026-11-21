@@ -22,11 +22,20 @@ type Props = {
   hosts: Host[];
   groups: string[];
   csrf: string;
+  busy: boolean;
   refresh: () => Promise<void>;
   api: (path: string, method?: string, body?: unknown) => Promise<unknown>;
   perform: (f: () => Promise<void>) => Promise<void>;
 };
-export function Hosts({ hosts, groups, csrf, refresh, api, perform }: Props) {
+export function Hosts({
+  hosts,
+  groups,
+  csrf,
+  busy,
+  refresh,
+  api,
+  perform,
+}: Props) {
   const [editing, setEditing] = useState<Host | null | undefined>(undefined),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
@@ -144,6 +153,7 @@ export function Hosts({ hosts, groups, csrf, refresh, api, perform }: Props) {
                       <td>
                         <div className="actions">
                           <button
+                            disabled={busy}
                             title="Generate configuration (rotates bind credential)"
                             aria-label="Generate configuration"
                             onClick={() => download(h)}

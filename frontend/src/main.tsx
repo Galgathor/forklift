@@ -615,6 +615,7 @@ function App() {
                   hosts={data.hosts}
                   groups={data.groups.map((g) => attr(g, "cn"))}
                   csrf={session.csrf}
+                  busy={busy}
                   api={api}
                   refresh={refresh}
                   perform={perform}
@@ -784,10 +785,14 @@ function App() {
                     Primary group
                     <select
                       name="gid"
+                      required
                       defaultValue={
-                        modal.entry ? attr(modal.entry, "gidNumber") : undefined
+                        modal.entry ? attr(modal.entry, "gidNumber") : ""
                       }
                     >
+                      <option value="" disabled>
+                        Select a primary group
+                      </option>
                       {data?.groups.map((g) => (
                         <option key={g.dn} value={attr(g, "gidNumber")}>
                           {attr(g, "cn")} · {attr(g, "gidNumber")}
@@ -795,6 +800,10 @@ function App() {
                       ))}
                     </select>
                   </label>
+                  <p className="hint">
+                    Primary and supplemental groups both count for SSH access.
+                    Choose a general user group for ordinary accounts.
+                  </p>
                   {field(
                     "password",
                     modal.entry
