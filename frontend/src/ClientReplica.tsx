@@ -71,16 +71,12 @@ export function ClientReplica({
       <div className="heading-help">
         <h3>LDAP replica service</h3>
         <Help label="Client replica deployment">
-          The native client builds the approved replica component shipped with
-          its installed version and starts a dedicated Docker Compose project.
-          Docker Engine and the Compose plugin must already be installed and
-          running. No Git checkout or manual join configuration is needed.
-          Deployment changes only this Forklift service; it never rewrites SSSD,
-          PAM/NSS, SSH, resolver settings or firewall rules. Each replica keeps
-          its own persistent volume. Service startup and confirmed LDAP
-          synchronization are separate. The manager must reach the selected
-          private LDAP/control ports, and the host must reach the primary and
-          management HTTPS.
+          Install Docker and Compose on the enrolled machine first. Forklift
+          Client can then create an LDAP replica without copying files or
+          running setup commands yourself. It keeps existing authentication,
+          SSH, DNS resolver and firewall settings unchanged. Choose a separate
+          machine for protection against a host failure. Service startup and
+          confirmed directory synchronization are shown separately.
         </Help>
       </div>
       {error && (
@@ -158,7 +154,7 @@ export function ClientReplica({
           <FieldHelp
             label="Replica address"
             caption="Replica address"
-            help="Choose a current private IPv4 address reported by this client. Forklift verifies it again before starting services."
+            help="Choose this machine’s private network address. Forklift checks that the machine still has it before starting the service."
           >
             <select
               value={address}
@@ -183,7 +179,7 @@ export function ClientReplica({
           <FieldHelp
             label="Replica control TCP port"
             caption="Replica control TCP port"
-            help="Restrict this pinned-TLS control listener to the Forklift manager's private network. It accepts fixed LDAP lifecycle operations."
+            help="Forklift uses this port to manage the replica. Allow access only from the Forklift manager."
           >
             <input
               type="number"

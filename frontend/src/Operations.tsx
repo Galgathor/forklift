@@ -104,11 +104,12 @@ export function Operations({
           <div className="recovery-review">
             <h3>Restored directory: review before enabling writes</h3>
             <p>
-              Fence the original primary and all old replicas. Review the
-              restored network settings, choose a Unix ID floor above every ID
-              allocated since the snapshot, and plan to reseed replicas and
-              redeploy host configurations. Archived passwords may have been
-              revoked after this backup.
+              Disconnect the old primary and all old replicas. Review the
+              restored network settings and choose a starting account/group
+              number higher than every number used since the backup. Rebuild
+              replica copies and update Linux client settings. Restoring this
+              backup may bring back old accounts and passwords that were later
+              removed or changed.
             </p>
             <button
               className="primary"
@@ -116,7 +117,7 @@ export function Operations({
               onClick={() => {
                 if (
                   confirm(
-                    "I have fenced the original primary and old replicas, reviewed Unix ID allocation and network settings, and will reseed replicas and redeploy hosts. Enable writes?",
+                    "I have disconnected the old servers, checked account numbers and network settings, and will rebuild replicas and update Linux client settings. Allow changes now?",
                   )
                 )
                   perform(async () => {
@@ -156,10 +157,11 @@ export function Operations({
         <div className="heading-help">
           <h2>Certificate lifecycle</h2>
           <Help label="Certificate lifecycle">
-            Configured public certificates and stored replica pins. These expiry
-            dates do not prove a remote node has deployed a certificate. Primary
-            renewal preserves the CA; replica changes require staged trust and
-            client redeployment.
+            Certificates protect connections between machines. These dates show
+            when the saved certificates expire. A remote server may still be
+            using an older certificate. When replacing a replica certificate,
+            update the affected Linux machines’ trust files before activating
+            it.
           </Help>
         </div>
 
@@ -202,9 +204,9 @@ export function Operations({
         <div className="heading-help">
           <h2>Maintenance history</h2>
           <Help label="Maintenance history">
-            Maintenance results recorded in this installation. Keep backup
-            receipts outside the host; restoring a snapshot also restores its
-            historical audit records.
+            Review previous backup and maintenance jobs here. Keep backup
+            checksums somewhere separate; restoring a backup also restores its
+            older history.
           </Help>
         </div>
 
@@ -238,9 +240,9 @@ export function Operations({
           <div className="heading-help">
             <h2>Administrative audit log</h2>
             <Help label="Audit exports">
-              Newest first. Exports contain up to 5,000 matching events; use the
-              X-Next-Cursor response header to retrieve older export pages
-              through the API.
+              Events are listed newest first. Each download includes up to 5,000
+              matching events. The API supports downloading older pages when you
+              need a longer history.
             </Help>
           </div>
           <form

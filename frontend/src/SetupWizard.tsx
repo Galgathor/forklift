@@ -50,7 +50,8 @@ export function SetupWizard({ api, completed }: Props) {
         <div className="heading-help">
           <h1>{restore ? "Restore your directory" : "Set up Forklift"}</h1>
           <Help label="Initial setup">
-            Configure the primary directory or restore a backup.
+            Create your directory and administrator account, or restore a
+            backup.
           </Help>
         </div>
 
@@ -76,9 +77,9 @@ export function SetupWizard({ api, completed }: Props) {
               label="Installation key"
               help={
                 <>
-                  Use the key chosen in your Docker deployment settings. If you
-                  left it blank, the initializer generated a key in its local
-                  container log.
+                  Enter the installation key from your Docker settings. If you
+                  did not choose one, find the generated key in the initialize
+                  container’s logs.
                 </>
               }
               caption={<>One-time installation key</>}
@@ -107,10 +108,9 @@ export function SetupWizard({ api, completed }: Props) {
             <div className="heading-help">
               <h2>Your primary directory server</h2>
               <Help label="Primary directory server">
-                Select the private address of this Docker host. Linux clients
-                and future replicas will connect here. Its encrypted listener
-                and certificate are configured automatically; you do not need an
-                existing LDAP endpoint.
+                Choose this Docker host’s private network address. Linux
+                machines and replicas will connect to it. Forklift sets up
+                encrypted LDAP access and the certificate for you.
               </Help>
             </div>
 
@@ -137,8 +137,8 @@ export function SetupWizard({ api, completed }: Props) {
               label="Directory server address"
               help={
                 <>
-                  The private IP needs no DNS changes. If you choose a DNS name,
-                  point it to this interface in your network DNS.
+                  Use a private IP address, or a DNS name that points to this
+                  network address.
                 </>
               }
               caption={<>Server address (IP or optional DNS name)</>}
@@ -158,9 +158,9 @@ export function SetupWizard({ api, completed }: Props) {
                 label="Directory port"
                 help={
                   <>
-                    Default 1636 avoids privileged host ports. Keep this port
-                    reachable on your private network; LDAP traffic does not use
-                    NPM’s HTTP proxy.
+                    Linux machines connect to this port for encrypted directory
+                    access. Keep it reachable on your private network. It is
+                    separate from the WebUI’s HTTPS port.
                   </>
                 }
                 caption={<>Directory port</>}
@@ -239,8 +239,9 @@ export function SetupWizard({ api, completed }: Props) {
                   label="Directory base DN"
                   help={
                     <>
-                      The base DN identifies the root of your directory, such as
-                      dc=example,dc=test. It cannot be changed after setup.
+                      This is the directory’s permanent internal name, for
+                      example dc=example,dc=test. Choose it carefully: it cannot
+                      be changed later.
                     </>
                   }
                   caption={<>Directory base DN</>}
@@ -271,9 +272,9 @@ export function SetupWizard({ api, completed }: Props) {
                     {busy ? "Creating your directory…" : "Initialize directory"}
                   </button>
                   <Help label="Primary host registration">
-                    Primary: {network.hostname}:{network.port}. It will
-                    automatically appear in Hosts. Registration does not install
-                    SSH authentication or grant login privileges.
+                    This server connects at {network.hostname}:{network.port}.
+                    It appears in Hosts automatically. Adding it does not enable
+                    Linux sign-in.
                   </Help>
                 </div>
               </form>

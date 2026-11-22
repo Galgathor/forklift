@@ -89,40 +89,14 @@ export function Servers({
                 <span className="muted">{health.servers.length}</span>
               </h2>
               <Help label="Directory server enrollment">
-                <ol className="steps">
-                  <li>
-                    Open Add server. The primary address comes from your initial
-                    setup.
-                  </li>
-                  <li>
-                    Enter the new machine’s name and private address. It only
-                    needs Docker; Forklift creates the new directory and its TLS
-                    certificate.
-                  </li>
-                  <li>
-                    Generate a join configuration, paste it into the standalone
-                    replica stack in deploy/replica, and start that Compose
-                    stack.
-                  </li>
-                  <li>
-                    Wait for confirmed synchronization here, then update your
-                    Linux client configurations.
-                  </li>
-                </ol>
-                <p>
-                  Manager HTTPS is required for enrollment. Replicas generate
-                  private keys locally; no CA signing key is copied. See
-                  docs/replication.md for network, trust, recovery and
-                  certificate-lifecycle details.
-                </p>
-                <h3>Client failover</h3>
-                <p>
-                  After synchronization is confirmed, add the replica to each
-                  Linux host’s endpoints and deploy a new host bundle to include
-                  its pinned certificate. Synchronization status is sampled;
-                  revocations made during an outage cannot reach an isolated
-                  replica.
-                </p>
+                To add a replica using an enrolled client, open its details in
+                Hosts and choose LDAP replica service. For manual deployment,
+                use Add server, enter the new machine’s private address, and
+                follow the join instructions. Forklift sets up LDAP and
+                certificates. Once synchronization is confirmed, add the replica
+                to your Linux client configurations for backup sign-in access. A
+                disconnected replica cannot receive new password changes or
+                account restrictions.
               </Help>
             </div>
             <small>
@@ -319,12 +293,11 @@ export function Servers({
                             Activate and verify certificate
                           </button>
                           <Help label="Activating a replica certificate">
-                            The candidate certificate is already trusted by
-                            Forklift. Deploy updated trust bundles to affected
-                            Linux clients before activation. Activation verifies
-                            the actual new certificate, retires the previous
-                            private pair and marks client bundles for final
-                            trust export.
+                            First install updated trust files on the Linux
+                            machines that use this replica. Then activate its
+                            new certificate here. Forklift checks the change
+                            before retiring the old certificate. Download and
+                            install the final client configurations afterward.
                           </Help>
                         </div>
                       </>
@@ -348,9 +321,9 @@ export function Servers({
                             Generate renewal certificate
                           </button>
                           <Help label="Staging a replica certificate">
-                            Forklift generates the candidate directly on this
-                            server. Its private key stays there; no command or
-                            certificate upload is required.
+                            Forklift creates the new certificate on this server.
+                            Its private key stays there. You do not need to
+                            upload a certificate or run commands.
                           </Help>
                         </div>
                       </>

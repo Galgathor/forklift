@@ -80,18 +80,12 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
         <div className="heading-help">
           <h2>DNS servers</h2>
           <Help label="DNS replication">
-            The primary accepts changes. Secondaries answer synchronized zones
-            independently of Forklift and LDAP. Checks compare authoritative SOA
-            responses; a connected management service alone does not confirm
-            synchronization.
-            <h3>Network security</h3>
-            <p>
-              Transfers use per-node TSIG authentication over your trusted
-              private network or VPN. TSIG does not encrypt zone contents.
-              Restrict the private HTTPS management port to the Forklift host.
-              DNS traffic uses TCP/UDP directly; the management WebUI remains
-              the only service behind your HTTP reverse proxy.
-            </p>
+            The primary server accepts changes. Secondary servers keep copies
+            and can answer DNS requests when the primary or Forklift is offline.
+            Forklift checks the copies before showing them as synchronized. Keep
+            server management ports private. Zone transfers verify the sender
+            but do not encrypt the records; use a trusted private network or
+            VPN.
           </Help>
         </div>
         <button
@@ -148,13 +142,10 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
               label="Primary DNS endpoint"
               help={
                 <>
-                  This is the existing PowerDNS container on the Forklift host.
-                  In your Docker deployment settings, publish its DNS port on a
-                  private interface using FORKLIFT_DNS_BIND and
-                  FORKLIFT_DNS_PORT. The default localhost binding cannot accept
-                  transfers from another machine. Do not use the LDAP or WebUI
-                  port. If another resolver owns port 53, choose a separate
-                  address or port.
+                  Choose the private address and DNS port published by your
+                  primary DNS container. Other machines cannot reach the default
+                  localhost address. This is separate from LDAP and the WebUI.
+                  If port 53 is already in use, choose another address or port.
                 </>
               }
               caption={<>Published primary DNS port</>}
@@ -221,7 +212,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                       Private HTTPS management: {n.address}:{n.control_port}
                     </small>
                     <small>
-                      {n.zones.length} assigned zones · Credential epoch{" "}
+                      {n.zones.length} assigned zones · Connection key version{" "}
                       {n.credential_epoch}
                       {n.pending_epoch ? ` → ${n.pending_epoch} pending` : ""}
                     </small>
@@ -325,7 +316,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                               perform(async () => {
                                 if (
                                   !confirm(
-                                    "Rotate this node’s transfer and management credentials? Old transfer permission is retired only after a new signed transfer succeeds.",
+                                    "Replace the passwords used to copy and manage DNS on this server? Forklift checks that copying still works before removing the old access.",
                                   )
                                 )
                                   return;
@@ -580,10 +571,9 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                     label="Secondary DNS deployment"
                     help={
                       <>
-                        Use the second Docker host’s private interface. Forklift
-                        creates its PowerDNS database, transfer keys and HTTPS
-                        certificate automatically. No preexisting DNS service is
-                        required. Both ports must be available on that machine.
+                        Choose the new Docker host’s private address and two
+                        unused ports. Forklift creates the DNS service and its
+                        certificates for you.
                       </>
                     }
                     caption={<>Private DNS management port</>}
@@ -605,11 +595,11 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                   <span className="help-row">
                     Zones to replicate
                     <Help label="DNS zone assignments">
-                      Assign up to 32 zones. Removing an assignment deletes only
-                      that enrollment’s secondary copy. New zones need an
-                      assignment here. Primary records are unchanged. Publish
-                      appropriate NS records through DNS and configure your
-                      resolver to use both authoritative endpoints.
+                      Choose the zones this server should copy. Removing a zone
+                      here removes only its secondary copy; the primary records
+                      stay unchanged. Add new zones to this list when you want
+                      them copied. Your network’s DNS resolver must be set up to
+                      use both servers.
                     </Help>
                   </span>
                 </legend>
@@ -688,10 +678,10 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                   caption={<>Manager HTTPS CA (optional)</>}
                   help={
                     <>
-                      The new machine must reach Forklift’s public HTTPS URL
-                      with certificate validation. For private HTTPS PKI, supply
-                      its public CA certificate. Leave blank for a publicly
-                      trusted HTTPS certificate.
+                      The new machine must be able to reach Forklift over HTTPS.
+                      Leave the certificate field blank for a publicly trusted
+                      certificate, or supply the public certificate for your
+                      private certificate authority.
                     </>
                   }
                 >
@@ -716,32 +706,12 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                   caption={<>DNS join configuration</>}
                   help={
                     <>
-                      <ol>
-                        <li>
-                          On the second Docker host, open a checkout of this
-                          repository and deploy{" "}
-                          <code>deploy/dns-secondary/compose.yaml</code> with
-                          your Docker Compose hosting tool.
-                        </li>
-                        <li>
-                          Paste the following environment setting into that
-                          stack before starting it. The stack builds the pinned
-                          PowerDNS image from the repository; no archive
-                          transfer or LDAP configuration is needed.
-                        </li>
-                        <li>
-                          Start the stack before {date(join.expires_at)}. Keep
-                          its independent persistent volume. Returning
-                          containers use saved credentials and do not need a new
-                          join.
-                        </li>
-                        <li>
-                          Return here and choose{" "}
-                          <strong>Check synchronization</strong>. Only use the
-                          new DNS endpoint after the assigned zones are
-                          confirmed in sync.
-                        </li>
-                      </ol>
+                      Use the same Forklift release on the second Docker host.
+                      Open deploy/dns-secondary and save the join setting below
+                      in that stack’s environment. Start the stack before{" "}
+                      {date(join.expires_at)}. Then choose Check synchronization
+                      here. Keep its storage volume when restarting: it holds
+                      the server’s saved records and keys.
                     </>
                   }
                 >

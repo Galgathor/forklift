@@ -110,9 +110,9 @@ export function Dns({ api }: { api: Api }) {
           <div className="heading-help">
             <h2>DNS overview</h2>
             <Help label="DNS service checks">
-              The probe queries PowerDNS inside its container. Client network
-              reachability depends on the published DNS address, port and
-              firewall. DNS continues serving if Forklift is offline.
+              This checks whether the DNS service answers inside its container.
+              Other machines may still be blocked by network or firewall
+              settings. DNS keeps working when Forklift is offline.
             </Help>
           </div>
           <button
@@ -194,7 +194,7 @@ export function Dns({ api }: { api: Api }) {
                 })
               }
             >
-              Rotate API credential
+              Replace DNS access key
             </button>
           </>
         )}
@@ -237,8 +237,8 @@ export function Dns({ api }: { api: Api }) {
                   </button>
                   {!t.deleted && (
                     <Help label="Retrying host DNS">
-                      Review desired names, addresses and pending changes in
-                      Hosts before retrying.
+                      Check the host’s saved DNS name and addresses before
+                      trying again.
                     </Help>
                   )}
                 </div>
@@ -273,9 +273,9 @@ export function Dns({ api }: { api: Api }) {
           <div className="heading-help">
             <h2>Pending DNS changes</h2>
             <Help label="Pending DNS changes">
-              Forward and reverse changes can partially succeed. Retry checks
-              current record sets before applying missing steps. Review and keep
-              applied steps if you need to resolve a conflict manually.
+              Some changes may have succeeded even if others failed. Retry to
+              finish the remaining changes. Review conflicts before keeping or
+              replacing existing records.
             </Help>
           </div>
 
@@ -718,8 +718,9 @@ function ZoneForm({
           help={
             kind === "reverse4" ? (
               <>
-                Use aligned /8, /16 or /24 RFC1918 networks. 192.168.1.0/24
-                becomes 1.168.192.in-addr.arpa.
+                Enter a private network such as 192.168.1.0/24. Supported sizes
+                end in /8, /16 or /24. Forklift fills in the reverse lookup zone
+                name.
               </>
             ) : null
           }
@@ -745,9 +746,9 @@ function ZoneForm({
           label="Nameserver addresses"
           help={
             <>
-              An in-zone nameserver requires an address. This creates its A or
-              AAAA record. Additional nameservers can be added by editing the NS
-              record set.
+              Enter the name of your DNS server and its IP address. Forklift
+              adds the matching address record when the server name is inside
+              this zone. You can add more servers later.
             </>
           }
           caption={<>Nameserver address</>}
@@ -816,8 +817,8 @@ function RecordForm({
           label="DNS record names"
           help={
             <>
-              Relative names belong to {zone.name} Use @ for the zone apex. A
-              fully qualified name must end in this zone.
+              Use @ for the zone itself, or enter a short name such as mail.
+              Full names must belong to this zone.
             </>
           }
           caption={<>Record name</>}
@@ -860,9 +861,11 @@ function RecordForm({
           label="DNS record values"
           help={
             <>
-              One value per line. This edits the complete record set; retain
-              values you want to keep. TXT: "text". MX: 10 mail.example. SRV: 0
-              5 389 ldap.example. Targets use full DNS names.
+              Enter one value per line. Keep any existing values you still need.
+              Use quotes for TXT text. For MX, enter a priority and mail server
+              name, such as 10 mail.example.test. For SRV, enter priority,
+              weight, port and server name, such as 0 5 389 ldap.example.test.
+              Use full server names.
             </>
           }
           caption={<>Record values</>}
@@ -889,9 +892,10 @@ function RecordForm({
               Manage matching PTR records
             </label>
             <Help label="Automatic PTR records">
-              Automatic PTR requires a matching managed reverse zone.
-              Forward/reverse writes can partially succeed; pending changes
-              provide safe retries. Manually edited PTR values are preserved.
+              A PTR record lets an IP address point back to a host name.
+              Forklift can create it when you manage the matching reverse zone.
+              If only part of an update succeeds, retry the remaining changes.
+              Manually changed reverse records are kept.
             </Help>
           </div>
         )}
@@ -927,8 +931,8 @@ function SoaForm({
       error={error}
       help={
         <Help label="Zone serials and replication">
-          SOA serials increase automatically on API changes. Assign this zone to
-          a DNS secondary in DNS servers to enable authenticated transfers.
+          The zone’s version number increases when records change. To keep
+          another DNS server updated, assign this zone to it under DNS servers.
         </Help>
       }
     >
@@ -947,14 +951,20 @@ function SoaForm({
           });
         }}
       >
-        <label>
-          SOA primary nameserver
+        <FieldHelp
+          label="Primary DNS server"
+          caption="Primary DNS server"
+          help="Enter the full name of the main DNS server for this zone."
+        >
           <input name="primary" defaultValue={parts[0]} required />
-        </label>
-        <label>
-          SOA contact (DNS mailbox form)
+        </FieldHelp>
+        <FieldHelp
+          label="Zone contact"
+          caption="Zone contact"
+          help="Enter the contact email in DNS format: replace @ with a dot. For example, admin@example.test becomes admin.example.test."
+        >
           <input name="contact" defaultValue={parts[1]} required />
-        </label>
+        </FieldHelp>
         {[
           ["refresh", "Refresh", parts[3]],
           ["retry", "Retry", parts[4]],
@@ -962,8 +972,23 @@ function SoaForm({
           ["minimum", "Negative cache TTL", parts[6]],
           ["ttl", "SOA TTL", record?.ttl],
         ].map(([name, label, value]) => (
-          <label key={name}>
-            {label} (seconds)
+          <FieldHelp
+            key={name}
+            label={String(label)}
+            caption={<>{label} (seconds)</>}
+            help={
+              {
+                refresh: "How often backup DNS servers check for changes.",
+                retry:
+                  "How long backup DNS servers wait before trying a failed update again.",
+                expire:
+                  "How long a backup DNS server may use its copy without reaching the primary.",
+                minimum:
+                  "How long to remember that a requested DNS name does not exist.",
+                ttl: "How long other DNS servers may keep this zone information before checking again.",
+              }[String(name)]
+            }
+          >
             <input
               name={String(name)}
               type="number"
@@ -972,7 +997,7 @@ function SoaForm({
               defaultValue={value}
               required
             />
-          </label>
+          </FieldHelp>
         ))}
         <button className="primary" disabled={busy || !record}>
           Save zone settings

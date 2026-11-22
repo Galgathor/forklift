@@ -390,9 +390,9 @@ function App() {
                         <div className="heading-help">
                           <h2>Directory health</h2>
                           <Help label="Directory health checks">
-                            LDAP connectivity and replication context are
-                            checked on refresh and every 30 seconds while
-                            viewing this page.
+                            Forklift checks directory connections and
+                            replication when you refresh this page and every 30
+                            seconds while it is open.
                           </Help>
                         </div>
                         <span className="pill">
@@ -707,7 +707,7 @@ function App() {
                       ? {
                           label: "Usernames",
                           content:
-                            "Keep the username unchanged. Renaming Unix accounts is not supported.",
+                            "Usernames cannot be changed after creating an account.",
                         }
                       : undefined,
                   )}
@@ -808,9 +808,10 @@ function App() {
                       Disable account
                     </label>
                     <Help label="Disabling accounts and Unix IDs">
-                      Disabling removes the password and expires the account.
-                      Set a new password when enabling it again. Unix IDs are
-                      allocated automatically and never reused.
+                      Disabled accounts cannot use their directory password. Set
+                      a new password when enabling an account again. Forklift
+                      assigns Unix account numbers automatically and does not
+                      reuse deleted numbers.
                     </Help>
                   </div>
                   {modal.entry && (
@@ -838,7 +839,7 @@ function App() {
                     {
                       label: "Group membership",
                       content:
-                        "Add existing usernames. POSIX GIDs are allocated automatically. Host access policies are managed in the Hosts section.",
+                        "Choose existing users to add to this group. Forklift assigns the group’s Unix number. Choose which groups can sign in under Hosts.",
                     },
                   )}
                 </>

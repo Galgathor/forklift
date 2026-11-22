@@ -146,9 +146,9 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
                   : "Directory maintenance"}
             </h2>
             <Help label="Maintenance availability">
-              Forklift coordinates directory writes and consistent storage
-              snapshots. The management interface stays available. Configured
-              replicas continue authentication independently.
+              Some changes pause while maintenance runs. You can keep this page
+              open to follow progress. Working replicas can still handle
+              sign-ins.
             </Help>
           </div>
           {completed ? <CheckCircle2 /> : <Activity />}
@@ -183,9 +183,10 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
             {job.result.dns_included
               ? "Includes primary DNS data and secrets."
               : "Legacy LDAP-only archive; full DNS restore is unavailable."}{" "}
-            Archived Unix ID high-water mark: {job.result.id_high_water}.
-            Restoration still requires explicit fencing and an ID floor above
-            every allocation since the snapshot.
+            Highest saved account or group number: {job.result.id_high_water}.
+            Before restoring, disconnect the old servers and choose a starting
+            number higher than every account and group number used since the
+            backup.
           </p>
         )}
         {job?.result?.sha256 && (
@@ -193,8 +194,8 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
             <div className="help-row">
               <strong>Trusted backup receipt</strong>
               <Help label="Trusted backup receipts">
-                Save this checksum separately from the encrypted archive. You
-                will need it to verify a future recovery.
+                Save this checksum separately from the backup. It lets you check
+                that the backup file has not changed before restoring it.
               </Help>
             </div>
 
@@ -233,14 +234,14 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
         {job?.result?.reauthenticate && (
           <p className="hint">
             Administrative sessions were revoked. Sign in with the current
-            directory administrator credentials to continue.
+            directory administrator login to continue.
           </p>
         )}
         {job?.result?.recovery_required && (
           <p className="hint">
             Restored directory writes remain paused until the recovery review in
-            Settings is complete. Old replicas are quarantined and must be
-            fenced and reenrolled, including DNS secondaries.
+            Settings is complete. Disconnect the old replicas, including DNS
+            backup servers, before setting them up again.
           </p>
         )}
         {recovery && (
@@ -259,7 +260,7 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
                 onClick={() => {
                   if (
                     confirm(
-                      "Roll back this interrupted restore to the coherent snapshot taken immediately before it?",
+                      "Undo this interrupted restore and return to the saved installation from just before it started?",
                     )
                   )
                     void recover("rollback");

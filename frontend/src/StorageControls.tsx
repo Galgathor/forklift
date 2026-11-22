@@ -66,11 +66,11 @@ export function StorageControls({
         <div className="heading-help">
           <h2>Backups & recovery</h2>
           <Help label="Backup scope">
-            Backups contain LDAP data, primary DNS data, matching metadata and
-            installation secrets. Forklift pauses directory writes and drains
-            application requests. DNS keeps serving while its SQLite online
-            snapshot is captured into the encrypted archive. Keep the recovery
-            key and trusted checksum in separate protected storage.
+            Backups include directory data, primary DNS records, Forklift
+            settings and the keys needed to restore them. Changes pause briefly
+            while the backup is prepared. DNS can still answer requests. Keep
+            the recovery key and backup checksum somewhere safe, separate from
+            the backup file.
           </Help>
         </div>
 
@@ -191,9 +191,10 @@ export function StorageControls({
         <div className="heading-help">
           <h2>WebUI address</h2>
           <Help label="WebUI address">
-            Configure DNS and your NPM HTTPS Proxy Host first. Applying a new
-            public origin revokes sessions and opens the new address. The
-            management port mapping is part of initial Docker deployment.
+            Set up your DNS name and HTTPS reverse proxy before changing this
+            address. Saving the new address signs everyone out and opens the new
+            location. Change the published port in your Docker deployment
+            settings if needed.
           </Help>
         </div>
 
@@ -233,10 +234,9 @@ export function StorageControls({
         <div className="heading-help">
           <h2>Directory credentials & network</h2>
           <Help label="Directory maintenance">
-            These actions run through the constrained maintenance service. No
-            Docker or shell access is granted to the manager. Credential
-            rotation revokes all administrator sessions and verifies the new
-            LDAP bind before completing.
+            Use these controls to maintain the directory. Replacing service
+            passwords signs all administrators out. Forklift checks the new
+            passwords before completing the change.
           </Help>
         </div>
 
@@ -254,7 +254,7 @@ export function StorageControls({
             })
           }
         >
-          Rotate service credentials
+          Replace service passwords
         </button>
         <button
           className="secondary"
@@ -456,12 +456,10 @@ export function BackupRestore({
       <div className="heading-help">
         <h2>Verify or restore a backup</h2>
         <Help label="Backup verification">
-          Verification checks age authentication, file hashes, SQLite integrity,
-          native LDAP readability and the supported DNS schema before
-          replacement. Legacy LDAP-only archives can be verified; a full
-          installation restore requires an archive that includes primary DNS.
-          The private recovery key is held only for this operation and never
-          saved to the metadata or logs.
+          Forklift unlocks the backup and checks that its files and databases
+          can be read before restoring anything. A full restore needs a backup
+          that includes DNS. The recovery key is used only for this operation
+          and is not saved.
         </Help>
       </div>
 
@@ -515,11 +513,11 @@ export function BackupRestore({
           <span className="help-row">
             Restore and replace this installation
             <Help label="Restoring an installation">
-              The current installation is snapshotted for rollback before
-              replacement. Fence the original LDAP/DNS primary services and
-              every old directory/DNS replica before starting a recovered
-              installation. Archived passwords may restore access revoked after
-              the backup.
+              Forklift saves the current installation first so it can roll back
+              if restoration fails. Disconnect the old primary servers and
+              replicas before using the restored installation. Restoring an
+              older backup can bring back accounts or passwords that were later
+              disabled or changed.
             </Help>
           </span>
         </summary>
@@ -528,12 +526,12 @@ export function BackupRestore({
           label="Future UID and GID floor"
           help={
             <>
-              Choose a value above every ID ever allocated, including accounts
-              created and deleted after this snapshot. Forklift cannot
-              reconstruct missing allocation history.
+              Choose a number higher than any account or group number used
+              before, including deleted accounts. Forklift cannot recover
+              numbers assigned after this backup was made.
             </>
           }
-          caption={<>Future UID/GID floor</>}
+          caption={<>Starting account/group number</>}
         >
           <input
             type="number"
@@ -550,7 +548,8 @@ export function BackupRestore({
             checked={fenced}
             onChange={(e) => setFenced(e.target.checked)}
           />
-          The original LDAP/DNS primaries and all old replicas are fenced.
+          I have disconnected the old primary LDAP/DNS servers and all old
+          replicas.
         </label>
         <label className="checkbox">
           <input
@@ -558,7 +557,7 @@ export function BackupRestore({
             checked={ack}
             onChange={(e) => setAck(e.target.checked)}
           />
-          Replace this installation. I know the administrator credentials from
+          Replace this installation. I know the administrator login saved in
           this backup.
         </label>
         <button

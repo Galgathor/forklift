@@ -44,3 +44,11 @@ Use concise imperative subjects, matching history: `Remove promotional WebUI cop
 Never commit `.env`, private keys, credentials, recovery bundles or LDAP data. Preserve verified TLS, server-side authorization and CSRF protections. Keep privileged provisioning behind fixed operations; do not expose Docker sockets or command endpoints. Routine directory administration belongs in the WebUI; console recovery is reserved for administrator lockout.
 
 Native clients may provision explicitly approved Forklift services through predefined operations. Existing SSSD, PAM/NSS, SSH and host resolver configuration stays read-only to avoid lockouts. Connectivity diagnostics must identify their probe source/path and transport; never claim a local listener proves remote firewall access, or change firewall rules automatically.
+
+## Plain-language instructions and help
+
+Write for someone who can use Docker but does not know LDAP or DNS internals. Explain what an option does, what the person needs to enter, and what happens next. Use short sentences, familiar words and concrete examples. Avoid implementation details, unexplained acronyms and terms such as “reconcile”, “provision”, “origin”, “attestation” or “credential epoch” when a plain description works. If a technical term is necessary, explain it on first use.
+
+Keep help focused on the current task, usually two to four short sentences. Put longer procedures and troubleshooting in linked documentation. Keep explanations behind the existing “i” buttons; keep field names, status, errors and required confirmations visible. Errors should say what failed and what to do next. Confirmations must name the target and explain what will change, what data could be lost and whether the action can be undone. Preserve important security and recovery limits when simplifying text. Do not claim that a check proves more than it actually checks.
+
+READMEs should provide a broad overview, prerequisites and a short first-run path. Link to detailed guides instead of filling the README with protocol details or development history. Review new user-facing text for clarity as part of every change.

@@ -102,7 +102,7 @@ export function Hosts({
   async function download(host: Host) {
     const warning = host.exported_at
       ? "This creates a new host bind password and invalidates previous bundles. Redeploy immediately; existing SSSD LDAP connections may continue until reconnected."
-      : "This bundle contains a dedicated read-only bind credential. Keep it private and deploy it only to this host.";
+      : "This download contains a password for this host to read the directory. Keep it private and install it only on this host.";
     if (!confirm(warning + " Generate configuration?")) return;
     await perform(async () => {
       const r = await fetch(`/api/hosts/${host.id}/bundle`, {
@@ -138,17 +138,11 @@ export function Hosts({
               Hosts <span className="muted">{hosts.length}</span>
             </h2>
             <Help label="Host inventory and access">
-              Directory machines appear automatically, including the primary.
-              These inventory records do not grant SSH access. Select login
-              groups and deploy client configuration only when you want
-              centralized Linux login.
-              <h3>Client configuration</h3>
-              <p>
-                Deploy the complete bundle with the Ansible role or manual guide
-                in docs/linux-clients.md. Group membership updates follow
-                LDAP/NSS cache expiry; changes to permitted groups require
-                redeployment. Local recovery accounts remain available.
-              </p>
+              Directory servers appear here automatically. Adding a host does
+              not enable SSH login. To use directory accounts for Linux sign-in,
+              choose the allowed groups and install the generated client
+              configuration using the Linux client guide. Local recovery
+              accounts keep their existing access.
             </Help>
           </div>
           <div className="wizard-actions">
@@ -347,7 +341,7 @@ export function Hosts({
                               })
                             }
                           >
-                            Reconcile DNS
+                            Apply DNS changes
                           </button>
                         )}
                       </td>
@@ -463,7 +457,7 @@ export function Hosts({
                     saved.dns_status?.error
                       ? `Host saved. DNS needs attention: ${saved.dns_status.error}`
                       : saved.dns_status?.state === "needs_apply"
-                        ? "Host saved. Reconcile DNS to apply its pending settings."
+                        ? "Host saved. Apply DNS changes to apply its pending settings."
                         : "Host saved.",
                   );
                   setEditing(undefined);
@@ -499,9 +493,9 @@ export function Hosts({
                 label="LDAP endpoints"
                 help={
                   <>
-                    Use addresses reachable from this host, with certificate DNS
-                    names signed by your installation CA. The internal Docker
-                    hostname “ldap” usually cannot be used by other machines.
+                    Use encrypted LDAP addresses that this host can reach. The
+                    certificate must match the server name. Other machines
+                    usually cannot reach Docker’s internal name ldap.
                   </>
                 }
                 caption={
@@ -527,11 +521,13 @@ export function Hosts({
                   <span className="help-row">
                     Permitted login groups
                     <Help label="Permitted login groups">
-                      Choose login groups to configure SSH access. Hosts managed
-                      only in DNS can leave these empty. Exported policy applies
-                      to LDAP users signing in through SSH/PAM; local accounts
-                      retain their existing policy. Each export rotates the
-                      host’s read-only bind credential.
+                      Choose which directory groups may sign in to this host.
+                      Install the updated client configuration after changing
+                      this list. Leave it empty for a host used only for DNS.
+                      This does not change local account permissions.
+                      Downloading a new configuration replaces the host’s
+                      directory access password, so install the new download
+                      promptly.
                     </Help>
                   </span>
                 </legend>
@@ -570,8 +566,8 @@ export function Hosts({
                       caption={<>DNS zone</>}
                       help={
                         <>
-                          Create a forward zone in DNS before registering a new
-                          name.
+                          Create the DNS zone first, then choose a name within
+                          it.
                         </>
                       }
                     >
@@ -636,11 +632,11 @@ export function Hosts({
                         Create matching reverse DNS
                       </label>
                       <Help label="Host DNS registration">
-                        Every address needs a matching managed reverse zone when
-                        reverse DNS is enabled. Unrelated records are preserved.
-                        DNS registration does not grant SSH access. Changing the
-                        inventory hostname does not change this DNS name; review
-                        both fields.
+                        Add a matching reverse zone before enabling reverse DNS.
+                        Forklift keeps records that belong to other hosts. DNS
+                        records do not grant SSH access. The host name and DNS
+                        name are separate fields; check both when renaming a
+                        machine.
                       </Help>
                     </div>
                   </>
@@ -668,9 +664,9 @@ export function Hosts({
                     Apply DNS changes after saving
                   </label>
                   <Help label="Applying host DNS changes">
-                    You can save settings without applying DNS, then use
-                    Reconcile DNS. If DNS is unavailable, the host remains saved
-                    and can be retried.
+                    Save now and apply DNS later if needed. Use Apply DNS
+                    changes to apply saved changes or retry after a DNS service
+                    outage.
                   </Help>
                 </div>
               </fieldset>
@@ -691,8 +687,8 @@ export function Hosts({
           >
             <h2>Delete {removing.name}?</h2>
             <p>
-              This revokes the LDAP bind credential. Remove client configuration
-              from the machine separately.
+              This cancels the host’s directory access password. Remove the
+              client settings from the machine separately.
             </p>
             <form
               onSubmit={(e) => {

@@ -165,11 +165,10 @@ export function ClientEnrollment({
           <div className="heading-help">
             <h2>Join existing machine</h2>
             <Help label="Machine pairing">
-              Run forklift-client join on the Linux machine, then enter its
-              short-lived pairing code here. Verify the hostname, addresses and
-              key fingerprint shown on that machine. These details are
-              self-reported. Enrollment monitors the host; it does not install
-              or configure SSSD, PAM, NSS, SSH or DNS.
+              Run forklift-client join on the Linux machine and enter its code
+              here before it expires. Check that the displayed name, addresses
+              and key fingerprint match that machine. Pairing enables
+              monitoring; it does not set up Linux or SSH sign-in.
             </Help>
           </div>
           <button
@@ -250,11 +249,11 @@ export function ClientEnrollment({
                   caption="Inventory target"
                   help={
                     <>
-                      Create a new host or explicitly link this machine to an
-                      existing inventory record. Forklift never merges by
-                      hostname or address. Revoke an existing client identity
-                      before replacing it. Linking preserves login groups, DNS
-                      ownership and the host ID.
+                      Create a host entry or choose an existing one to link.
+                      Check the machine carefully; matching names or addresses
+                      do not automatically link hosts. Linking keeps its login
+                      groups and DNS settings. Revoke the old client before
+                      replacing it.
                     </>
                   }
                 >
@@ -355,10 +354,9 @@ export function ClientDetails({
             <div className="heading-help">
               <h2>Client enrollment</h2>
               <Help label="Client enrollment details">
-                Inventory is reported by the enrolled client and may be stale
-                when offline. Last contact confirms a credential-authenticated
-                session; heartbeat freshness is tracked separately. Neither
-                proves successful Linux authentication.
+                This information comes from the client. It may be out of date
+                when the machine is offline. Recent contact confirms the client
+                can reach Forklift, not that Linux sign-in works.
               </Help>
             </div>
             <button aria-label="Close client details" onClick={close}>
@@ -390,15 +388,13 @@ export function ClientDetails({
             </div>
           </dl>
           <div className="heading-help">
-            <h3>Machine credentials</h3>
+            <h3>Client connection keys</h3>
             <Help label="Machine credential rotation">
-              Supported clients rotate their signing key and machine credential
-              automatically after 30 days. You can request an earlier rotation.
-              The daemon handles it at its next contact; the old credential
-              remains valid until the new key confirms. Interrupted rotations
-              resume from root-only local state. Revoke an identity if
-              compromise is suspected; rotation does not remove an attacker's
-              control of a compromised host.
+              Clients replace their connection key automatically after 30 days.
+              You can request an earlier replacement here. The change happens
+              when the client next connects and can resume after an
+              interruption. If a machine may be compromised, revoke its identity
+              and investigate it; changing the key alone is not enough.
             </Help>
           </div>
           <dl>
@@ -434,7 +430,7 @@ export function ClientDetails({
               }
               onClick={() => setRotate(true)}
             >
-              Request credential rotation
+              Replace client connection key
             </button>
           )}
           <ClientReplica client={client} api={api} refresh={refresh} />
@@ -449,7 +445,7 @@ export function ClientDetails({
       </div>
       {rotate && (
         <ConfirmDialog
-          title="Rotate machine credentials?"
+          title="Replace client connection key?"
           confirmLabel="Request rotation"
           busy={busy}
           cancel={() => setRotate(false)}
@@ -473,8 +469,8 @@ export function ClientDetails({
           }}
         >
           <p>
-            This requests a new signing key and machine credential for this
-            host. Host inventory, access settings and managed DNS remain.
+            Replace this client’s connection key at its next check-in. Its host
+            entry, access settings and DNS records stay unchanged.
           </p>
         </ConfirmDialog>
       )}

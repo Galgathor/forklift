@@ -91,23 +91,12 @@ export function ReplicaWizard({
             <div className="heading-help">
               <h2>Add a replica</h2>
               <Help label="Replica prerequisites">
-                The new machine needs Linux and Docker. Its primary connection
-                is inherited from setup.
-                {setup && (
-                  <p>
-                    Copies from {setup.primary.endpoint}. Enrolls through{" "}
-                    {setup.manager_url}. These settings are inherited
-                    automatically.
-                  </p>
-                )}
-                <h3>Network access</h3>
-                <p>
-                  Allow the manager to reach both private ports and Linux
-                  clients to reach the directory port. The new machine must
-                  reach the primary and the WebUI HTTPS address. No existing
-                  LDAP installation, manual certificate generation or
-                  administrator script is needed.
-                </p>
+                Use a Linux machine with Docker installed. Forklift copies the
+                directory from your primary server automatically. The new
+                machine must be able to reach Forklift over HTTPS and connect to
+                the primary directory. Forklift must also be able to reach the
+                new server’s directory and management ports. You do not need to
+                install LDAP or create certificates yourself.
               </Help>
             </div>
           </div>
@@ -161,8 +150,8 @@ export function ReplicaWizard({
               label="Replica DNS names"
               help={
                 <>
-                  A private IP needs no DNS record. If you choose a name, make
-                  it resolve to this private address.
+                  Use a private IP address to avoid extra DNS setup. If you use
+                  a name, make sure it points to this address.
                 </>
               }
               caption={<>Stable DNS name (optional)</>}
@@ -204,9 +193,9 @@ export function ReplicaWizard({
               label="Private HTTPS trust"
               help={
                 <>
-                  Leave blank for a publicly trusted WebUI certificate. For
-                  private PKI, paste its public CA certificate here. Never paste
-                  a private key.
+                  Leave this blank if browsers already trust your Forklift HTTPS
+                  certificate. Otherwise paste the public certificate for the
+                  authority that issued it. Never paste a private key.
                 </>
               }
               caption={<>WebUI HTTPS CA certificate</>}
@@ -237,39 +226,13 @@ export function ReplicaWizard({
             <div className="heading-help">
               <h3>Deploy the replica</h3>
               <Help label="Deploy the replica">
-                <ol className="steps">
-                  <li>
-                    Clone the Forklift repository on the new machine, using the
-                    same release as this manager. Open{" "}
-                    <code>deploy/replica</code>. A Docker hosting UI can also
-                    deploy this repository’s replica Compose file.
-                  </li>
-                  <li>
-                    Paste the configuration below into{" "}
-                    <code>deploy/replica/.env</code>, or set{" "}
-                    <code>FORKLIFT_REPLICA_JOIN</code> in your Docker hosting
-                    UI. It contains a temporary secret; do not commit it.
-                  </li>
-                  <li>
-                    Start the replica Compose stack and wait here for confirmed
-                    synchronization. No archive or certificate transfer is
-                    required.
-                  </li>
-                </ol>
-                <pre>
-                  <code>
-                    {"cd deploy/replica\ndocker compose up -d --build"}
-                  </code>
-                </pre>
-                <h3>Trust and restarts</h3>
-                <p>
-                  The primary’s public CA is included. The replica generates its
-                  private key locally and enrolls over verified HTTPS. After
-                  enrollment, you can remove the temporary join setting; future
-                  restarts use persistent configuration. SSH access still
-                  requires choosing login groups and deploying the host’s client
-                  configuration.
-                </p>
+                Use the same Forklift release on the new machine. Save the join
+                configuration in deploy/replica/.env, then start the Compose
+                stack in that folder. Keep this configuration private: it
+                contains a temporary password. Wait for Synchronized before
+                using the replica for sign-ins. Its saved data survives
+                restarts. For an enrolled Forklift Client, you can instead
+                deploy from Hosts → Client enrolled → LDAP replica service.
               </Help>
             </div>
 

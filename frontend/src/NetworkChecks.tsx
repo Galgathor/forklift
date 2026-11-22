@@ -29,22 +29,12 @@ export function NetworkChecks({ api, hostId }: { api: Api; hostId?: string }) {
         <div className="heading-help">
           <h3>{hostId ? "Inbound port check" : "Network port checks"}</h3>
           <Help label="Network port verification">
-            Checks use configured services and ports only. Manager probes
-            originate inside its network namespace. Client reports test the path
-            from each enrolled machine, including separate DNS TCP and UDP
-            responses. A local listener or self-path does not prove external
-            access. A failure can indicate a stopped service, Docker publishing,
-            routing, certificate or firewall problem; it cannot identify a
-            firewall rule by itself. No firewall rules or host
-            authentication/resolver settings are changed. DNS transfers and LDAP
-            synchronization require their separate replication checks.
-            {hostId && (
-              <p>
-                Select the host's SSH local address and port in diagnostic
-                settings to test manager-to-host TCP access. This does not prove
-                that access is allowed from other addresses.
-              </p>
-            )}
+            These checks test connections between specific machines. Success
+            from one machine does not mean every machine can connect. A failed
+            check may mean a service is stopped, a port is closed, or the
+            network is unavailable. No settings or firewall rules are changed.
+            To test SSH access from Forklift, choose the host address and SSH
+            port in its diagnostic settings.
           </Help>
         </div>
         <button
@@ -132,8 +122,8 @@ export function NetworkChecks({ api, hostId }: { api: Api; hostId?: string }) {
                         <p>
                           Received:{" "}
                           {new Date(o.received_at * 1000).toLocaleString()}.
-                          Reported by the enrolled client; this is an
-                          observation, not independent host attestation.
+                          Reported by this client. Forklift has not checked the
+                          machine independently.
                         </p>
                       </Help>
                     </div>

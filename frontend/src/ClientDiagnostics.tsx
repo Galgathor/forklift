@@ -88,12 +88,10 @@ export function ClientDiagnostics({
         <div className="heading-help">
           <h3>Host health</h3>
           <Help label="Diagnostic health">
-            These read-only observations are reported by the enrolled machine.
-            They do not prove successful password authentication. Unknown,
-            unsupported, stale or missing results never prove recovery.
-            Acknowledging an issue does not resolve it. New diagnostic
-            expectations retire superseded issues separately from positive
-            recovery.
+            These checks help find problems on this machine. They do not test
+            password sign-in. Old or missing results cannot confirm that a
+            problem is fixed. Marking an issue as seen leaves it open until a
+            check confirms recovery.
           </Help>
         </div>
         <button className="secondary" onClick={() => void load()}>
@@ -216,7 +214,7 @@ export function ClientDiagnostics({
                     {c.details}
                     <p>{c.remediation}</p>
                     <p>
-                      Client observation: {date(c.at)}. Server receipt:{" "}
+                      Checked on the client: {date(c.at)}. Received by Forklift:{" "}
                       {date(data.received_at)}.
                     </p>
                   </Help>

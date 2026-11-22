@@ -81,7 +81,7 @@ export function ClientMonitoring({
         <FieldHelp
           label={`${family} interface`}
           caption={family === "ipv4" ? "IPv4 interface" : "IPv6 interface"}
-          help="Follow an interface only when it has one eligible address of this family. Pin an address to avoid ambiguity on multihomed interfaces. A missing or ambiguous selection pauses DNS updates."
+          help="Choose the network connection to follow. If it has several addresses, select one explicitly. Updates pause if the selected address is missing or unclear."
         >
           <select
             value={value?.interface || ""}
@@ -106,7 +106,7 @@ export function ClientMonitoring({
         <FieldHelp
           label={`${family} address`}
           caption="Address selection"
-          help="Follow uses the interface's sole eligible address as it changes. A pinned address must still be present in inventory; Forklift never chooses the first of several addresses."
+          help="Follow tracks address changes when there is only one address to choose from. Select a specific address if this connection has several."
         >
           <select
             disabled={!value}
@@ -146,10 +146,10 @@ export function ClientMonitoring({
       <div className="heading-help">
         <h3>Monitoring</h3>
         <Help label="Host monitoring">
-          Heartbeat freshness is measured on the server. Online means the client
-          reported recently; diagnostic health is tracked independently. The
-          offline threshold is at least three configured heartbeat intervals.
-          Manual inventory has no offline status.
+          Online means the client has reported recently. It does not mean every
+          service is healthy. Forklift marks a client offline after enough
+          reports are missed. Hosts without the client are not marked offline
+          for missing reports.
         </Help>
       </div>
       <dl>
@@ -211,7 +211,7 @@ export function ClientMonitoring({
           <FieldHelp
             label="Offline threshold"
             caption="Offline threshold (seconds)"
-            help="Use 90–10800 seconds. The effective threshold is the greater of this setting and three reported heartbeat intervals. Offline transitions and recovery are recorded without requiring the client to report its own outage."
+            help="Choose how long to wait before marking a client offline, from 90 to 10800 seconds. Forklift always allows at least three missed reports."
           >
             <input
               type="number"
@@ -234,12 +234,11 @@ export function ClientMonitoring({
               Automatically update managed DNS addresses
             </label>
             <Help label="Automatic client DNS updates">
-              Configure and apply this host's DNS first. Updates require
-              existing host ownership, preserve unrelated values, and follow
-              only your selected interfaces or addresses. Hostnames and FQDNs
-              stay under administrator control. Inventory can succeed while DNS
-              needs retry; the next heartbeat retries current intent. A
-              replacement client must be authorized again.
+              Set up and apply this host’s DNS records first. Then choose the
+              network address Forklift should follow. Other hosts’ records and
+              your chosen DNS names stay unchanged. If a DNS update fails, the
+              client can still report its status and Forklift will retry. A
+              replacement client needs fresh approval.
             </Help>
           </div>
           {settings.policy.dns_updates && (
@@ -251,11 +250,10 @@ export function ClientMonitoring({
           <div className="heading-help">
             <h3>Diagnostic expectations</h3>
             <Help label="Diagnostic expectations">
-              Authentication and SSH checks are read-only and opt-in. Choose
-              test identities without passwords. The SSH context is used only by
-              sshd's configuration test; no login is attempted. Unknown checks
-              retain unresolved issues. Changing expectations retires superseded
-              diagnostic issues after a current report.
+              Choose which sign-in and SSH settings to check. These checks only
+              read settings; they do not change them or try a password login.
+              Test users and groups are looked up without passwords. Missing
+              results do not mean an old problem is fixed.
             </Help>
           </div>
           <label className="checkbox">
@@ -305,8 +303,8 @@ export function ClientMonitoring({
                 caption={label}
                 help={
                   key === "ssh_source_name"
-                    ? "Optional source hostname for Match Host rules. Without it, the source address is used."
-                    : "Use the expected diagnostic context. This does not change host configuration or attempt authentication."
+                    ? "Optional name of the machine connecting over SSH. Leave blank to check using its IP address."
+                    : "Enter the connection details you want to check. This only checks SSH settings; it does not change them or try to sign in."
                 }
               >
                 <input
@@ -326,7 +324,7 @@ export function ClientMonitoring({
             <FieldHelp
               label="SSH diagnostic port"
               caption="SSH port"
-              help="Connect only to the selected local address/port and check its SSH greeting. No password or authentication attempt is sent."
+              help="Check that SSH answers at this address and port. No password is sent and no sign-in is attempted."
             >
               <input
                 type="number"
@@ -346,7 +344,7 @@ export function ClientMonitoring({
             <FieldHelp
               label="Issue failure threshold"
               caption="Consecutive failing reports"
-              help="Require 1–5 distinct reports before opening an issue. Repeated retries never increase the count. A positive result resolves an active issue; unknown or omitted checks do not."
+              help="Choose how many failed checks, from 1 to 5, should open an issue. A successful check closes it. Missing results leave it open."
             >
               <input
                 type="number"
@@ -388,9 +386,8 @@ export function ClientMonitoring({
       <div className="heading-help">
         <h3>History</h3>
         <Help label="Client history">
-          The latest 100 server-timestamped monitoring events are retained.
-          Reload monitoring to fetch newer history. Inventory is self-reported
-          by this machine; it does not prove a successful password login.
+          Shows the latest 100 host events. Reload to see newer events. Reports
+          come from the client and do not prove that password sign-in works.
         </Help>
       </div>
       {!settings?.history.length ? (

@@ -46,10 +46,10 @@ export function DnsImport({
           <div className="heading-help">
             <h2>Import DNS records</h2>
             <Help label="Supported import files">
-              Import Forklift JSON exports or PowerDNS zone JSON containing
-              name/zone and rrsets. BIND text and server configuration
-              directives are not imported. SOA is preserved; edit its settings
-              separately. Maximum file size: 240 KiB.
+              Choose a JSON export from Forklift or PowerDNS. Text zone files
+              and server configuration files are not supported. The file must be
+              240 KiB or smaller. Importing does not replace the zone’s main
+              settings.
             </Help>
           </div>
           <button disabled={busy} aria-label="Close DNS import" onClick={close}>
@@ -105,10 +105,10 @@ export function DnsImport({
             label="Import behavior"
             help={
               <>
-                Unlisted record sets remain. Replacing a listed set can remove
-                values. Forward and reverse imports are separate; no PTRs are
-                created automatically. Changed sets release automatic PTR/host
-                ownership and may need review in Hosts.
+                Records not listed in the file stay unchanged. Replacing a
+                listed record group can remove its old values. Reverse records
+                must be imported separately. Review affected hosts afterward if
+                Forklift normally updates their DNS automatically.
               </>
             }
             caption={<>Import behavior</>}
@@ -238,9 +238,9 @@ export function DnsImport({
                   {busy ? "Applying…" : "Apply DNS import"}
                 </button>
                 <Help label="Interrupted imports">
-                  Changes across record sets can partially succeed. Pending DNS
-                  changes provide safe retry or explicit retention of
-                  already-applied values.
+                  An import may stop after saving some records. Review pending
+                  changes and retry to finish, or keep the changes already
+                  saved.
                 </Help>
               </div>
             </form>

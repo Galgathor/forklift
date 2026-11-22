@@ -100,11 +100,10 @@ export function Notifications({ api }: { api: Api }) {
               <div className="heading-help">
                 <h2>Host notifications</h2>
                 <Help label="Host notifications">
-                  Notifications describe issue transitions and are retained
-                  separately from active problems. Acknowledge marks an event as
-                  seen; dismiss hides the event. Neither resolves the underlying
-                  issue. Up to 500 events are retained; the latest 200 are
-                  shown. Actions are shared across administrators.
+                  Notifications tell you when a problem starts or changes. Mark
+                  one as seen, or dismiss it to hide it. Neither action fixes or
+                  closes the problem. These choices are shared with other
+                  administrators.
                 </Help>
               </div>
               <button
