@@ -53,11 +53,11 @@ FORKLIFT_IMAGE_TAG=sha-FULL_COMMIT_SHA
 Authenticate with a **read-only** package token if pulling private images. Do not distribute the CI write token to hosts. Keep the existing volumes and runtime configuration:
 
 ```sh
-docker compose -f compose.yaml -f compose.images.yaml pull
-docker compose -f compose.yaml -f compose.images.yaml up -d --no-build
+docker compose pull
+docker compose up -d
 ```
 
-The `!reset` overlays require Compose 2.24.4 or newer and remove source-build directives. Matching overlays are provided in `deploy/replica/` and `deploy/dns-secondary/` for their existing manual enrollment flows. Container recreation preserves the existing named-volume configuration; take a normal backup before upgrades. Client-driven replica deployment still uses its locally compiled allowlist/build context; publishing images does not silently change that trust policy.
+The main Compose file uses published images directly; no overlay is needed. For local source builds, add `-f compose.yaml -f compose.dev.yaml` to build and startup commands. The older `compose.images.yaml` remains compatible but is unnecessary for the main stack. Image overlays using `!reset` require Compose 2.24.4 or newer and are provided in `deploy/replica/` and `deploy/dns-secondary/` for their existing manual enrollment flows. Container recreation preserves the existing named-volume configuration; take a normal backup before upgrades. Client-driven replica deployment still uses its locally compiled allowlist/build context; publishing images does not silently change that trust policy.
 
 Until secrets are filled in and a real runner job completes, package publication is unverified. Re-run the workflow after configuring secrets; create `v<version>` tags explicitly when ready for a stable release. No workflow deploys containers to production or changes host authentication/firewall settings.
 

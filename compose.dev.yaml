@@ -1,0 +1,32 @@
+# Local source builds only. See AGENTS.md for development commands.
+services:
+  initialize:
+    image: forklift-maintenance:latest
+    build:
+      context: .
+      dockerfile: docker/maintenance/Dockerfile
+  ldap:
+    image: forklift-ldap:latest
+    build:
+      context: .
+      dockerfile: docker/openldap/Dockerfile
+  maintenance:
+    image: forklift-maintenance:latest
+    build:
+      context: .
+      dockerfile: docker/maintenance/Dockerfile
+  dns:
+    image: forklift-dns:latest
+    build:
+      context: .
+      dockerfile: docker/powerdns/Dockerfile
+  discovery:
+    image: forklift-manager:latest
+    build:
+      context: .
+      dockerfile: docker/manager/Dockerfile
+  manager:
+    image: forklift-manager:latest
+    build:
+      context: .
+      dockerfile: docker/manager/Dockerfile

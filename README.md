@@ -8,7 +8,7 @@ Forklift Client is an optional companion for Linux machines. It reports health a
 
 ## Basic setup
 
-You need a Linux host with Docker Engine and Docker Compose v2. Docker Desktop is not supported. Allow about 2 GB of free memory if building from source.
+You need a Linux host with Docker Engine and Docker Compose v2. Docker Desktop is not supported. The published images currently support amd64 Linux.
 
 1. Clone this repository and open its folder.
 2. Copy the example settings and review `.env`:
@@ -17,20 +17,22 @@ You need a Linux host with Docker Engine and Docker Compose v2. Docker Desktop i
    cp .env.example .env
    ```
 
-3. For remote access, set `FORKLIFT_PUBLIC_URL` to your HTTPS address and configure your reverse proxy. The default management port is 8080 and is reachable only from the Docker host. See the [network setup guide](docs/reference-guide.md).
-4. Start Forklift:
+3. Set `FORKLIFT_IMAGE_PREFIX` to your Gitea registry/account and `FORKLIFT_IMAGE_TAG` to a published build tag. Find these in Gitea Packages; see [image setup](docs/ci.md#deploy-published-images). For private packages, sign in with `docker login YOUR_REGISTRY` using a read-only package token.
+4. For remote access, set `FORKLIFT_PUBLIC_URL` to your HTTPS address and configure your reverse proxy. The default management port is 8080 and is reachable only from the Docker host. See the [network setup guide](docs/reference-guide.md).
+5. Download and start Forklift:
 
    ```sh
-   docker compose up -d --build
+   docker compose pull
+   docker compose up -d
    ```
 
-5. Open your configured address, or `http://localhost:8080` on the Docker host. Enter the installation key from your settings. If you did not choose one, find the generated key in the initialize container’s logs:
+6. Open your configured address, or `http://localhost:8080` on the Docker host. Enter the installation key from your settings. If you did not choose one, find the generated key in the initialize container’s logs:
 
    ```sh
    docker compose logs initialize
    ```
 
-6. Follow the setup wizard to choose your directory name, private server address and administrator account. Forklift creates the LDAP service and certificates for you. **You do not need an existing LDAP server.**
+7. Follow the setup wizard to choose your directory name, private server address and administrator account. Forklift creates the LDAP service and certificates for you. **You do not need an existing LDAP server.**
 
 Keep `.env`, installation keys and backups private. Container recreation keeps your data; deleting storage volumes removes it.
 

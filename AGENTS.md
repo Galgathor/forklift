@@ -17,8 +17,9 @@ From the repository root:
 - `npm run dev --prefix frontend`: start Vite; `/api` proxies to localhost:8080. Use the development browser origin during setup.
 - `npm run build --prefix frontend`: check TypeScript and build production assets.
 - In `backend/`, run `cargo fmt --check`, `cargo test --locked` and `cargo clippy --locked -- -D warnings`.
-- `docker compose build`: build all runtime images.
-- `docker compose up -d --build`: launch the Linux deployment after configuring `.env` from `.env.example`.
+- `docker compose pull` then `docker compose up -d`: run published Gitea images after configuring `.env`.
+- `docker compose -f compose.yaml -f compose.dev.yaml build`: build local development images.
+- `docker compose -f compose.yaml -f compose.dev.yaml up -d --build`: run local source builds. Set image variables in `.env` first; the development override uses local image names. Integration fixtures select this override automatically.
 - `python3 tests/integration.py`, `python3 tests/hardening.py`, `python3 tests/replication.py`: exercise real LDAP, recovery and replication.
 
 ## Coding Style & Naming Conventions

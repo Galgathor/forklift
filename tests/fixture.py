@@ -14,7 +14,7 @@ class Stack:
         self.project='forklift-v5-test-'+secrets.token_hex(4);self.temp=tempfile.TemporaryDirectory(prefix=self.project);self.root=Path(self.temp.name)
         self.bootstrap=secrets.token_urlsafe(40);self.password=secrets.token_urlsafe(30);self.csrf='';self.checks=0
         self.url=('https' if https else 'http')+'://localhost:'+str(port());self.https=https
-        self.env={**os.environ,'FORKLIFT_PUBLIC_URL':self.url,'FORKLIFT_PORT':str(port() if https else self.url.rsplit(':',1)[1]),'FORKLIFT_BOOTSTRAP_TOKEN':self.bootstrap,'FORKLIFT_BIND':'127.0.0.1','FORKLIFT_DNS_BIND':'127.0.0.1','FORKLIFT_DNS_PORT':str(port())}
+        self.env={**os.environ,'FORKLIFT_IMAGE_PREFIX':'local/forklift','FORKLIFT_IMAGE_TAG':'dev','FORKLIFT_PUBLIC_URL':self.url,'FORKLIFT_PORT':str(port() if https else self.url.rsplit(':',1)[1]),'FORKLIFT_BOOTSTRAP_TOKEN':self.bootstrap,'FORKLIFT_BIND':'127.0.0.1','FORKLIFT_DNS_BIND':'127.0.0.1','FORKLIFT_DNS_PORT':str(port())}
         self.jar=http.cookiejar.CookieJar();self.context=None
         if https:
             def openssl(*args):return run(['openssl',*args],cwd=self.root)
@@ -23,7 +23,7 @@ class Stack:
             (self.root/'extensions').write_text('basicConstraints=critical,CA:FALSE\nsubjectAltName=DNS:localhost\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n')
             openssl('x509','-req','-in','server.csr','-CA','ca.crt','-CAkey','ca.key','-set_serial','2','-days','2','-extfile','extensions','-out','server.crt')
             self.context=ssl.create_default_context(cafile=str(self.root/'ca.crt'))
-        self.files=['-f',str(SOURCE/'compose.yaml')]
+        self.files=['-f',str(SOURCE/'compose.yaml'),'-f',str(SOURCE/'compose.dev.yaml')]
         if https:
             override=self.root/'host-test.yaml'
             override.write_text('services:\n  manager:\n    network_mode: host\n    ports: !reset []\n    environment:\n      FORKLIFT_LISTEN: 127.0.0.1:'+self.env['FORKLIFT_PORT']+'\n    healthcheck:\n      test: [CMD, /usr/bin/curl, -fsS, http://127.0.0.1:'+self.env['FORKLIFT_PORT']+'/health]\n')

@@ -12,8 +12,10 @@ Requirements: **Linux**, Docker Engine and Compose v2, private network connectiv
 git clone git@gitea-git:Galgathor/forklift.git
 cd forklift
 cp .env.example .env
+# Set your Gitea image location and published tag in .env (see ci.md).
 # Choose deployment settings in .env, then:
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 You can also deploy the Compose project through your Docker hosting UI. Starting containers and managing the host's DNS/firewall remain infrastructure tasks. Ongoing directory administration takes place in Forklift.
@@ -96,7 +98,7 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked -- -D warnings
 cd ..
-docker compose build
+docker compose -f compose.yaml -f compose.dev.yaml build
 python3 tests/integration.py
 python3 tests/hardening.py
 python3 tests/replication.py
