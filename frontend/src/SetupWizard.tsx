@@ -81,17 +81,15 @@ export function SetupWizard({ api, completed }: Props) {
                   container log.
                 </>
               }
+              caption={<>One-time installation key</>}
             >
-              <label>
-                <span className="field-name">One-time installation key</span>
-                <input
-                  type="password"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  required
-                  autoComplete="current-password"
-                />
-              </label>
+              <input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                required
+                autoComplete="current-password"
+              />
             </FieldHelp>
 
             <button className="primary" disabled={busy}>
@@ -143,19 +141,15 @@ export function SetupWizard({ api, completed }: Props) {
                   point it to this interface in your network DNS.
                 </>
               }
+              caption={<>Server address (IP or optional DNS name)</>}
             >
-              <label>
-                <span className="field-name">
-                  Server address (IP or optional DNS name)
-                </span>
-                <input
-                  value={network.hostname}
-                  onChange={(e) =>
-                    setNetwork({ ...network, hostname: e.target.value.trim() })
-                  }
-                  required
-                />
-              </label>
+              <input
+                value={network.hostname}
+                onChange={(e) =>
+                  setNetwork({ ...network, hostname: e.target.value.trim() })
+                }
+                required
+              />
             </FieldHelp>
 
             <details>
@@ -169,19 +163,17 @@ export function SetupWizard({ api, completed }: Props) {
                     NPM’s HTTP proxy.
                   </>
                 }
+                caption={<>Directory port</>}
               >
-                <label>
-                  <span className="field-name">Directory port</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={network.port}
-                    onChange={(e) =>
-                      setNetwork({ ...network, port: Number(e.target.value) })
-                    }
-                  />
-                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={network.port}
+                  onChange={(e) =>
+                    setNetwork({ ...network, port: Number(e.target.value) })
+                  }
+                />
               </FieldHelp>
             </details>
             <div className="wizard-actions">
@@ -251,15 +243,13 @@ export function SetupWizard({ api, completed }: Props) {
                       dc=example,dc=test. It cannot be changed after setup.
                     </>
                   }
+                  caption={<>Directory base DN</>}
                 >
-                  <label>
-                    <span className="field-name">Directory base DN</span>
-                    <input
-                      name="base"
-                      defaultValue="dc=homelab,dc=internal"
-                      required
-                    />
-                  </label>
+                  <input
+                    name="base"
+                    defaultValue="dc=homelab,dc=internal"
+                    required
+                  />
                 </FieldHelp>
                 <label>
                   Administrator username
@@ -275,15 +265,17 @@ export function SetupWizard({ api, completed }: Props) {
                     autoComplete="new-password"
                   />
                 </label>
-                <Help label="Primary host registration">
-                  Primary: {network.hostname}:{network.port}. It will
-                  automatically appear in Hosts. Registration does not install
-                  SSH authentication or grant login privileges.
-                </Help>
 
-                <button className="primary" disabled={busy || jobs.active}>
-                  {busy ? "Creating your directory…" : "Initialize directory"}
-                </button>
+                <div className="help-row action-help">
+                  <button className="primary" disabled={busy || jobs.active}>
+                    {busy ? "Creating your directory…" : "Initialize directory"}
+                  </button>
+                  <Help label="Primary host registration">
+                    Primary: {network.hostname}:{network.port}. It will
+                    automatically appear in Hosts. Registration does not install
+                    SSH authentication or grant login privileges.
+                  </Help>
+                </div>
               </form>
             )}
             <button

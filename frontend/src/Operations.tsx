@@ -233,7 +233,14 @@ export function Operations({
       </section>
       <section className="panel">
         <div className="table-toolbar">
-          <h2>Administrative audit log</h2>
+          <div className="heading-help">
+            <h2>Administrative audit log</h2>
+            <Help label="Audit exports">
+              Newest first. Exports contain up to 5,000 matching events; use the
+              X-Next-Cursor response header to retrieve older export pages
+              through the API.
+            </Help>
+          </div>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -254,11 +261,7 @@ export function Operations({
             </button>
           </form>
         </div>
-        <Help label="Audit exports">
-          Newest first. Exports contain up to 5,000 matching events; use the
-          X-Next-Cursor response header to retrieve older export pages through
-          the API.
-        </Help>
+
         <a
           className="secondary download-link"
           href={"/api/audit/export?q=" + encodeURIComponent(search)}

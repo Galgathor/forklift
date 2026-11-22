@@ -157,19 +157,17 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                   address or port.
                 </>
               }
+              caption={<>Published primary DNS port</>}
             >
-              <label>
-                <span className="field-name">Published primary DNS port</span>
-                <input
-                  aria-label="Published primary DNS port"
-                  name="dns_port"
-                  type="number"
-                  min="1"
-                  max="65535"
-                  defaultValue={inventory.primary?.dns_port || 53}
-                  required
-                />
-              </label>
+              <input
+                aria-label="Published primary DNS port"
+                name="dns_port"
+                type="number"
+                min="1"
+                max="65535"
+                defaultValue={inventory.primary?.dns_port || 53}
+                required
+              />
             </FieldHelp>
 
             <label className="checkbox">
@@ -588,26 +586,33 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                         required. Both ports must be available on that machine.
                       </>
                     }
+                    caption={<>Private DNS management port</>}
                   >
-                    <label>
-                      <span className="field-name">
-                        Private DNS management port
-                      </span>
-                      <input
-                        aria-label="Private DNS management port"
-                        name="control_port"
-                        type="number"
-                        min="1"
-                        max="65535"
-                        defaultValue={9544}
-                        required
-                      />
-                    </label>
+                    <input
+                      aria-label="Private DNS management port"
+                      name="control_port"
+                      type="number"
+                      min="1"
+                      max="65535"
+                      defaultValue={9544}
+                      required
+                    />
                   </FieldHelp>
                 </>
               )}
               <fieldset className="host-groups">
-                <legend>Zones to replicate</legend>
+                <legend>
+                  <span className="help-row">
+                    Zones to replicate
+                    <Help label="DNS zone assignments">
+                      Assign up to 32 zones. Removing an assignment deletes only
+                      that enrollment’s secondary copy. New zones need an
+                      assignment here. Primary records are unchanged. Publish
+                      appropriate NS records through DNS and configure your
+                      resolver to use both authoritative endpoints.
+                    </Help>
+                  </span>
+                </legend>
                 {[...new Set([...zones, ...(editing?.zones || [])])].map(
                   (z) => (
                     <label key={z} className="checkbox">
@@ -626,13 +631,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                   ),
                 )}
               </fieldset>
-              <Help label="DNS zone assignments">
-                Assign up to 32 zones. Removing an assignment deletes only that
-                enrollment’s secondary copy. New zones need an assignment here.
-                Primary records are unchanged. Publish appropriate NS records
-                through DNS and configure your resolver to use both
-                authoritative endpoints.
-              </Help>
+
               <button className="primary" disabled={busy}>
                 Save DNS server
               </button>
@@ -684,20 +683,24 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                   });
                 }}
               >
-                <Help label="Manager HTTPS trust">
-                  The new machine must reach Forklift’s public HTTPS URL with
-                  certificate validation. For private HTTPS PKI, supply its
-                  public CA certificate. Leave blank for a publicly trusted
-                  HTTPS certificate.
-                </Help>
-                <label>
-                  Manager HTTPS CA (optional)
+                <FieldHelp
+                  label="Manager HTTPS trust"
+                  caption={<>Manager HTTPS CA (optional)</>}
+                  help={
+                    <>
+                      The new machine must reach Forklift’s public HTTPS URL
+                      with certificate validation. For private HTTPS PKI, supply
+                      its public CA certificate. Leave blank for a publicly
+                      trusted HTTPS certificate.
+                    </>
+                  }
+                >
                   <textarea
                     aria-label="Manager HTTPS CA (optional)"
                     name="manager_ca"
                     placeholder="-----BEGIN CERTIFICATE-----"
                   />
-                </label>
+                </FieldHelp>
                 <label className="checkbox">
                   <input type="checkbox" name="acknowledge" required />I will
                   keep the one-time join configuration private.
@@ -708,41 +711,46 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
               </form>
             ) : (
               <>
-                <Help label="Deploy the DNS secondary">
-                  <ol>
-                    <li>
-                      On the second Docker host, open a checkout of this
-                      repository and deploy{" "}
-                      <code>deploy/dns-secondary/compose.yaml</code> with your
-                      Docker Compose hosting tool.
-                    </li>
-                    <li>
-                      Paste the following environment setting into that stack
-                      before starting it. The stack builds the pinned PowerDNS
-                      image from the repository; no archive transfer or LDAP
-                      configuration is needed.
-                    </li>
-                    <li>
-                      Start the stack before {date(join.expires_at)}. Keep its
-                      independent persistent volume. Returning containers use
-                      saved credentials and do not need a new join.
-                    </li>
-                    <li>
-                      Return here and choose{" "}
-                      <strong>Check synchronization</strong>. Only use the new
-                      DNS endpoint after the assigned zones are confirmed in
-                      sync.
-                    </li>
-                  </ol>
-                </Help>
-                <label>
-                  DNS join configuration
+                <FieldHelp
+                  label="Deploy the DNS secondary"
+                  caption={<>DNS join configuration</>}
+                  help={
+                    <>
+                      <ol>
+                        <li>
+                          On the second Docker host, open a checkout of this
+                          repository and deploy{" "}
+                          <code>deploy/dns-secondary/compose.yaml</code> with
+                          your Docker Compose hosting tool.
+                        </li>
+                        <li>
+                          Paste the following environment setting into that
+                          stack before starting it. The stack builds the pinned
+                          PowerDNS image from the repository; no archive
+                          transfer or LDAP configuration is needed.
+                        </li>
+                        <li>
+                          Start the stack before {date(join.expires_at)}. Keep
+                          its independent persistent volume. Returning
+                          containers use saved credentials and do not need a new
+                          join.
+                        </li>
+                        <li>
+                          Return here and choose{" "}
+                          <strong>Check synchronization</strong>. Only use the
+                          new DNS endpoint after the assigned zones are
+                          confirmed in sync.
+                        </li>
+                      </ol>
+                    </>
+                  }
+                >
                   <textarea
                     aria-label="DNS join configuration"
                     readOnly
                     value={join.join_config}
                   />
-                </label>
+                </FieldHelp>
                 <button
                   disabled={busy}
                   onClick={() =>

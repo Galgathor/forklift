@@ -43,7 +43,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -66,7 +67,8 @@ button:disabled {
   cursor: wait;
 }
 input,
-select {
+select,
+textarea {
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--input);
@@ -76,7 +78,8 @@ select {
   outline: none;
 }
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--accent-text);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent);
 }
@@ -887,16 +890,30 @@ button.info-button[aria-expanded="true"] {
   min-width: 0;
 }
 .field-help {
-  position: relative;
+  min-width: 0;
+  margin-bottom: 16px;
+}
+.field-heading,
+.help-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
 }
-.field-help > .help {
-  position: absolute;
-  top: -5px;
-  right: 0;
+.field-heading {
+  margin-bottom: 7px;
 }
-.field-name {
-  padding-right: 34px;
+.field-heading > label,
+.help-row > label {
+  margin: 0;
+  min-width: 0;
+}
+.checkbox-help {
+  margin-bottom: 16px;
+}
+textarea {
+  resize: vertical;
+  min-height: 100px;
 }
 .help-popover {
   position: fixed;
@@ -945,4 +962,17 @@ button.info-button[aria-expanded="true"] {
 .help-content h3 {
   color: var(--text);
   font-size: 13px;
+}
+
+.help-row > button {
+  margin-block: 0;
+}
+.action-help {
+  margin-bottom: 12px;
+}
+.auth .action-help {
+  margin-bottom: 22px;
+}
+.auth .action-help > .primary {
+  margin-bottom: 0;
 }

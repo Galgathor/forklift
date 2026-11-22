@@ -408,28 +408,37 @@ export function Hosts({
                     hostname “ldap” usually cannot be used by other machines.
                   </>
                 }
+                caption={
+                  <>LDAPS endpoints (comma separated, in failover order)</>
+                }
               >
-                <label>
-                  <span className="field-name">
-                    LDAPS endpoints (comma separated, in failover order)
-                  </span>
-                  <input
-                    name="endpoints"
-                    defaultValue={
-                      editing?.endpoints.join(", ") ||
-                      hosts
-                        .find((h) => h.directory_id === "primary")
-                        ?.endpoints.join(", ") ||
-                      ""
-                    }
-                    placeholder="ldaps://ldap.homelab.internal:1636"
-                    required
-                  />
-                </label>
+                <input
+                  name="endpoints"
+                  defaultValue={
+                    editing?.endpoints.join(", ") ||
+                    hosts
+                      .find((h) => h.directory_id === "primary")
+                      ?.endpoints.join(", ") ||
+                    ""
+                  }
+                  placeholder="ldaps://ldap.homelab.internal:1636"
+                  required
+                />
               </FieldHelp>
 
               <fieldset className="host-groups">
-                <legend>Permitted login groups</legend>
+                <legend>
+                  <span className="help-row">
+                    Permitted login groups
+                    <Help label="Permitted login groups">
+                      Choose login groups to configure SSH access. Hosts managed
+                      only in DNS can leave these empty. Exported policy applies
+                      to LDAP users signing in through SSH/PAM; local accounts
+                      retain their existing policy. Each export rotates the
+                      host’s read-only bind credential.
+                    </Help>
+                  </span>
+                </legend>
                 {groups.map((g) => (
                   <label className="checkbox" key={g}>
                     <input
@@ -442,13 +451,7 @@ export function Hosts({
                   </label>
                 ))}
               </fieldset>
-              <Help label="Permitted login groups">
-                Choose login groups to configure SSH access. Hosts managed only
-                in DNS can leave these empty. Exported policy applies to LDAP
-                users signing in through SSH/PAM; local accounts retain their
-                existing policy. Each export rotates the host’s read-only bind
-                credential.
-              </Help>
+
               <fieldset>
                 <legend>DNS registration</legend>
                 <label className="checkbox">
@@ -466,8 +469,16 @@ export function Hosts({
                 )}
                 {dnsEnabled && (
                   <>
-                    <label>
-                      DNS zone
+                    <FieldHelp
+                      label="Choosing a DNS zone"
+                      caption={<>DNS zone</>}
+                      help={
+                        <>
+                          Create a forward zone in DNS before registering a new
+                          name.
+                        </>
+                      }
+                    >
                       <select
                         name="dns_zone"
                         aria-label="DNS zone"
@@ -486,13 +497,8 @@ export function Hosts({
                           </option>
                         ))}
                       </select>
-                    </label>
-                    {!zones.length && (
-                      <Help label="Choosing a DNS zone">
-                        Create a forward zone in DNS before registering a new
-                        name.
-                      </Help>
-                    )}
+                    </FieldHelp>
+
                     <label>
                       DNS name
                       <input
@@ -524,21 +530,23 @@ export function Hosts({
                         placeholder="fd00::50"
                       />
                     </label>
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        name="dns_reverse"
-                        defaultChecked={editing?.dns?.reverse ?? true}
-                      />
-                      Create matching reverse DNS
-                    </label>
-                    <Help label="Host DNS registration">
-                      Every address needs a matching managed reverse zone when
-                      reverse DNS is enabled. Unrelated records are preserved.
-                      DNS registration does not grant SSH access. Changing the
-                      inventory hostname does not change this DNS name; review
-                      both fields.
-                    </Help>
+                    <div className="help-row checkbox-help">
+                      <label className="checkbox">
+                        <input
+                          type="checkbox"
+                          name="dns_reverse"
+                          defaultChecked={editing?.dns?.reverse ?? true}
+                        />
+                        Create matching reverse DNS
+                      </label>
+                      <Help label="Host DNS registration">
+                        Every address needs a matching managed reverse zone when
+                        reverse DNS is enabled. Unrelated records are preserved.
+                        DNS registration does not grant SSH access. Changing the
+                        inventory hostname does not change this DNS name; review
+                        both fields.
+                      </Help>
+                    </div>
                   </>
                 )}
                 {!dnsEnabled && (editing?.dns || editing?.dns_status) && (
@@ -558,15 +566,17 @@ export function Hosts({
                     </select>
                   </label>
                 )}
-                <label className="checkbox">
-                  <input type="checkbox" name="dns_apply" defaultChecked />
-                  Apply DNS changes after saving
-                </label>
-                <Help label="Applying host DNS changes">
-                  You can save settings without applying DNS, then use Reconcile
-                  DNS. If DNS is unavailable, the host remains saved and can be
-                  retried.
-                </Help>
+                <div className="help-row checkbox-help">
+                  <label className="checkbox">
+                    <input type="checkbox" name="dns_apply" defaultChecked />
+                    Apply DNS changes after saving
+                  </label>
+                  <Help label="Applying host DNS changes">
+                    You can save settings without applying DNS, then use
+                    Reconcile DNS. If DNS is unavailable, the host remains saved
+                    and can be retried.
+                  </Help>
+                </div>
               </fieldset>
               <button className="primary" disabled={saving}>
                 {saving ? "Saving…" : "Save host"}

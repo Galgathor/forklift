@@ -172,9 +172,9 @@ function App() {
     value = "",
     type = "text",
     required = true,
-  ) => (
-    <label key={name}>
-      {label}
+    help?: { label: string; content: React.ReactNode },
+  ) => {
+    const input = (
       <input
         name={name}
         defaultValue={value}
@@ -183,8 +183,23 @@ function App() {
         readOnly={name === "username" && !!modal?.entry}
         autoComplete={type === "password" ? "new-password" : undefined}
       />
-    </label>
-  );
+    );
+    return help ? (
+      <FieldHelp
+        key={name}
+        label={help.label}
+        caption={label}
+        help={help.content}
+      >
+        {input}
+      </FieldHelp>
+    ) : (
+      <label key={name}>
+        {label}
+        {input}
+      </label>
+    );
+  };
   const banner = error && (
     <div className="error" role="alert">
       {error}
@@ -370,7 +385,14 @@ function App() {
                   <div className="dashboard-grid">
                     <section className="panel directory">
                       <div className="panel-title">
-                        <h2>Directory health</h2>
+                        <div className="heading-help">
+                          <h2>Directory health</h2>
+                          <Help label="Directory health checks">
+                            LDAP connectivity and replication context are
+                            checked on refresh and every 30 seconds while
+                            viewing this page.
+                          </Help>
+                        </div>
                         <span className="pill">
                           <CheckCircle2 size={14} />
                           {data.directory_source === "replica"
@@ -407,10 +429,6 @@ function App() {
                           <dd>Certificate-verified TLS</dd>
                         </div>
                       </dl>
-                      <Help label="Directory health checks">
-                        LDAP connectivity and replication context are checked on
-                        refresh and every 30 seconds while viewing this page.
-                      </Help>
                     </section>
                     <section className="panel">
                       <div className="panel-title">
@@ -681,12 +699,15 @@ function App() {
                     "username",
                     "Username",
                     modal.entry ? attr(modal.entry, "uid") : "",
-                  )}
-                  {modal.entry && (
-                    <Help label="Usernames">
-                      Keep the username unchanged. Renaming Unix accounts is not
-                      supported.
-                    </Help>
+                    "text",
+                    true,
+                    modal.entry
+                      ? {
+                          label: "Usernames",
+                          content:
+                            "Keep the username unchanged. Renaming Unix accounts is not supported.",
+                        }
+                      : undefined,
                   )}
                   {field(
                     "display_name",
@@ -742,26 +763,24 @@ function App() {
                         accounts.
                       </>
                     }
+                    caption={<>Primary group</>}
                   >
-                    <label>
-                      <span className="field-name">Primary group</span>
-                      <select
-                        name="gid"
-                        required
-                        defaultValue={
-                          modal.entry ? attr(modal.entry, "gidNumber") : ""
-                        }
-                      >
-                        <option value="" disabled>
-                          Select a primary group
+                    <select
+                      name="gid"
+                      required
+                      defaultValue={
+                        modal.entry ? attr(modal.entry, "gidNumber") : ""
+                      }
+                    >
+                      <option value="" disabled>
+                        Select a primary group
+                      </option>
+                      {data?.groups.map((g) => (
+                        <option key={g.dn} value={attr(g, "gidNumber")}>
+                          {attr(g, "cn")} · {attr(g, "gidNumber")}
                         </option>
-                        {data?.groups.map((g) => (
-                          <option key={g.dn} value={attr(g, "gidNumber")}>
-                            {attr(g, "cn")} · {attr(g, "gidNumber")}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                      ))}
+                    </select>
                   </FieldHelp>
 
                   {field(
@@ -773,22 +792,25 @@ function App() {
                     "password",
                     !modal.entry,
                   )}
-                  <Help label="Disabling accounts and Unix IDs">
-                    Disabling removes the password and expires the account. Set
-                    a new password when enabling it again. Unix IDs are
-                    allocated automatically and never reused.
-                  </Help>
-                  <label className="checkbox">
-                    <input
-                      name="disabled"
-                      type="checkbox"
-                      defaultChecked={
-                        !!modal.entry &&
-                        attr(modal.entry, "shadowExpire") === "1"
-                      }
-                    />
-                    Disable account
-                  </label>
+
+                  <div className="help-row checkbox-help">
+                    <label className="checkbox">
+                      <input
+                        name="disabled"
+                        type="checkbox"
+                        defaultChecked={
+                          !!modal.entry &&
+                          attr(modal.entry, "shadowExpire") === "1"
+                        }
+                      />
+                      Disable account
+                    </label>
+                    <Help label="Disabling accounts and Unix IDs">
+                      Disabling removes the password and expires the account.
+                      Set a new password when enabling it again. Unix IDs are
+                      allocated automatically and never reused.
+                    </Help>
+                  </div>
                   {modal.entry && (
                     <p className="hint">
                       Created {attr(modal.entry, "createTimestamp")} · Modified{" "}
@@ -811,12 +833,12 @@ function App() {
                       : "",
                     "text",
                     false,
+                    {
+                      label: "Group membership",
+                      content:
+                        "Add existing usernames. POSIX GIDs are allocated automatically. Host access policies are managed in the Hosts section.",
+                    },
                   )}
-                  <Help label="Group membership">
-                    Add existing usernames. POSIX GIDs are allocated
-                    automatically. Host access policies are managed in the Hosts
-                    section.
-                  </Help>
                 </>
               )}
               <button className="primary" disabled={busy || data?.read_only}>

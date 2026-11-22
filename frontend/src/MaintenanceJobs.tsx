@@ -190,11 +190,14 @@ function Progress({ working, close }: { working: Working; close: () => void }) {
         )}
         {job?.result?.sha256 && (
           <div className="recovery-review">
-            <strong>Trusted backup receipt</strong>
-            <Help label="Trusted backup receipts">
-              Save this checksum separately from the encrypted archive. You will
-              need it to verify a future recovery.
-            </Help>
+            <div className="help-row">
+              <strong>Trusted backup receipt</strong>
+              <Help label="Trusted backup receipts">
+                Save this checksum separately from the encrypted archive. You
+                will need it to verify a future recovery.
+              </Help>
+            </div>
+
             <code>{job.result.sha256}</code>
             <button
               className="secondary"

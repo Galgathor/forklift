@@ -296,59 +296,63 @@ export function Servers({
                     </button>
                     {node.certificate_rotation_pending ? (
                       <>
-                        <Help label="Activating a replica certificate">
-                          The candidate certificate is already trusted by
-                          Forklift. Deploy updated trust bundles to affected
-                          Linux clients before activation. Activation verifies
-                          the actual new certificate, retires the previous
-                          private pair and marks client bundles for final trust
-                          export.
-                        </Help>
-                        <button
-                          className="secondary"
-                          disabled={busy || readOnly || !!node.pending_epoch}
-                          onClick={() => {
-                            if (
-                              confirm(
-                                "Client trust is deployed. Activate the candidate, verify it and retire the previous key?",
+                        <div className="help-row">
+                          <button
+                            className="secondary"
+                            disabled={busy || readOnly || !!node.pending_epoch}
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  "Client trust is deployed. Activate the candidate, verify it and retire the previous key?",
+                                )
                               )
-                            )
+                                perform(async () => {
+                                  await api(
+                                    `replicas/${node.id}/certificate/finalize`,
+                                    "POST",
+                                    { acknowledge: true },
+                                  );
+                                  await refresh();
+                                });
+                            }}
+                          >
+                            Activate and verify certificate
+                          </button>
+                          <Help label="Activating a replica certificate">
+                            The candidate certificate is already trusted by
+                            Forklift. Deploy updated trust bundles to affected
+                            Linux clients before activation. Activation verifies
+                            the actual new certificate, retires the previous
+                            private pair and marks client bundles for final
+                            trust export.
+                          </Help>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="help-row">
+                          <button
+                            className="secondary"
+                            disabled={busy || readOnly || !!node.pending_epoch}
+                            onClick={() =>
                               perform(async () => {
                                 await api(
-                                  `replicas/${node.id}/certificate/finalize`,
+                                  `replicas/${node.id}/certificate`,
                                   "POST",
                                   { acknowledge: true },
                                 );
                                 await refresh();
-                              });
-                          }}
-                        >
-                          Activate and verify certificate
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <Help label="Staging a replica certificate">
-                          Forklift generates the candidate directly on this
-                          server. Its private key stays there; no command or
-                          certificate upload is required.
-                        </Help>
-                        <button
-                          className="secondary"
-                          disabled={busy || readOnly || !!node.pending_epoch}
-                          onClick={() =>
-                            perform(async () => {
-                              await api(
-                                `replicas/${node.id}/certificate`,
-                                "POST",
-                                { acknowledge: true },
-                              );
-                              await refresh();
-                            })
-                          }
-                        >
-                          Generate renewal certificate
-                        </button>
+                              })
+                            }
+                          >
+                            Generate renewal certificate
+                          </button>
+                          <Help label="Staging a replica certificate">
+                            Forklift generates the candidate directly on this
+                            server. Its private key stays there; no command or
+                            certificate upload is required.
+                          </Help>
+                        </div>
                       </>
                     )}
                   </details>

@@ -111,24 +111,22 @@ export function DnsImport({
                 ownership and may need review in Hosts.
               </>
             }
+            caption={<>Import behavior</>}
           >
-            <label>
-              <span className="field-name">Import behavior</span>
-              <select
-                aria-label="Import behavior"
-                disabled={busy}
-                value={mode}
-                onChange={(e) => {
-                  setMode(e.target.value);
-                  setPreview(null);
-                }}
-              >
-                <option value="merge">
-                  Merge values; preserve existing TTLs and disabled flags
-                </option>
-                <option value="replace">Replace listed record sets</option>
-              </select>
-            </label>
+            <select
+              aria-label="Import behavior"
+              disabled={busy}
+              value={mode}
+              onChange={(e) => {
+                setMode(e.target.value);
+                setPreview(null);
+              }}
+            >
+              <option value="merge">
+                Merge values; preserve existing TTLs and disabled flags
+              </option>
+              <option value="replace">Replace listed record sets</option>
+            </select>
           </FieldHelp>
 
           <button className="secondary" disabled={busy || !file}>
@@ -226,19 +224,25 @@ export function DnsImport({
                 />
                 I reviewed these DNS record changes.
               </label>
-              <Help label="Interrupted imports">
-                Changes across record sets can partially succeed. Pending DNS
-                changes provide safe retry or explicit retention of
-                already-applied values.
-              </Help>
-              <button
-                className="primary"
-                disabled={
-                  busy || !confirmed || name !== zone || !preview.changes.length
-                }
-              >
-                {busy ? "Applying…" : "Apply DNS import"}
-              </button>
+
+              <div className="help-row action-help">
+                <button
+                  className="primary"
+                  disabled={
+                    busy ||
+                    !confirmed ||
+                    name !== zone ||
+                    !preview.changes.length
+                  }
+                >
+                  {busy ? "Applying…" : "Apply DNS import"}
+                </button>
+                <Help label="Interrupted imports">
+                  Changes across record sets can partially succeed. Pending DNS
+                  changes provide safe retry or explicit retention of
+                  already-applied values.
+                </Help>
+              </div>
             </form>
           </>
         )}

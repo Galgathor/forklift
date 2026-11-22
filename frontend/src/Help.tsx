@@ -1,4 +1,12 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  cloneElement,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { Info, X } from "lucide-react";
 
@@ -110,13 +118,24 @@ export function Help({ label, children }: Props) {
 
 export function FieldHelp({
   label,
+  caption,
   help,
   children,
-}: Props & { help: ReactNode }) {
+}: {
+  label: string;
+  caption: ReactNode;
+  help: ReactNode;
+  children: ReactElement<{ id?: string }>;
+}) {
+  const generatedId = useId();
+  const id = children.props.id || generatedId;
   return (
     <div className="field-help">
-      {children}
-      <Help label={label}>{help}</Help>
+      <div className="field-heading">
+        <label htmlFor={id}>{caption}</label>
+        {help && <Help label={label}>{help}</Help>}
+      </div>
+      {cloneElement(children, { id })}
     </div>
   );
 }

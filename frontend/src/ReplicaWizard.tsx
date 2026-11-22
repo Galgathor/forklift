@@ -93,6 +93,21 @@ export function ReplicaWizard({
               <Help label="Replica prerequisites">
                 The new machine needs Linux and Docker. Its primary connection
                 is inherited from setup.
+                {setup && (
+                  <p>
+                    Copies from {setup.primary.endpoint}. Enrolls through{" "}
+                    {setup.manager_url}. These settings are inherited
+                    automatically.
+                  </p>
+                )}
+                <h3>Network access</h3>
+                <p>
+                  Allow the manager to reach both private ports and Linux
+                  clients to reach the directory port. The new machine must
+                  reach the primary and the WebUI HTTPS address. No existing
+                  LDAP installation, manual certificate generation or
+                  administrator script is needed.
+                </p>
               </Help>
             </div>
           </div>
@@ -106,12 +121,7 @@ export function ReplicaWizard({
             {error}
           </div>
         )}
-        {setup && (
-          <Help label="Inherited replica settings">
-            Copies from {setup.primary.endpoint}. Enrolls through{" "}
-            {setup.manager_url}. These settings are inherited automatically.
-          </Help>
-        )}
+
         {setup && !setup.https_ready && (
           <div className="error" role="status">
             Configure WebUI HTTPS in Settings before enrolling a replica. The
@@ -155,16 +165,14 @@ export function ReplicaWizard({
                   it resolve to this private address.
                 </>
               }
+              caption={<>Stable DNS name (optional)</>}
             >
-              <label>
-                <span className="field-name">Stable DNS name (optional)</span>
-                <input
-                  value={hostname}
-                  onChange={(e) => setHostname(e.target.value.trim())}
-                  placeholder="Leave blank to use the private IP"
-                  readOnly={!!created}
-                />
-              </label>
+              <input
+                value={hostname}
+                onChange={(e) => setHostname(e.target.value.trim())}
+                placeholder="Leave blank to use the private IP"
+                readOnly={!!created}
+              />
             </FieldHelp>
 
             <label>
@@ -201,25 +209,18 @@ export function ReplicaWizard({
                   a private key.
                 </>
               }
+              caption={<>WebUI HTTPS CA certificate</>}
             >
-              <label>
-                <span className="field-name">WebUI HTTPS CA certificate</span>
-                <textarea
-                  value={managerCa}
-                  onChange={(e) => setManagerCa(e.target.value)}
-                  rows={4}
-                  placeholder="-----BEGIN CERTIFICATE-----"
-                  spellCheck={false}
-                />
-              </label>
+              <textarea
+                value={managerCa}
+                onChange={(e) => setManagerCa(e.target.value)}
+                rows={4}
+                placeholder="-----BEGIN CERTIFICATE-----"
+                spellCheck={false}
+              />
             </FieldHelp>
           </details>
-          <Help label="Replica network access">
-            Allow the manager to reach both private ports and Linux clients to
-            reach the directory port. The new machine must reach the primary and
-            the WebUI HTTPS address. No existing LDAP installation, manual
-            certificate generation or administrator script is needed.
-          </Help>
+
           <button
             className="primary"
             disabled={busy || readOnly || !setup?.https_ready}
@@ -260,6 +261,15 @@ export function ReplicaWizard({
                     {"cd deploy/replica\ndocker compose up -d --build"}
                   </code>
                 </pre>
+                <h3>Trust and restarts</h3>
+                <p>
+                  The primary’s public CA is included. The replica generates its
+                  private key locally and enrolls over verified HTTPS. After
+                  enrollment, you can remove the temporary join setting; future
+                  restarts use persistent configuration. SSH access still
+                  requires choosing login groups and deploying the host’s client
+                  configuration.
+                </p>
               </Help>
             </div>
 
@@ -295,14 +305,6 @@ export function ReplicaWizard({
               Generating a new configuration invalidates the previous one.
             </p>
 
-            <Help label="Replica trust and restarts">
-              The primary’s public CA is included. The replica generates its
-              private key locally and enrolls over verified HTTPS. After
-              enrollment, you can remove the temporary join setting; future
-              restarts use persistent configuration. SSH access still requires
-              choosing login groups and deploying the host’s client
-              configuration.
-            </Help>
             <span
               className={current?.state === "synchronized" ? "pill" : "badge"}
               role="status"

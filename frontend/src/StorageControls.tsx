@@ -511,13 +511,19 @@ export function BackupRestore({
         {busy ? "Uploading and validating…" : "Verify backup"}
       </button>
       <details>
-        <summary>Restore and replace this installation</summary>
-        <Help label="Restoring an installation">
-          The current installation is snapshotted for rollback before
-          replacement. Fence the original LDAP/DNS primary services and every
-          old directory/DNS replica before starting a recovered installation.
-          Archived passwords may restore access revoked after the backup.
-        </Help>
+        <summary>
+          <span className="help-row">
+            Restore and replace this installation
+            <Help label="Restoring an installation">
+              The current installation is snapshotted for rollback before
+              replacement. Fence the original LDAP/DNS primary services and
+              every old directory/DNS replica before starting a recovered
+              installation. Archived passwords may restore access revoked after
+              the backup.
+            </Help>
+          </span>
+        </summary>
+
         <FieldHelp
           label="Future UID and GID floor"
           help={
@@ -527,17 +533,15 @@ export function BackupRestore({
               reconstruct missing allocation history.
             </>
           }
+          caption={<>Future UID/GID floor</>}
         >
-          <label>
-            <span className="field-name">Future UID/GID floor</span>
-            <input
-              type="number"
-              min={10001}
-              max={2147483647}
-              value={floor}
-              onChange={(e) => setFloor(Number(e.target.value))}
-            />
-          </label>
+          <input
+            type="number"
+            min={10001}
+            max={2147483647}
+            value={floor}
+            onChange={(e) => setFloor(Number(e.target.value))}
+          />
         </FieldHelp>
 
         <label className="checkbox">

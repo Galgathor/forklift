@@ -218,23 +218,31 @@ export function Dns({ api }: { api: Api }) {
                 <p className="hint">
                   {t.status.error || t.status.state.replaceAll("_", " ")}
                 </p>
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    perform(async () => {
-                      const status = await api(
-                        `dns/hosts/${t.id}/reconcile`,
-                        "POST",
-                        {},
-                      );
-                      setNotice(status.error || "Host DNS reconciled.");
-                      await load();
-                    })
-                  }
-                >
-                  Reconcile host DNS
-                </button>
-                {t.deleted ? (
+                <div className="help-row action-help">
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      perform(async () => {
+                        const status = await api(
+                          `dns/hosts/${t.id}/reconcile`,
+                          "POST",
+                          {},
+                        );
+                        setNotice(status.error || "Host DNS reconciled.");
+                        await load();
+                      })
+                    }
+                  >
+                    Reconcile host DNS
+                  </button>
+                  {!t.deleted && (
+                    <Help label="Retrying host DNS">
+                      Review desired names, addresses and pending changes in
+                      Hosts before retrying.
+                    </Help>
+                  )}
+                </div>
+                {t.deleted && (
                   <button
                     disabled={busy}
                     onClick={() =>
@@ -254,11 +262,6 @@ export function Dns({ api }: { api: Api }) {
                   >
                     Keep records; close cleanup
                   </button>
-                ) : (
-                  <Help label="Retrying host DNS">
-                    Review desired names, addresses and pending changes in Hosts
-                    before retrying.
-                  </Help>
                 )}
               </div>
             </div>
@@ -634,8 +637,10 @@ function Dialog({
   close,
   children,
   error,
+  help,
 }: {
   title: string;
+  help?: React.ReactNode;
   close: () => void;
   children: React.ReactNode;
   error?: string;
@@ -649,7 +654,10 @@ function Dialog({
         aria-label={title}
       >
         <div className="panel-title">
-          <h2>{title}</h2>
+          <div className="heading-help">
+            <h2>{title}</h2>
+            {help}
+          </div>
           <button aria-label="Close DNS dialog" onClick={close}>
             <X />
           </button>
@@ -702,8 +710,20 @@ function ZoneForm({
             <option value="reverse6">ULA IPv6 reverse</option>
           </select>
         </label>
-        <label>
-          {kind === "reverse4" ? "Private network (CIDR)" : "Zone name"}
+        <FieldHelp
+          label="Reverse DNS networks"
+          caption={
+            <>{kind === "reverse4" ? "Private network (CIDR)" : "Zone name"}</>
+          }
+          help={
+            kind === "reverse4" ? (
+              <>
+                Use aligned /8, /16 or /24 RFC1918 networks. 192.168.1.0/24
+                becomes 1.168.192.in-addr.arpa.
+              </>
+            ) : null
+          }
+        >
           <input
             name="name"
             required
@@ -715,13 +735,8 @@ function ZoneForm({
                   : "example.test"
             }
           />
-        </label>
-        {kind === "reverse4" && (
-          <Help label="Reverse DNS networks">
-            Use aligned /8, /16 or /24 RFC1918 networks. 192.168.1.0/24 becomes
-            1.168.192.in-addr.arpa.
-          </Help>
-        )}
+        </FieldHelp>
+
         <label>
           Primary nameserver
           <input name="nameserver" required placeholder="ns1.example.test." />
@@ -735,11 +750,9 @@ function ZoneForm({
               record set.
             </>
           }
+          caption={<>Nameserver address</>}
         >
-          <label>
-            <span className="field-name">Nameserver address</span>
-            <input name="nameserver_address" placeholder="192.168.1.2" />
-          </label>
+          <input name="nameserver_address" placeholder="192.168.1.2" />
         </FieldHelp>
 
         <label>
@@ -807,16 +820,14 @@ function RecordForm({
               fully qualified name must end in this zone.
             </>
           }
+          caption={<>Record name</>}
         >
-          <label>
-            <span className="field-name">Record name</span>
-            <input
-              name="name"
-              defaultValue={record?.name || ""}
-              readOnly={!!record}
-              placeholder="monolith or @"
-            />
-          </label>
+          <input
+            name="name"
+            defaultValue={record?.name || ""}
+            readOnly={!!record}
+            placeholder="monolith or @"
+          />
         </FieldHelp>
 
         <label>
@@ -854,36 +865,37 @@ function RecordForm({
               5 389 ldap.example. Targets use full DNS names.
             </>
           }
+          caption={<>Record values</>}
         >
-          <label>
-            <span className="field-name">Record values</span>
-            <textarea
-              aria-label="Record values"
-              name="values"
-              rows={5}
-              defaultValue={
-                record?.records.map((r) => r.content).join("\n") || ""
-              }
-              required
-            />
-          </label>
+          <textarea
+            aria-label="Record values"
+            name="values"
+            rows={5}
+            defaultValue={
+              record?.records.map((r) => r.content).join("\n") || ""
+            }
+            required
+          />
         </FieldHelp>
 
         {(type === "A" || type === "AAAA") && (
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              name="auto_ptr"
-              defaultChecked={!!record?.auto_ptr}
-            />
-            Manage matching PTR records
-          </label>
+          <div className="help-row checkbox-help">
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                name="auto_ptr"
+                defaultChecked={!!record?.auto_ptr}
+              />
+              Manage matching PTR records
+            </label>
+            <Help label="Automatic PTR records">
+              Automatic PTR requires a matching managed reverse zone.
+              Forward/reverse writes can partially succeed; pending changes
+              provide safe retries. Manually edited PTR values are preserved.
+            </Help>
+          </div>
         )}
-        <Help label="Automatic PTR records">
-          Automatic PTR requires a matching managed reverse zone.
-          Forward/reverse writes can partially succeed; pending changes provide
-          safe retries. Manually edited PTR values are preserved.
-        </Help>
+
         <button className="primary" disabled={busy}>
           Save record set
         </button>
@@ -909,11 +921,17 @@ function SoaForm({
   );
   const parts = record?.records[0]?.content.split(/\s+/) || [];
   return (
-    <Dialog title="DNS zone settings" close={close} error={error}>
-      <Help label="Zone serials and replication">
-        SOA serials increase automatically on API changes. Assign this zone to a
-        DNS secondary in DNS servers to enable authenticated transfers.
-      </Help>
+    <Dialog
+      title="DNS zone settings"
+      close={close}
+      error={error}
+      help={
+        <Help label="Zone serials and replication">
+          SOA serials increase automatically on API changes. Assign this zone to
+          a DNS secondary in DNS servers to enable authenticated transfers.
+        </Help>
+      }
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();

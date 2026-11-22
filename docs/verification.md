@@ -84,3 +84,5 @@ Single Docker host tests simulate independent machines with separate storage and
 ## Contextual WebUI help
 
 Supporting explanations and deployment instructions use shared information popovers beside headings and fields. Field labels, operational data, errors, import warnings and destructive confirmations remain visible. The TypeScript/Vite build and Chromium suite verify click/keyboard opening, Escape and focus return, outside dismissal, one-open-at-a-time behavior, mobile viewport bounds, dark/light themes and existing setup/DNS/host/backup flows. The popovers use the browser's native Popover API and require a current browser.
+
+Browser layout checks also measure help-button adjacency and vertical alignment at desktop/mobile widths, verify field-label associations through real forms, and check Record Values background/border/focus visibility in both themes. Textareas share the standard input styling.
