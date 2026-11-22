@@ -311,21 +311,10 @@ fn profile_value(a: &App, id: &str) -> Result<Value> {
         String::new()
     };
     let mut authorities = Vec::<Value>::new();
-    let db = a.db.lock().unwrap();
-    if let Some(raw) = db
-        .query_row(
-            "SELECT value FROM settings WHERE key='dns_primary'",
-            [],
-            |r| r.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(anyhow::Error::from)?
-        && let Ok(v) = serde_json::from_str::<Value>(&raw)
-        && v["address"].is_string()
-        && v["dns_port"].as_u64().is_some_and(|v| v > 0 && v <= 65535)
-    {
-        authorities.push(json!({"address":v["address"],"port":v["dns_port"]}));
+    if let Some(p) = dns::replication::primary(a)? {
+        authorities.push(json!({"address":p.address,"port":p.dns_port}));
     }
+    let db = a.db.lock().unwrap();
     // Read only public serving addresses, never management API/control credentials.
     let exists: bool = db
         .query_row(

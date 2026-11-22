@@ -92,8 +92,8 @@ services:
     restart: unless-stopped
     user: "10001:10001"
     ports:
-      - '${FORKLIFT_DNS_BIND:-127.0.0.1}:${FORKLIFT_DNS_PORT:-53}:5353/udp'
-      - '${FORKLIFT_DNS_BIND:-127.0.0.1}:${FORKLIFT_DNS_PORT:-53}:5353/tcp'
+      - '${FORKLIFT_DNS_BIND:-0.0.0.0}:${FORKLIFT_DNS_PORT:-53}:5353/udp'
+      - '${FORKLIFT_DNS_BIND:-0.0.0.0}:${FORKLIFT_DNS_PORT:-53}:5353/tcp'
     volumes:
       - dns_data:/dns
       - dns_secrets:/run/dns-secrets
@@ -139,7 +139,7 @@ services:
     restart: unless-stopped
     environment:
       FORKLIFT_PUBLIC_URL: ${FORKLIFT_PUBLIC_URL:-http://localhost:8080}
-      FORKLIFT_DNS_BIND: ${FORKLIFT_DNS_BIND:-127.0.0.1}
+      FORKLIFT_DNS_BIND: ${FORKLIFT_DNS_BIND:-0.0.0.0}
       FORKLIFT_DNS_PORT: ${FORKLIFT_DNS_PORT:-53}
     ports:
       - '${FORKLIFT_BIND:-127.0.0.1}:${FORKLIFT_PORT:-8080}:8080'

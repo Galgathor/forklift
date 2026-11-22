@@ -1,6 +1,5 @@
 //! Probe configured services only. Never edits a firewall or accepts an arbitrary scan target.
 use super::*;
-use rusqlite::OptionalExtension;
 #[derive(Clone)]
 struct Target {
     label: String,
@@ -69,19 +68,11 @@ pub(crate) async fn checks(
         });
     }
     {
-        let db = a.db.lock().unwrap();
-        let primary = db
-            .query_row(
-                "SELECT value FROM settings WHERE key='dns_primary'",
-                [],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(anyhow::Error::from)?;
         let mut servers = Vec::new();
-        if let Some(p) = primary {
-            servers.push(serde_json::from_str::<Value>(&p).map_err(anyhow::Error::from)?);
+        if let Some(p) = dns::replication::primary(&a)? {
+            servers.push(json!(p));
         }
+        let db = a.db.lock().unwrap();
         let exists:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='dns_servers' AND type='table')",[],|r|r.get(0)).map_err(anyhow::Error::from)?;
         let mut q = db
             .prepare(if exists {

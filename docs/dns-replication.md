@@ -4,11 +4,13 @@ Forklift manages one writable PowerDNS primary and up to eight independent secon
 
 ## Prepare the primary
 
-The existing PowerDNS container in the primary stack is the DNS primary; do not create another server for it. In your Docker hosting tool, set `FORKLIFT_DNS_BIND` to that host's private interface and `FORKLIFT_DNS_PORT` to an available DNS port, then recreate the DNS container while retaining its volumes. The default `127.0.0.1` binding cannot accept transfers from another machine.
+The main stack already includes your primary DNS server. Forklift automatically uses the private server address chosen during initial setup and the DNS port from your Docker settings. You do not need to enter that endpoint again. A specific private `FORKLIFT_DNS_BIND` address takes precedence over the setup address.
 
-For example, publish `192.168.1.2:53` over **both UDP and TCP**. If another resolver owns that port, choose a separate private IP/host or a nonstandard port such as `1053`. Host-wide wildcard listeners can conflict with specific-address listeners. Do not replace your existing resolver or change host DNS settings. DNS cannot pass through an HTTP reverse proxy.
+New installations listen on host interfaces (`FORKLIFT_DNS_BIND=0.0.0.0`) by default. Restrict DNS access to your private network using your host/network firewall. If another service owns port 53, choose a free private interface or another published port in `.env`, then recreate the DNS container without deleting its volumes. For example, use `192.168.1.2:1053` if your DNS resolver supports a custom destination port.
 
-Open **DNS → DNS servers → Primary DNS endpoint**. Enter the same private address and published port and confirm they are reachable from the secondary. This endpoint is DNS traffic, not the LDAP, WebUI or native PowerDNS API port. Changing it saves new desired configuration; reconcile enrolled nodes afterward.
+Existing `.env` files are preserved. If yours still uses `127.0.0.1`, DNS remains local-only: change the bind address before adding a secondary. Forklift will explain this rather than advertise an unreachable address. **DNS → DNS servers** displays the detected endpoint. The advanced override is only for networks where other servers must use a different address; it does not change Docker port publishing. Existing saved overrides remain in effect.
+
+Secondary endpoints are filled in from the address and ports chosen when deploying each secondary. You do not need to configure an existing DNS service first. DNS traffic does not pass through an HTTP reverse proxy.
 
 ## Add a secondary
 

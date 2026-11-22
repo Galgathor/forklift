@@ -1224,6 +1224,17 @@ pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Val
         q.query_map([],|r|Ok(json!({"at":r.get::<_,i64>(0)?,"action":r.get::<_,String>(1)?,"target":r.get::<_,String>(2)?}))).map_err(anyhow::Error::from)?.collect::<std::result::Result<Vec<_>,_>>().map_err(anyhow::Error::from)?
     };
     let host_tasks = host_records::tasks(&a)?;
+    let endpoint = replication::primary(&a)?;
+    let address = endpoint
+        .as_ref()
+        .map(|p| p.address.to_string())
+        .unwrap_or_else(|| std::env::var("FORKLIFT_DNS_BIND").unwrap_or("0.0.0.0".into()));
+    let port = endpoint.map(|p| p.dns_port).unwrap_or_else(|| {
+        std::env::var("FORKLIFT_DNS_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(53)
+    });
     let data = async {
         let (status, raw) = transport(Method::GET, "/inspect", None, true).await?;
         if !status.is_success() {
@@ -1232,13 +1243,8 @@ pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Val
             ));
         }
         let mut health: Value = serde_json::from_slice(&raw).map_err(anyhow::Error::from)?;
-        health["address"] = json!(std::env::var("FORKLIFT_DNS_BIND").unwrap_or("127.0.0.1".into()));
-        health["port"] = json!(
-            std::env::var("FORKLIFT_DNS_PORT")
-                .ok()
-                .and_then(|v| v.parse::<u16>().ok())
-                .unwrap_or(53)
-        );
+        health["address"] = json!(address);
+        health["port"] = json!(port);
         let list = zones().await?;
         if list.len() > 128 {
             return Err(unavailable(
@@ -1258,7 +1264,7 @@ pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Val
             json!({"available":true,"server":health,"zones":list,"changes":changes,"host_tasks":host_tasks,"errors":errors}),
         )),
         Err(e) => Ok(Json(
-            json!({"available":false,"error":e.1,"zones":[],"changes":changes,"host_tasks":host_tasks,"errors":errors,"server":{"api_available":false,"service_available":null,"role":"standalone","replication":"not_configured","address":std::env::var("FORKLIFT_DNS_BIND").unwrap_or("127.0.0.1".into()),"port":std::env::var("FORKLIFT_DNS_PORT").ok().and_then(|v|v.parse::<u16>().ok()).unwrap_or(53)}}),
+            json!({"available":false,"error":e.1,"zones":[],"changes":changes,"host_tasks":host_tasks,"errors":errors,"server":{"api_available":false,"service_available":null,"role":"standalone","replication":"not_configured","address":address,"port":port}}),
         )),
     }
 }

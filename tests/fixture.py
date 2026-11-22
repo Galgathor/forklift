@@ -10,11 +10,11 @@ def run(args,data=None,env=None,cwd=None,check=True):
     if check and r.returncode:raise RuntimeError('Command failed: '+args[0]+' '+args[1]+'; '+re.sub(r'[a-f0-9]{64,}','[redacted]',r.stderr.decode(errors='replace')[-1500:]))
     return r
 class Stack:
-    def __init__(self,https=False):
+    def __init__(self,https=False,dns_bind="127.0.0.1"):
         self.project='forklift-v5-test-'+secrets.token_hex(4);self.temp=tempfile.TemporaryDirectory(prefix=self.project);self.root=Path(self.temp.name)
         self.bootstrap=secrets.token_urlsafe(40);self.password=secrets.token_urlsafe(30);self.csrf='';self.checks=0
         self.url=('https' if https else 'http')+'://localhost:'+str(port());self.https=https
-        self.env={**os.environ,'FORKLIFT_IMAGE_PREFIX':'local/forklift','FORKLIFT_IMAGE_TAG':'dev','FORKLIFT_PUBLIC_URL':self.url,'FORKLIFT_PORT':str(port() if https else self.url.rsplit(':',1)[1]),'FORKLIFT_BOOTSTRAP_TOKEN':self.bootstrap,'FORKLIFT_BIND':'127.0.0.1','FORKLIFT_DNS_BIND':'127.0.0.1','FORKLIFT_DNS_PORT':str(port())}
+        self.env={**os.environ,'FORKLIFT_IMAGE_PREFIX':'local/forklift','FORKLIFT_IMAGE_TAG':'dev','FORKLIFT_PUBLIC_URL':self.url,'FORKLIFT_PORT':str(port() if https else self.url.rsplit(':',1)[1]),'FORKLIFT_BOOTSTRAP_TOKEN':self.bootstrap,'FORKLIFT_BIND':'127.0.0.1','FORKLIFT_DNS_BIND':dns_bind,'FORKLIFT_DNS_PORT':str(port())}
         self.jar=http.cookiejar.CookieJar();self.context=None
         if https:
             def openssl(*args):return run(['openssl',*args],cwd=self.root)

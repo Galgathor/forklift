@@ -108,68 +108,75 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
       )}
 
       {inventory && (
-        <details open={!inventory.primary}>
-          <summary>Primary DNS endpoint</summary>
-          <form
-            key={JSON.stringify(inventory.primary)}
-            onSubmit={(e) => {
-              e.preventDefault();
-              const f = new FormData(e.currentTarget);
-              void perform(async () => {
-                await api("dns/primary", "PUT", {
-                  address: String(f.get("address")),
-                  dns_port: Number(f.get("dns_port")),
-                  acknowledge: f.has("acknowledge"),
+        <>
+          <p role="status">
+            {inventory.primary
+              ? `Primary DNS: ${inventory.primary.address}:${inventory.primary.dns_port}`
+              : "Forklift could not find a DNS address that other machines can use. Check the DNS listening address and port in your Docker settings."}
+          </p>
+          <details>
+            <summary>Advanced: override primary address</summary>
+            <form
+              key={JSON.stringify(inventory.primary)}
+              onSubmit={(e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget);
+                void perform(async () => {
+                  await api("dns/primary", "PUT", {
+                    address: String(f.get("address")),
+                    dns_port: Number(f.get("dns_port")),
+                    acknowledge: f.has("acknowledge"),
+                  });
+                  await load();
+                  setNotice(
+                    "Primary endpoint saved. Reconcile enrolled nodes if the address changed.",
+                  );
                 });
-                await load();
-                setNotice(
-                  "Primary endpoint saved. Reconcile enrolled nodes if the address changed.",
-                );
-              });
-            }}
-          >
-            <label>
-              Primary private IPv4 address
-              <input
-                aria-label="Primary private IPv4 address"
-                name="address"
-                defaultValue={inventory.primary?.address || ""}
-                placeholder="192.168.1.2"
-                required
-              />
-            </label>
-            <FieldHelp
-              label="Primary DNS endpoint"
-              help={
-                <>
-                  Choose the private address and DNS port published by your
-                  primary DNS container. Other machines cannot reach the default
-                  localhost address. This is separate from LDAP and the WebUI.
-                  If port 53 is already in use, choose another address or port.
-                </>
-              }
-              caption={<>Published primary DNS port</>}
+              }}
             >
-              <input
-                aria-label="Published primary DNS port"
-                name="dns_port"
-                type="number"
-                min="1"
-                max="65535"
-                defaultValue={inventory.primary?.dns_port || 53}
-                required
-              />
-            </FieldHelp>
+              <label>
+                Primary private IPv4 address
+                <input
+                  aria-label="Primary private IPv4 address"
+                  name="address"
+                  defaultValue={inventory.primary?.address || ""}
+                  placeholder="192.168.1.2"
+                  required
+                />
+              </label>
+              <FieldHelp
+                label="Primary DNS endpoint"
+                help={
+                  <>
+                    Forklift fills this in from your setup and Docker settings.
+                    Only override it if other servers need a different address,
+                    such as when your router forwards DNS traffic. Changing this
+                    value does not change the Docker listening address.
+                  </>
+                }
+                caption={<>Published primary DNS port</>}
+              >
+                <input
+                  aria-label="Published primary DNS port"
+                  name="dns_port"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  defaultValue={inventory.primary?.dns_port || 53}
+                  required
+                />
+              </FieldHelp>
 
-            <label className="checkbox">
-              <input name="acknowledge" type="checkbox" required />
-              This endpoint is reachable from the secondary over TCP and UDP.
-            </label>
-            <button className="primary" disabled={busy}>
-              Save primary DNS endpoint
-            </button>
-          </form>
-        </details>
+              <label className="checkbox">
+                <input name="acknowledge" type="checkbox" required />
+                This endpoint is reachable from the secondary over TCP and UDP.
+              </label>
+              <button className="primary" disabled={busy}>
+                Save primary DNS endpoint
+              </button>
+            </form>
+          </details>
+        </>
       )}
       <div className="table-toolbar">
         <h3>Secondary servers</h3>

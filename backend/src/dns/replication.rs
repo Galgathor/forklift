@@ -6,8 +6,8 @@ use rusqlite::OptionalExtension;
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Primary {
-    address: Ipv4Addr,
-    dns_port: u16,
+    pub(crate) address: Ipv4Addr,
+    pub(crate) dns_port: u16,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -87,7 +87,7 @@ fn store(a: &App, n: &Node) -> Result<()> {
 fn public(n: &Node) -> Value {
     json!({"id":n.id,"name":n.draft.name,"address":n.draft.address,"dns_port":n.draft.dns_port,"control_port":n.draft.control_port,"zones":n.draft.zones,"revision":n.revision,"state":n.state,"expires_at":n.expires_at,"checked_at":n.checked_at,"last_sync_at":n.last_sync_at,"report":n.report,"error":n.last_error,"transfers_revoked":n.revoked,"credential_epoch":n.generation,"pending_epoch":n.pending_generation,"rotation":n.rotation,"certificate_rotation_pending":n.next_certificate.is_some()||n.certificate_retirement_pending,"certificate_staged_at":n.certificate_staged_at,"certificate_expires_at":n.certificate.as_ref().and_then(|c|openssl::x509::X509::from_pem(c.as_bytes()).ok()).map(|c|c.not_after().to_string())})
 }
-fn primary(a: &App) -> Result<Option<Primary>> {
+pub(crate) fn primary(a: &App) -> Result<Option<Primary>> {
     let raw =
         a.db.lock()
             .unwrap()
@@ -98,11 +98,28 @@ fn primary(a: &App) -> Result<Option<Primary>> {
             )
             .optional()
             .map_err(anyhow::Error::from)?;
-    raw.map(|v| serde_json::from_str(&v))
-        .transpose()
-        .map_err(anyhow::Error::from)
-        .map_err(Error::from)
+    if let Some(raw) = raw {
+        return serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(anyhow::Error::from)
+            .map_err(Error::from);
+    }
+    let network = config(a).unwrap_or_default();
+    let bind = std::env::var("FORKLIFT_DNS_BIND").unwrap_or("0.0.0.0".into());
+    let port = std::env::var("FORKLIFT_DNS_PORT").unwrap_or("53".into());
+    Ok(automatic_primary(
+        &bind,
+        &port,
+        network["network"]["address"].as_str(),
+    ))
 }
+fn automatic_primary(bind: &str, port: &str, host: Option<&str>) -> Option<Primary> {
+    let address: Ipv4Addr = if bind == "0.0.0.0" { host? } else { bind }.parse().ok()?;
+    let dns_port = port.parse().ok()?;
+    private(address, dns_port).ok()?;
+    Some(Primary { address, dns_port })
+}
+
 fn private(address: Ipv4Addr, port: u16) -> Result<()> {
     if !address.is_private() || port == 0 {
         return Err(bad("Use a private IPv4 address and a port from 1 to 65535"));
@@ -414,7 +431,9 @@ pub(crate) async fn create(
     let who = authorize(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     if primary(&a)?.is_none() {
-        return Err(bad("Configure a reachable primary DNS address first"));
+        return Err(bad(
+            "DNS is not reachable from other machines. Check the DNS listening address in your Docker settings.",
+        ));
     }
     validate_draft(&mut p).await?;
     let all = nodes(&a)?;
@@ -892,6 +911,29 @@ pub(crate) async fn finalize_certificate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn automatic_endpoint_uses_published_listener_and_setup_address() {
+        let host = Some("192.168.1.2");
+        let p = automatic_primary("0.0.0.0", "1053", host).unwrap();
+        assert_eq!(p.address.to_string(), "192.168.1.2");
+        assert_eq!(p.dns_port, 1053);
+        assert_eq!(
+            automatic_primary("192.168.1.3", "53", host)
+                .unwrap()
+                .address
+                .to_string(),
+            "192.168.1.3"
+        );
+        for (bind, port, host) in [
+            ("127.0.0.1", "53", host),
+            ("0.0.0.0", "53", None),
+            ("0.0.0.0", "0", host),
+            ("0.0.0.0", "invalid", host),
+            ("0.0.0.0", "53", Some("8.8.8.8")),
+        ] {
+            assert!(automatic_primary(bind, port, host).is_none());
+        }
+    }
     #[test]
     fn dns_peer_endpoints_stay_on_private_unicast_networks() {
         assert!(private(Ipv4Addr::new(192, 168, 1, 2), 53).is_ok());
