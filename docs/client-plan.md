@@ -15,7 +15,7 @@ The Axum manager authorizes human administrators through LDAP membership, sessio
 
 ## Later milestones
 
-Milestones 1–2 are implemented. Milestone 3 adds read-only system diagnostics and authoritative issue/notification history. Milestone 4 completes Debian packaging, credential rotation and wider supported-Ubuntu recovery/security drills. No fake diagnostic results, automatic system repair, remote commands or automatic identity merging are permitted.
+Milestones 1–3 are implemented, including read-only system diagnostics and authoritative issue/notification history. Milestone 4 completes Debian packaging, credential rotation and wider supported-Ubuntu recovery/security drills. No fake diagnostic results, automatic system repair, remote commands or automatic identity merging are permitted.
 
 ## Milestone 2 architecture
 
@@ -28,3 +28,11 @@ Reuse enrollment keys, DPoP verification, stable host IDs and the existing DNS o
 5. Show actual inventory, freshness, DNS outcome, policy and bounded history in Hosts. Use contextual information buttons and existing styled dialogs. Verify native HTTPS, isolated netlink changes, real PowerDNS answers, persistence, stale reports, outages and revocation.
 
 System authentication diagnostics, issue/notification lifecycle, Debian packaging and credential rotation remain subsequent milestones.
+
+## Milestone 3 architecture
+
+Add typed diagnostic expectations to the existing monitoring policy. The authenticated client retrieves only bounded names, endpoints, public LDAP trust and test/context identifiers; no commands, scripts or user credentials. Native checks use fixed read-only tools, verified LDAP TLS, normal NSS/resolver lookups and DNS protocol queries with bounded execution/output. Cache the latest checks for offline CLI use and report them under a separate monotonic sequence/profile revision.
+
+Keep authoritative issues separate from observations and notifications. Require consecutive distinct failing reports (configurable), deduplicate active issues, resolve only on a positive check, and preserve unknown/stale results without false recovery. Server-clock offline/DNS failures join the same lifecycle. Retire superseded profiles/credentials explicitly. Bound retained history and notifications.
+
+Extend Hosts with DNS, Authentication, SSH and Issues views and add a shared notification control. Reuse contextual help and styled components; manual inventory remains unmonitored. Verify actual native checks, real TLS/LDAP/DNS services, issue/recovery/acknowledgment semantics, stale/replayed/cross-host reports and existing monitoring regressions without modifying development-host authentication or resolver files.

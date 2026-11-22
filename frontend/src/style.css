@@ -1005,3 +1005,10 @@ textarea {
   overflow-wrap: anywhere;
   font-size: 0.8rem;
 }
+
+.diagnostic-tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}

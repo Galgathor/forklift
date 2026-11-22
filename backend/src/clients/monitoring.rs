@@ -17,6 +17,7 @@ pub(super) struct Policy {
     dns_updates: bool,
     ipv4: Option<Selector>,
     ipv6: Option<Selector>,
+    diagnostics: diagnostics::Config,
 }
 impl Default for Policy {
     fn default() -> Self {
@@ -25,6 +26,7 @@ impl Default for Policy {
             dns_updates: false,
             ipv4: None,
             ipv6: None,
+            diagnostics: diagnostics::Config::default(),
         }
     }
 }
@@ -105,8 +107,14 @@ fn connectivity(m: &Monitor, n: &Enrollment, at: i64) -> &'static str {
 pub(super) fn summary(a: &App, n: &Enrollment) -> Result<Value> {
     let m = load(a, n.host_id.as_deref().unwrap_or_default())?;
     let current = m.credential_id == n.id;
+    let diagnostic = diagnostics::summary(
+        a,
+        n.host_id.as_deref().unwrap_or_default(),
+        ["active", "approved"].contains(&n.state.as_str()),
+        connectivity(&m, n, now()) == "online",
+    )?;
     Ok(
-        json!({"connectivity":connectivity(&m,n,now()),"received_at":if current {Some(m.observation.received_at).filter(|v|*v>0)}else{None},"interfaces":if current {m.observation.interfaces.clone()}else{vec![]},"interval":if current {Some(m.observation.interval).filter(|v|*v>0)}else{None},"offline_after":threshold(&m),"inventory":if current {m.observation.identity.as_ref()}else{None},"dns":if current {m.observation.dns.as_ref()}else{None}}),
+        json!({"diagnostics":diagnostic,"connectivity":connectivity(&m,n,now()),"received_at":if current {Some(m.observation.received_at).filter(|v|*v>0)}else{None},"interfaces":if current {m.observation.interfaces.clone()}else{vec![]},"interval":if current {Some(m.observation.interval).filter(|v|*v>0)}else{None},"offline_after":threshold(&m),"inventory":if current {m.observation.identity.as_ref()}else{None},"dns":if current {m.observation.dns.as_ref()}else{None}}),
     )
 }
 #[derive(Deserialize, Serialize)]
@@ -245,6 +253,7 @@ pub(crate) async fn heartbeat(
     hosts::load(&a, &id)?;
     let mut m = load(&a, &id)?;
     if m.credential_id != n.id {
+        diagnostics::retire(&a, &id)?;
         m.credential_id = n.id.clone();
         m.observation = Observation::default();
         // A replacement identity never inherits automatic DNS authorization.
@@ -267,6 +276,14 @@ pub(crate) async fn heartbeat(
         event(&mut m, "offline", detail);
         m.observation.offline = true;
     }
+    diagnostics::system(
+        &a,
+        &id,
+        "client.offline",
+        false,
+        "Client heartbeat recovered",
+        1,
+    )?;
     if m.observation.offline {
         event(&mut m, "connection_recovered", json!({}));
     }
@@ -317,9 +334,29 @@ pub(crate) async fn heartbeat(
     {
         event(&mut m, "dns_update", outcome.clone());
     }
+    if outcome["state"] == "applied" || outcome["state"] == "needs_retry" {
+        diagnostics::system(
+            &a,
+            &id,
+            "dns.update",
+            outcome["state"] == "needs_retry",
+            "Managed DNS address reconciliation failed",
+            m.policy.diagnostics.failure_threshold,
+        )?;
+    } else if outcome["state"] == "disabled" {
+        diagnostics::retire_check(&a, &id, "dns.update", "disabled")?;
+    }
     m.observation.dns = Some(outcome);
     save(&a, &id, &m)?;
     Ok(Json(response(&id, &m)))
+}
+fn history_view(a: &App, id: &str, m: &Monitor) -> Result<Vec<Value>> {
+    let mut events = m.history.clone();
+    events.extend(diagnostics::history(a, id)?);
+    events.sort_by_key(|v| v["at"].as_i64().unwrap_or(0));
+    let excess = events.len().saturating_sub(100);
+    events.drain(..excess);
+    Ok(events)
 }
 pub(crate) async fn details(
     State(a): State<App>,
@@ -330,7 +367,7 @@ pub(crate) async fn details(
     hosts::load(&a, &id)?;
     let m = load(&a, &id)?;
     Ok(Json(
-        json!({"policy":m.policy,"revision":m.revision,"history":m.history}),
+        json!({"policy":m.policy,"revision":m.revision,"history":history_view(&a,&id,&m)?}),
     ))
 }
 #[derive(Deserialize)]
@@ -355,6 +392,7 @@ pub(crate) async fn policy(
             "Monitoring settings changed; refresh before saving",
         ));
     }
+    diagnostics::validate_config(&p.policy.diagnostics)?;
     if !(90..=10800).contains(&p.policy.offline_after) {
         return Err(bad(
             "Offline threshold must be between 90 and 10800 seconds",
@@ -413,7 +451,7 @@ pub(crate) async fn policy(
         audit(&a, &who, "client monitoring policy", &id)?;
     }
     Ok(Json(
-        json!({"policy":m.policy,"revision":m.revision,"history":m.history}),
+        json!({"policy":m.policy,"revision":m.revision,"history":history_view(&a,&id,&m)?}),
     ))
 }
 pub(crate) fn watch(a: App) {
@@ -438,10 +476,33 @@ fn offline(a: &App) -> Result<()> {
             let detail = json!({"last_heartbeat":m.observation.received_at});
             event(&mut m, "offline", detail);
             m.observation.offline = true;
+            diagnostics::system(
+                a,
+                id,
+                "client.offline",
+                true,
+                "Client missed its heartbeat threshold",
+                1,
+            )?;
             save(a, id, &m)?;
         }
     }
+    for n in rows(a)?
+        .iter()
+        .filter(|n| !["active", "approved"].contains(&n.state.as_str()))
+    {
+        if let Some(id) = &n.host_id
+            && !by_host(a, id)?
+                .iter()
+                .any(|v| ["active", "approved"].contains(&v.state.as_str()))
+        {
+            diagnostics::retire(a, id)?;
+        }
+    }
     Ok(())
+}
+pub(super) fn diagnostic_config(a: &App, id: &str) -> Result<diagnostics::Config> {
+    Ok(load(a, id)?.policy.diagnostics)
 }
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { FieldHelp, Help } from "./Help";
+import { ClientDiagnostics } from "./ClientDiagnostics";
 import { ClientMonitoring } from "./ClientMonitoring";
 import { ConfirmDialog } from "./ConfirmDialog";
 export type ClientIdentity = {
@@ -25,6 +26,12 @@ export type ClientRecord = {
   enrolled_at: number | null;
   last_contact: number | null;
   monitoring?: {
+    diagnostics?: {
+      health: string;
+      active_issues: number;
+      received_at: number | null;
+      fresh: boolean;
+    };
     connectivity: string;
     received_at: number | null;
     interval: number | null;
@@ -364,6 +371,7 @@ export function ClientDetails({
               <dd>{date(client.last_contact)}</dd>
             </div>
           </dl>
+          <ClientDiagnostics client={client} api={api} refresh={refresh} />
           <ClientMonitoring client={client} api={api} refresh={refresh} />
           {["active", "approved"].includes(client.state) && (
             <button className="secondary" onClick={() => setConfirm(true)}>

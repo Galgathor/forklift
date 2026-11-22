@@ -1,5 +1,6 @@
 //! Optional native-client enrollment. Never supplies authentication-service configuration.
 use super::*;
+pub(super) mod diagnostics;
 pub(super) mod monitoring;
 use axum::{extract::Request, middleware::Next};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
@@ -53,6 +54,7 @@ pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
         [json!(token()[..32]).to_string()],
     )?;
     monitoring::migrate(db)?;
+    diagnostics::migrate(db)?;
     Ok(())
 }
 fn fail(code: StatusCode, message: &str) -> Error {
@@ -340,7 +342,7 @@ pub(super) async fn info(State(a): State<App>) -> Result<Json<Value>> {
             )
             .map_err(anyhow::Error::from)?;
     Ok(Json(
-        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1","inventory-v1"]}),
+        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1","inventory-v1","diagnostics-v1"]}),
     ))
 }
 #[derive(Deserialize)]
@@ -732,6 +734,9 @@ pub(super) async fn leave(
     let mut n = authenticate(&a, &h, &id, "leave")?;
     n.state = "revoked".into();
     store(&a, &n)?;
+    if let Some(host) = &n.host_id {
+        diagnostics::retire(&a, host)?;
+    }
     audit(&a, "machine", "client leave", &id)?;
     Ok(Json(json!({"revoked":true,"host_retained":true})))
 }
@@ -763,6 +768,9 @@ pub(super) async fn revoke(
         .ok_or(fail(StatusCode::NOT_FOUND, "Client identity not found"))?;
     n.state = "revoked".into();
     store(&a, &n)?;
+    if let Some(host) = &n.host_id {
+        diagnostics::retire(&a, host)?;
+    }
     audit(
         &a,
         &who,
@@ -796,6 +804,7 @@ pub(super) fn revoke_host(a: &App, id: &str) -> Result<()> {
     {
         n.state = "revoked".into();
         store(a, &n)?;
+        diagnostics::retire(a, id)?;
     }
     Ok(())
 }

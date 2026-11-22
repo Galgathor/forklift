@@ -1066,6 +1066,14 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/client/v1/hosts/{id}/session", post(clients::session))
         .route(
+            "/api/client/v1/hosts/{id}/diagnostic-profile",
+            post(clients::diagnostics::profile),
+        )
+        .route(
+            "/api/client/v1/hosts/{id}/diagnostics",
+            post(clients::diagnostics::report).layer(axum::extract::DefaultBodyLimit::max(65536)),
+        )
+        .route(
             "/api/client/v1/hosts/{id}/heartbeat",
             post(clients::monitoring::heartbeat),
         )
@@ -1078,6 +1086,10 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(machine)
         .route("/api/clients", get(clients::index))
+        .route("/api/hosts/{id}/diagnostics",get(clients::diagnostics::details))
+        .route("/api/hosts/{id}/issues/{issue}",post(clients::diagnostics::acknowledge_issue))
+        .route("/api/notifications",get(clients::diagnostics::notifications))
+        .route("/api/notifications/{id}",post(clients::diagnostics::acknowledge_notification))
         .route("/api/hosts/{id}/monitoring", get(clients::monitoring::details).put(clients::monitoring::policy))
         .route("/api/clients/lookup", post(clients::lookup))
         .route("/api/clients/{id}/approve", post(clients::approve))

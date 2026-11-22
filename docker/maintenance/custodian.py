@@ -224,6 +224,13 @@ def prepare_restore(p):
             enrollment=json.loads(raw);enrollment['state']='restore_required'
             db.execute('UPDATE client_enrollments SET data=? WHERE id=?',(json.dumps(enrollment),enrollment_id))
         db.execute('DELETE FROM client_replays');db.execute('DELETE FROM client_limits')
+    if 'client_diagnostics' in tables:
+        for host_id,raw in db.execute('SELECT host_id,data FROM client_diagnostics').fetchall():
+            diagnostics=json.loads(raw)
+            for issue in diagnostics.get('issues',[]):
+                if issue.get('state')=='active':issue.update(state='retired',verification='restore_required')
+            diagnostics['candidates']={}
+            db.execute('UPDATE client_diagnostics SET data=? WHERE host_id=?',(json.dumps(diagnostics),host_id))
     if 'dns_servers' in tables:
         for node_id,raw in db.execute('SELECT id,data FROM dns_servers').fetchall():
             node=json.loads(raw);node.update(state='restore_required',join_hash=None,expires_at=0,last_error='Restored snapshot: old DNS node must remain fenced and be reenrolled',report={'state':'restore_required'})

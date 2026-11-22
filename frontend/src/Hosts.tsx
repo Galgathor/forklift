@@ -239,6 +239,14 @@ export function Hosts({
                               ) || "Not reporting"}
                             </small>
                             <small>
+                              {h.client.monitoring?.diagnostics?.health ||
+                                "Health unknown"}{" "}
+                              ·{" "}
+                              {h.client.monitoring?.diagnostics
+                                ?.active_issues || 0}{" "}
+                              active issues
+                            </small>
+                            <small>
                               v
                               {
                                 (

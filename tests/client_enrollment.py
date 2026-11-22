@@ -305,6 +305,9 @@ with Stack(https=True) as s:
         run(['sudo','-n','python3','-c',code,str(first/'state.json'),str(sequence)])
         print('PASS: WebUI monitoring policy, actual PowerDNS A/AAAA/PTR updates, preservation of unrelated values, ambiguous-address refusal, independent LDAP/inventory during DNS outage, retry and externally changed ownership protection.',flush=True)
 
+        from client_diagnostics import exercise as diagnostics_exercise
+        diagnostics_exercise(s,CLIENT,first,saved,machine,proof,token,host_id,cli,state,browser,current_host,edit_monitor)
+
         # Exercise the actual native daemon end to end in private network/UTS namespaces.
         # Raw TLS is relayed over a private Unix socket; neither trust nor DPoP targets change.
         proxy_path=s.root/'client-network.sock'
@@ -418,6 +421,7 @@ with Stack(https=True) as s:
         s.login()
         archived=next(h for h in r('/api/hosts') if h['id']==host_id)
         assert archived['client']['state']=='restore_required'
+        assert not any(issue['state']=='active' for issue in r('/api/hosts/'+host_id+'/diagnostics')['issues'])
         archived_cancel='/api/client/v1/enrollments/'+item['id']+'/cancel'
         machine(archived_cancel,None,proof(archived_cancel,None),body={'device_code':pending['grant']['device_code']},expected=403)
 

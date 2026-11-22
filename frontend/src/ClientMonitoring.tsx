@@ -7,6 +7,18 @@ type Policy = {
   dns_updates: boolean;
   ipv4: Selector | null;
   ipv6: Selector | null;
+  diagnostics: {
+    authentication: boolean;
+    ssh: boolean;
+    domain: string;
+    test_user: string | null;
+    test_group: string | null;
+    ssh_source: string | null;
+    ssh_source_name: string | null;
+    ssh_local: string | null;
+    ssh_port: number;
+    failure_threshold: number;
+  };
 };
 type Event = { id: string; at: number; kind: string; detail: unknown };
 type Settings = { policy: Policy; revision: number; history: Event[] };
@@ -135,9 +147,9 @@ export function ClientMonitoring({
         <h3>Monitoring</h3>
         <Help label="Host monitoring">
           Heartbeat freshness is measured on the server. Online means the client
-          reported recently; authentication health checks arrive in a later
-          milestone. The offline threshold is at least three configured
-          heartbeat intervals. Manual inventory has no offline status.
+          reported recently; diagnostic health is tracked independently. The
+          offline threshold is at least three configured heartbeat intervals.
+          Manual inventory has no offline status.
         </Help>
       </div>
       <dl>
@@ -236,6 +248,122 @@ export function ClientMonitoring({
               {selector("ipv6")}
             </>
           )}
+          <div className="heading-help">
+            <h3>Diagnostic expectations</h3>
+            <Help label="Diagnostic expectations">
+              Authentication and SSH checks are read-only and opt-in. Choose
+              test identities without passwords. The SSH context is used only by
+              sshd's configuration test; no login is attempted. Unknown checks
+              retain unresolved issues. Changing expectations retires superseded
+              diagnostic issues after a current report.
+            </Help>
+          </div>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={settings.policy.diagnostics.authentication}
+              onChange={(e) =>
+                change({
+                  diagnostics: {
+                    ...settings.policy.diagnostics,
+                    authentication: e.target.checked,
+                  },
+                })
+              }
+            />
+            Check Linux authentication configuration
+          </label>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={settings.policy.diagnostics.ssh}
+              onChange={(e) =>
+                change({
+                  diagnostics: {
+                    ...settings.policy.diagnostics,
+                    ssh: e.target.checked,
+                  },
+                })
+              }
+            />
+            Check SSH configuration
+          </label>
+          <div className="form-grid">
+            {(
+              [
+                ["domain", "SSSD domain"],
+                ["test_user", "Test username"],
+                ["test_group", "Test group"],
+                ["ssh_source", "SSH source address"],
+                ["ssh_source_name", "SSH source hostname"],
+                ["ssh_local", "SSH local address"],
+              ] as const
+            ).map(([key, label]) => (
+              <FieldHelp
+                key={key}
+                label={label}
+                caption={label}
+                help={
+                  key === "ssh_source_name"
+                    ? "Optional source hostname for Match Host rules. Without it, the source address is used."
+                    : "Use the expected diagnostic context. This does not change host configuration or attempt authentication."
+                }
+              >
+                <input
+                  value={settings.policy.diagnostics[key] || ""}
+                  maxLength={key === "ssh_source_name" ? 253 : 64}
+                  onChange={(e) =>
+                    change({
+                      diagnostics: {
+                        ...settings.policy.diagnostics,
+                        [key]: e.target.value || null,
+                      },
+                    })
+                  }
+                />
+              </FieldHelp>
+            ))}
+            <FieldHelp
+              label="SSH diagnostic port"
+              caption="SSH port"
+              help="Connect only to the selected local address/port and check its SSH greeting. No password or authentication attempt is sent."
+            >
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={settings.policy.diagnostics.ssh_port}
+                onChange={(e) =>
+                  change({
+                    diagnostics: {
+                      ...settings.policy.diagnostics,
+                      ssh_port: Number(e.target.value),
+                    },
+                  })
+                }
+              />
+            </FieldHelp>
+            <FieldHelp
+              label="Issue failure threshold"
+              caption="Consecutive failing reports"
+              help="Require 1–5 distinct reports before opening an issue. Repeated retries never increase the count. A positive result resolves an active issue; unknown or omitted checks do not."
+            >
+              <input
+                type="number"
+                min={1}
+                max={5}
+                value={settings.policy.diagnostics.failure_threshold}
+                onChange={(e) =>
+                  change({
+                    diagnostics: {
+                      ...settings.policy.diagnostics,
+                      failure_threshold: Number(e.target.value),
+                    },
+                  })
+                }
+              />
+            </FieldHelp>
+          </div>
           <div className="wizard-actions">
             <button
               type="button"
