@@ -25,6 +25,12 @@ From the repository root:
 
 Use rustfmt for Rust, four-space Python indentation and Prettier for TypeScript/TSX/CSS. React components use PascalCase filenames, such as `SetupWizard.tsx`; Rust modules and Python functions use snake_case. Keep abstractions small. WebUI text should use direct labels and actionable instructions; avoid promotional slogans.
 
+## WebUI Conventions
+
+Keep explanations and instructions behind small “i” buttons that open contextual popovers when clicked or tapped. Reuse `frontend/src/Help.tsx` (`Help` and `FieldHelp`) beside the relevant heading or field. Support keyboard interaction and keep field names, operational status, errors and required confirmations visible.
+
+Do not use JavaScript/browser confirmation boxes (`confirm()` or `window.confirm()`). Implement confirmations as accessible in-app dialogs matching the WebUI’s existing components, colors, spacing and dark/light themes. Provide explicit confirm and cancel actions, keyboard navigation and appropriate focus management.
+
 ## Testing Guidelines
 
 Rust unit tests live in inline `#[cfg(test)]` modules. Python suites use assertions against disposable Compose projects; browser checks use Playwright. Add meaningful coverage for changed authentication, authorization, TLS, persistence and failure behavior. No numerical coverage threshold is configured. Build images before integration suites; never reset default installation volumes. See `docs/verification.md` for browser dependencies and optional Ubuntu checks. Report passed, failed and unavailable checks.
