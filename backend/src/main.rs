@@ -1,3 +1,5 @@
+mod clients;
+mod discovery;
 mod dns;
 mod hosts;
 mod maintenance;
@@ -963,6 +965,9 @@ async fn delete_group(
 }
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("publish-discovery") {
+        return discovery::publish().await;
+    }
     let initial_url = std::env::var("FORKLIFT_PUBLIC_URL")
         .unwrap_or("http://localhost:8080".into())
         .trim_end_matches('/')
@@ -985,6 +990,7 @@ async fn main() -> anyhow::Result<()> {
             "Forklift 0.5 requires fresh storage; preserve old volumes and use the previous release for old backups"
         );
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,username TEXT NOT NULL,csrf TEXT NOT NULL,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempts(at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL); CREATE TABLE IF NOT EXISTS allocator(value INTEGER NOT NULL); INSERT INTO allocator SELECT 10000 WHERE NOT EXISTS(SELECT 1 FROM allocator);")?;
+        clients::migrate(&connection)?;
         hosts::migrate(&connection)?;
         replicas::migrate(&connection)?;
         operations::migrate(&connection)?;
@@ -1049,7 +1055,27 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     maintenance::watch(a.clone());
+    let machine = Router::new()
+        .route("/api/client/v1/info", get(clients::info))
+        .route("/api/client/v1/enrollments", post(clients::start))
+        .route("/api/client/v1/enrollments/{id}/token", post(clients::poll))
+        .route(
+            "/api/client/v1/enrollments/{id}/cancel",
+            post(clients::cancel),
+        )
+        .route("/api/client/v1/hosts/{id}/session", post(clients::session))
+        .route("/api/client/v1/hosts/{id}/leave", post(clients::leave))
+        .layer(axum::extract::DefaultBodyLimit::max(16384))
+        .layer(axum::middleware::from_fn_with_state(
+            a.clone(),
+            clients::headers,
+        ));
     let app = Router::new()
+        .merge(machine)
+        .route("/api/clients", get(clients::index))
+        .route("/api/clients/lookup", post(clients::lookup))
+        .route("/api/clients/{id}/approve", post(clients::approve))
+        .route("/api/clients/{id}/revoke", post(clients::revoke))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/api/{*path}", axum::routing::any(|| async { (StatusCode::NOT_FOUND, Json(json!({"error":"API endpoint not found"}))) }))

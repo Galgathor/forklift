@@ -40,6 +40,10 @@ Choose the base DN carefully: suffix changes are unsupported. Setup refuses to o
 
 **0.4 storage and backups are incompatible with 0.5.** Use fresh volumes for this development release. Preserve old volumes and use their matching release if you need to recover them. There is no automatic conversion or reset. The development/test suites use isolated projects and never delete default installation volumes.
 
+## Optional native client
+
+Forklift Client pairs Linux machines through **Hosts → Join existing machine**. It adds a revocable, key-bound enrollment identity and session/contact visibility without changing Linux authentication or DNS configuration. Manual hosts remain supported. See [native client enrollment](docs/client-enrollment.md) for installation, trusted HTTPS, LAN discovery, linking, revocation and milestone limits.
+
 ## Integrated DNS
 
 PowerDNS is a standard part of the management stack. Open **DNS** to create forward/private reverse zones, manage record sets and matching PTR records, edit SOA/NS, inspect real service health, export zones and rotate the DNS API credential. Its own SQLite data persists independently of LDAP. Existing schema-5 installations can upgrade without resetting any directory/metadata volumes.

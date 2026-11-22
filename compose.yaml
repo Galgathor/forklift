@@ -122,6 +122,33 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  discovery:
+    profiles: [discovery]
+    image: forklift-manager:latest
+    build:
+      context: .
+      dockerfile: docker/manager/Dockerfile
+    entrypoint: [/app/forklift, publish-discovery]
+    restart: unless-stopped
+    user: "10001:10001"
+    network_mode: host
+    environment:
+      FORKLIFT_PUBLIC_URL: ${FORKLIFT_PUBLIC_URL:-http://localhost:8080}
+      FORKLIFT_DISCOVERY_CA_FILE: /etc/ssl/certs/ca-certificates.crt
+    volumes:
+      - type: bind
+        source: ${FORKLIFT_DISCOVERY_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}
+        target: /etc/ssl/certs/ca-certificates.crt
+        read_only: true
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=16m']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
   manager:
     image: forklift-manager:latest
     build:

@@ -1,0 +1,20 @@
+const { chromium } = require('playwright');
+const fs = require('fs');
+(async () => {
+ const input=JSON.parse(fs.readFileSync(0,'utf8'));
+ const browser=await chromium.launch({headless:true,args:['--ignore-certificate-errors']});
+ const context=await browser.newContext({ignoreHTTPSErrors:true});const page=await context.newPage();let nativeDialogs=0;const errors=[];
+ page.on('pageerror',error=>errors.push(error.message));page.on('dialog',async d=>{nativeDialogs++;await d.dismiss();});
+ const button=name=>page.getByRole('button',{name,exact:true});
+ await page.goto(input.url);await page.getByLabel('Username',{exact:true}).fill('admin');await page.getByLabel('Password (14+ characters)',{exact:true}).fill(input.password);await button('Sign in').click();await button('Hosts').click();
+ if(input.action==='approve'){
+  await button('Join existing machine').click();const dialog=page.getByRole('dialog',{name:'Join existing machine',exact:true});await dialog.getByLabel('Pairing code',{exact:true}).fill(input.code);await dialog.getByRole('button',{name:'Find machine',exact:true}).click();await dialog.getByText(input.fingerprint,{exact:true}).waitFor();await dialog.getByText('client.example.test',{exact:true}).first().waitFor();
+  if(!await dialog.getByRole('button',{name:'Approve enrollment',exact:true}).isDisabled())throw Error('Unreviewed pairing can be approved');
+  await dialog.getByLabel('Friendly host name',{exact:true}).fill('Native client');await dialog.getByLabel('I verified this machine and the selected inventory target.',{exact:true}).check();
+  await page.setViewportSize({width:390,height:844});if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('Machine pairing dialog overflows');await page.setViewportSize({width:1280,height:900});
+  await dialog.getByRole('button',{name:'Approve enrollment',exact:true}).click();await dialog.getByText('Enrollment approved. The client can now finish pairing on the machine.',{exact:true}).waitFor();await dialog.getByRole('button',{name:'Done',exact:true}).click();await page.getByRole('row').filter({hasText:'Native client'}).waitFor();
+ }else{
+  const row=page.getByRole('row').filter({hasText:'Native client'});await row.getByRole('button',{name:'Client enrolled',exact:true}).click();await page.getByRole('dialog',{name:'Client enrollment details',exact:true}).waitFor();await button('Revoke client identity').click();let confirm=page.getByRole('alertdialog',{name:'Revoke client identity?',exact:true});await confirm.waitFor();if(!await confirm.getByRole('button',{name:'Cancel',exact:true}).evaluate(el=>el===document.activeElement))throw Error('Confirmation lacks safe initial focus');await page.keyboard.press('Escape');await confirm.waitFor({state:'hidden'});await button('Revoke client identity').click();await confirm.waitFor();await confirm.getByRole('button',{name:'Revoke identity',exact:true}).click();await page.getByRole('dialog',{name:'Client enrollment details',exact:true}).waitFor({state:'hidden'});await row.getByRole('button',{name:'Client revoked',exact:true}).waitFor();
+ }
+ if(nativeDialogs||errors.length)throw Error('Native dialogs or browser errors: '+errors.join('; '));await browser.close();process.stdout.write('PASS: real Chromium client '+input.action+' flow with machine review and styled confirmation, no native confirmation boxes.\n');
+})().catch(error=>{console.error(error);process.exit(1)});

@@ -1,3 +1,8 @@
+import {
+  ClientEnrollment,
+  ClientDetails,
+  type ClientRecord,
+} from "./ClientEnrollment";
 import { Help, FieldHelp } from "./Help";
 import { useState } from "react";
 import { Server, Plus, Pencil, Trash2, Download, X } from "lucide-react";
@@ -16,6 +21,7 @@ export type HostDnsStatus = {
   checked_at?: number | null;
 };
 export type Host = {
+  client?: ClientRecord | null;
   dns?: DnsConfig | null;
   dns_status?: HostDnsStatus | null;
   id: string;
@@ -47,6 +53,8 @@ export function Hosts({
   api,
   perform,
 }: Props) {
+  const [joining, setJoining] = useState(false),
+    [clientDetails, setClientDetails] = useState<ClientRecord | null>(null);
   const [editing, setEditing] = useState<Host | null | undefined>(undefined),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
@@ -134,15 +142,24 @@ export function Hosts({
               </p>
             </Help>
           </div>
-          <button
-            className="primary"
-            onClick={() => {
-              void open(null);
-            }}
-          >
-            <Plus size={17} />
-            Register host
-          </button>
+          <div className="wizard-actions">
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => setJoining(true)}
+            >
+              Join existing machine
+            </button>
+            <button
+              className="primary"
+              onClick={() => {
+                void open(null);
+              }}
+            >
+              <Plus size={17} />
+              Register host
+            </button>
+          </div>
         </div>
 
         <input
@@ -164,6 +181,7 @@ export function Hosts({
                 <tr>
                   <th>Host</th>
                   <th>Permitted login groups</th>
+                  <th>Client</th>
                   <th>Configuration</th>
                   <th>DNS</th>
                   <th>Actions</th>
@@ -194,6 +212,32 @@ export function Hosts({
                         {h.allowed_groups.join(", ") || "SSH not configured"}
                       </td>
                       <td>
+                        {h.client ? (
+                          <>
+                            <button
+                              className="secondary"
+                              onClick={() => setClientDetails(h.client!)}
+                            >
+                              {h.client.state === "active"
+                                ? "Client enrolled"
+                                : "Client " +
+                                  h.client.state.replaceAll("_", " ")}
+                            </button>
+                            <small>v{h.client.identity.client_version}</small>
+                            <small>
+                              {h.client.last_contact
+                                ? "Last contact " +
+                                  new Date(
+                                    h.client.last_contact * 1000,
+                                  ).toLocaleString()
+                                : "Contact not confirmed"}
+                            </small>
+                          </>
+                        ) : (
+                          <span className="muted">Manual inventory</span>
+                        )}
+                      </td>
+                      <td>
                         <span
                           className={
                             h.revision === h.exported_revision
@@ -202,7 +246,7 @@ export function Hosts({
                           }
                         >
                           {h.exported_revision === null
-                            ? h.directory_id && !h.allowed_groups.length
+                            ? !h.allowed_groups.length
                               ? "Inventory only"
                               : "Not exported"
                             : h.revision === h.exported_revision
@@ -311,6 +355,22 @@ export function Hosts({
         )}
       </section>
 
+      {joining && (
+        <ClientEnrollment
+          api={api}
+          hosts={hosts}
+          close={() => setJoining(false)}
+          refresh={refresh}
+        />
+      )}
+      {clientDetails && (
+        <ClientDetails
+          client={clientDetails}
+          api={api}
+          close={() => setClientDetails(null)}
+          refresh={refresh}
+        />
+      )}
       {editing !== undefined && (
         <div className="overlay">
           <section

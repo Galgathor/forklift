@@ -22,13 +22,15 @@ pub(super) struct Host {
     pub dns: Option<dns_hosts::Config>,
     #[serde(default)]
     pub dns_status: Option<dns_hosts::Status>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<Value>,
     pub revision: i64,
     pub exported_revision: Option<i64>,
     pub exported_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
 }
-fn hostname(s: &str) -> bool {
+pub(super) fn hostname(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 253
         && s.split('.').all(|label| {
@@ -114,6 +116,7 @@ pub(super) fn list(a: &App) -> Result<Vec<Host>> {
     data.into_iter()
         .map(|s| {
             let mut h: Host = serde_json::from_str(&s).map_err(anyhow::Error::from)?;
+            h.client = crate::clients::summary(a, &h.id)?;
             h.dns_status = dns_hosts::status(a, &h.id, h.dns.as_ref(), h.revision)?;
             Ok(h)
         })
@@ -156,6 +159,7 @@ pub(super) fn store(a: &App, h: &Host) -> Result<()> {
     }
     let mut stored = h.clone();
     stored.dns_status = None;
+    stored.client = None;
     a.db.lock().unwrap().execute("INSERT INTO hosts(id,hostname,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET hostname=excluded.hostname,data=excluded.data", params![h.id,h.draft.hostname,serde_json::to_string(&stored).map_err(anyhow::Error::from)?]).map_err(anyhow::Error::from)?;
     Ok(())
 }
@@ -192,6 +196,7 @@ pub(super) async fn create(
         draft: p.draft,
         dns,
         dns_status: None,
+        client: None,
         revision: 1,
         exported_revision: None,
         exported_at: None,
@@ -320,6 +325,7 @@ pub(super) async fn delete(
     {
         l.delete(&format!("cn=host-{id},{b}")).await?.success()?;
     }
+    crate::clients::revoke_host(&a, &id)?;
     dns_hosts::retire(&a, &host, has_dns && p.dns.as_deref() == Some("delete"))?;
     audit(&a, &who, "delete host", &id)?;
     let status = if has_dns && p.dns.as_deref() == Some("delete") {
@@ -559,6 +565,7 @@ pub(super) fn sync_directory(
         },
         dns: None,
         dns_status: None,
+        client: None,
         revision: 1,
         exported_revision: None,
         exported_at: None,

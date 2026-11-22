@@ -219,6 +219,11 @@ def prepare_restore(p):
     db.execute("INSERT INTO settings VALUES('recovery_required','true') ON CONFLICT(key) DO UPDATE SET value='true'")
     db.execute("UPDATE directory_servers SET enrollment_hash=NULL,enrollment_expires=0,state='restore_required',pending_epoch=NULL,last_error='Restored snapshot: fence and reseed this server'")
     tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if 'client_enrollments' in tables:
+        for enrollment_id,raw in db.execute('SELECT id,data FROM client_enrollments').fetchall():
+            enrollment=json.loads(raw);enrollment['state']='restore_required'
+            db.execute('UPDATE client_enrollments SET data=? WHERE id=?',(json.dumps(enrollment),enrollment_id))
+        db.execute('DELETE FROM client_replays');db.execute('DELETE FROM client_limits')
     if 'dns_servers' in tables:
         for node_id,raw in db.execute('SELECT id,data FROM dns_servers').fetchall():
             node=json.loads(raw);node.update(state='restore_required',join_hash=None,expires_at=0,last_error='Restored snapshot: old DNS node must remain fenced and be reenrolled',report={'state':'restore_required'})

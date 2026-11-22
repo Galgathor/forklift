@@ -41,6 +41,7 @@ impl Database {
             "Metadata integrity check failed"
         );
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+        crate::clients::migrate(&db)?;
         self.0 = Some(db);
         Ok(())
     }
