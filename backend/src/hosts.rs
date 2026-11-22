@@ -541,11 +541,28 @@ pub(super) fn sync_directory(
     hostname: &str,
     role: &str,
 ) -> Result<()> {
+    sync_directory_for(a, directory_id, name, hostname, role, None)
+}
+pub(super) fn sync_directory_for(
+    a: &App,
+    directory_id: &str,
+    name: &str,
+    hostname: &str,
+    role: &str,
+    target: Option<&str>,
+) -> Result<()> {
     let records = list(a)?;
     let existing = records.into_iter().find(|h| {
-        h.directory_id.as_deref() == Some(directory_id)
-            || (h.directory_id.is_none() && h.draft.hostname == hostname)
+        if let Some(id) = target {
+            h.id == id
+        } else {
+            h.directory_id.as_deref() == Some(directory_id)
+                || (h.directory_id.is_none() && h.draft.hostname == hostname)
+        }
     });
+    if target.is_some() && existing.is_none() {
+        return Err(bad("Host no longer exists"));
+    }
     let primary = config(a)
         .and_then(|c| c["network"]["endpoint"].as_str().map(str::to_owned))
         .ok_or(bad("Configure the primary in setup"))?;
@@ -574,7 +591,9 @@ pub(super) fn sync_directory(
     });
     host.directory_id = Some(directory_id.into());
     host.directory_role = Some(role.into());
-    host.draft.hostname = hostname.into();
+    if target.is_none() && host.client.is_none() {
+        host.draft.hostname = hostname.into();
+    }
     host.updated_at = now();
     store(a, &host)
 }
@@ -583,7 +602,11 @@ pub(super) fn unlink_directory(a: &App, directory_id: &str) -> Result<()> {
         .into_iter()
         .filter(|h| h.directory_id.as_deref() == Some(directory_id))
     {
-        if host.draft.allowed_groups.is_empty() && host.dns.is_none() && host.dns_status.is_none() {
+        if host.client.is_none()
+            && host.draft.allowed_groups.is_empty()
+            && host.dns.is_none()
+            && host.dns_status.is_none()
+        {
             a.db.lock()
                 .unwrap()
                 .execute("DELETE FROM hosts WHERE id=?", [host.id])

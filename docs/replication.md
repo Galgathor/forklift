@@ -8,6 +8,10 @@ The setup wizard selects the primary Docker host's actual private interface, an 
 
 Expose the WebUI over HTTPS through NPM. Replicas need to reach that HTTPS hostname for one-time enrollment. LDAP itself uses the separate private port and never NPM's HTTP Proxy Host.
 
+## Deploy using an enrolled client
+
+For a target running client 0.5 and Docker/Compose, use **Hosts → Client enrolled → LDAP replica service**. Select its stable private address and LDAP/control ports, then approve. The client uses versioned components shipped with its package, builds/starts a dedicated Compose project and completes existing secure replica enrollment. No repository checkout or manual join configuration is needed. The existing Host record and login/DNS policies are retained. Read [client-driven deployment](client-replica-deployment.md) for prerequisites, ownership protection, retry, cancellation and initial-release limits.
+
 ## Add server
 
 1. Open **Directory Servers → Add server**.

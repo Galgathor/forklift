@@ -590,3 +590,16 @@ pub(super) fn network_capable(a: &App, id: &str) -> Result<bool> {
         .as_ref()
         .is_some_and(|i| i.capabilities.iter().any(|c| c == "network-v1")))
 }
+
+pub(super) fn deployment_inventory(a: &App, id: &str, credential: &str) -> Result<Identity> {
+    let m = load(a, id)?;
+    if m.credential_id != credential
+        || m.observation.received_at == 0
+        || now() - m.observation.received_at > 900.max(3 * m.observation.interval)
+    {
+        return Err(bad("Wait for a fresh client inventory before deployment"));
+    }
+    m.observation
+        .identity
+        .ok_or(bad("Client inventory is missing"))
+}

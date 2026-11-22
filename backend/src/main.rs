@@ -1087,6 +1087,18 @@ async fn main() -> anyhow::Result<()> {
             "/api/client/v1/hosts/{id}/heartbeat",
             post(clients::monitoring::heartbeat),
         )
+        .route(
+            "/api/client/v1/hosts/{id}/deployments/poll",
+            post(clients::deployments::poll),
+        )
+        .route(
+            "/api/client/v1/hosts/{id}/deployments/grant",
+            post(clients::deployments::grant),
+        )
+        .route(
+            "/api/client/v1/hosts/{id}/deployments/progress",
+            post(clients::deployments::progress),
+        )
         .route("/api/client/v1/hosts/{id}/leave", post(clients::leave))
         .layer(axum::extract::DefaultBodyLimit::max(16384))
         .layer(axum::middleware::from_fn_with_state(
@@ -1095,6 +1107,8 @@ async fn main() -> anyhow::Result<()> {
         ));
     let app = Router::new()
         .merge(machine)
+        .route("/api/hosts/{id}/replica-deployment",get(clients::deployments::details).post(clients::deployments::create))
+        .route("/api/hosts/{id}/replica-deployment/action",post(clients::deployments::action))
         .route("/api/clients", get(clients::index))
         .route("/api/clients/{id}/rotate",post(clients::rotation::request))
         .route("/api/hosts/{id}/diagnostics",get(clients::diagnostics::details))

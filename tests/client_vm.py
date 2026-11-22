@@ -112,7 +112,7 @@ Path('/var/lib/forklift-test/ready').touch()
         first=public();assert first['host_id']==host_id
         pid=int(command('systemctl','show','forklift-client.service','-p','MainPID','--value').stdout)
         properties=command('systemctl','show','forklift-client.service','-p','User','-p','NoNewPrivileges','-p','ProtectSystem','-p','MemoryMax','-p','CapabilityBoundingSet').stdout.decode()
-        assert all(v in properties for v in ['User=root','NoNewPrivileges=yes','ProtectSystem=strict','MemoryMax=134217728','CapabilityBoundingSet=']),properties
+        assert all(v in properties for v in ['User=root','NoNewPrivileges=yes','ProtectSystem=strict','MemoryMax=268435456','CapabilityBoundingSet=']),properties
         assert b'0000000000000000' in command('grep','CapEff:','/proc/'+str(pid)+'/status').stdout
         assert command('nsenter','--target',str(pid),'--mount','/usr/bin/touch','/etc/forklift-sandbox-write-test',check=False).returncode!=0
         assert command('stat','-c','%u:%a','/var/lib/forklift-client','/var/lib/forklift-client/state.json').stdout.splitlines()==[b'0:700',b'0:600']

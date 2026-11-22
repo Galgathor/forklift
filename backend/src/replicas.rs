@@ -62,7 +62,7 @@ fn load(a: &App, id: &str) -> Result<Server> {
         "Directory server not found".into(),
     ))
 }
-fn https_required(a: &App) -> Result<()> {
+pub(super) fn https_required(a: &App) -> Result<()> {
     if !public_url(a).starts_with("https://") {
         return Err(bad(
             "Configure the HTTPS WebUI address in Settings before replica enrollment",
@@ -72,13 +72,15 @@ fn https_required(a: &App) -> Result<()> {
 }
 #[derive(Deserialize)]
 pub(super) struct Draft {
-    name: String,
-    address: String,
-    hostname: Option<String>,
+    pub(super) name: String,
+    pub(super) address: String,
+    pub(super) hostname: Option<String>,
+    #[serde(default)]
+    pub(super) inventory_host_id: Option<String>,
     #[serde(default = "directory_port")]
-    port: u16,
+    pub(super) port: u16,
     #[serde(default = "control_port")]
-    control_port: u16,
+    pub(super) control_port: u16,
 }
 fn directory_port() -> u16 {
     1636
@@ -127,10 +129,24 @@ pub(super) async fn create(
             "This replica already exists or the eight-server limit was reached",
         ));
     }
+    if let Some(host_id) = &p.inventory_host_id
+        && !hosts::list(&a)?
+            .iter()
+            .any(|h| &h.id == host_id && h.directory_id.is_none())
+    {
+        return Err(bad("Choose an existing host without a directory role"));
+    }
     let id = token()[..32].to_owned();
     audit(&a, &who, "register replica", &id)?;
     a.db.lock().unwrap().execute("INSERT INTO directory_servers(id,name,endpoint,provider,state,enrollment_expires,address,control_port) VALUES(?,?,?,?,'pending',0,?,?)",params![id,p.name,endpoint,provider,p.address,p.control_port]).map_err(anyhow::Error::from)?;
-    hosts::sync_directory(&a, &id, &p.name, &hostname, "replica")?;
+    hosts::sync_directory_for(
+        &a,
+        &id,
+        &p.name,
+        &hostname,
+        "replica",
+        p.inventory_host_id.as_deref(),
+    )?;
     Ok(Json(json!(load(&a, &id)?)))
 }
 
@@ -217,7 +233,11 @@ pub(super) async fn bundle(
     )
         .into_response())
 }
-fn issue_enrollment(a: &App, id: &str, who: &str) -> Result<(Server, Value, Vec<u8>, i64)> {
+pub(super) fn issue_enrollment(
+    a: &App,
+    id: &str,
+    who: &str,
+) -> Result<(Server, Value, Vec<u8>, i64)> {
     let server = load(a, id)?;
     if server.state == "enrolled" || server.state == "redeeming" {
         return Err(bad(

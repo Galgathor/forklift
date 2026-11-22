@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { FieldHelp, Help } from "./Help";
+import { ClientReplica } from "./ClientReplica";
 import { ClientDiagnostics } from "./ClientDiagnostics";
 import { ClientMonitoring } from "./ClientMonitoring";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -436,6 +437,7 @@ export function ClientDetails({
               Request credential rotation
             </button>
           )}
+          <ClientReplica client={client} api={api} refresh={refresh} />
           <ClientDiagnostics client={client} api={api} refresh={refresh} />
           <ClientMonitoring client={client} api={api} refresh={refresh} />
           {["active", "approved"].includes(client.state) && (
