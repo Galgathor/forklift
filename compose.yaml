@@ -1,6 +1,6 @@
 services:
   initialize:
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-maintenance:${FORKLIFT_IMAGE_TAG:?Set FORKLIFT_IMAGE_TAG in .env}
+    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-maintenance:${FORKLIFT_IMAGE_TAG:-latest}
     command: [init]
     user: "10001:10001"
     network_mode: none
@@ -26,7 +26,7 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
   ldap:
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-ldap:${FORKLIFT_IMAGE_TAG:?Set FORKLIFT_IMAGE_TAG in .env}
+    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-ldap:${FORKLIFT_IMAGE_TAG:-latest}
     restart: unless-stopped
     network_mode: host
     depends_on:
@@ -50,7 +50,7 @@ services:
       timeout: 3s
       retries: 10
   maintenance:
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-maintenance:${FORKLIFT_IMAGE_TAG:?Set FORKLIFT_IMAGE_TAG in .env}
+    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-maintenance:${FORKLIFT_IMAGE_TAG:-latest}
     restart: unless-stopped
     user: "10001:10001"
     network_mode: none
@@ -88,7 +88,7 @@ services:
       timeout: 3s
       retries: 10
   dns:
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-dns:${FORKLIFT_IMAGE_TAG:?Set FORKLIFT_IMAGE_TAG in .env}
+    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-dns:${FORKLIFT_IMAGE_TAG:-latest}
     restart: unless-stopped
     user: "10001:10001"
     ports:
@@ -112,7 +112,7 @@ services:
       retries: 5
   discovery:
     profiles: [discovery]
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-manager:${FORKLIFT_IMAGE_TAG:?Set FORKLIFT_IMAGE_TAG in .env}
+    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-manager:${FORKLIFT_IMAGE_TAG:-latest}
     entrypoint: [/app/forklift, publish-discovery]
     restart: unless-stopped
     user: "10001:10001"
@@ -135,7 +135,7 @@ services:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
   manager:
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-manager:${FORKLIFT_IMAGE_TAG:?Set FORKLIFT_IMAGE_TAG in .env}
+    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX in .env}/forklift-manager:${FORKLIFT_IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       FORKLIFT_PUBLIC_URL: ${FORKLIFT_PUBLIC_URL:-http://localhost:8080}

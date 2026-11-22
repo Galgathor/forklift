@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build all images first; publish only checked, locally built images under revision-specific tags."""
+"""Publish checked revision images, then advance latest after the full main build succeeds."""
 import json
 import os
 from pathlib import Path
@@ -52,5 +52,12 @@ elif sys.argv[1:] == ['publish']:
             file = out / ('forklift-' + name + '.json')
             write_json(file, dict(image=pin, tags=meta['tags'], platform='linux/amd64', revision=meta['sha']))
             upload(meta, 'forklift-images', file)
+        # Keep immutable build tags/manifests separate from the convenience alias.
+        # Only advance latest after every image and digest manifest was published.
+        if os.environ['CI_REF'] == 'refs/heads/main':
+            for name in IMAGES:
+                image = meta['registry'] + '/' + meta['owner'].lower() + '/forklift-' + name
+                run('docker', 'tag', image + ':' + meta['tags'][0], image + ':latest', env=env)
+                run('docker', 'push', image + ':latest', env=env)
 else:
     raise SystemExit('Usage: python3 scripts/ci_images.py build|publish')

@@ -17,7 +17,7 @@ You need a Linux host with Docker Engine and Docker Compose v2. Docker Desktop i
    cp .env.example .env
    ```
 
-3. Set `FORKLIFT_IMAGE_PREFIX` to your Gitea registry/account and `FORKLIFT_IMAGE_TAG` to a published build tag. Find these in Gitea Packages; see [image setup](docs/ci.md#deploy-published-images). For private packages, sign in with `docker login YOUR_REGISTRY` using a read-only package token.
+3. Set `FORKLIFT_IMAGE_PREFIX` to your Gitea registry/account. Images use `latest` automatically; no tag setting is needed. Find the image location in Gitea Packages; see [image setup](docs/ci.md#deploy-published-images). For private packages, sign in with `docker login YOUR_REGISTRY` using a read-only package token.
 4. For remote access, set `FORKLIFT_PUBLIC_URL` to your HTTPS address and configure your reverse proxy. The default management port is 8080 and is reachable only from the Docker host. See the [network setup guide](docs/reference-guide.md).
 5. Download and start Forklift:
 

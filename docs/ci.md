@@ -37,18 +37,21 @@ Server builds all five images successfully before logging in/pushing:
 - `<registry>/<owner>/forklift-dns` (primary and secondary)
 - `<registry>/<owner>/forklift-maintenance` (initialization and maintenance)
 
-Main publishes `sha-<full-commit>` tags. A tag exactly matching `v<Cargo.toml version>` also publishes the version without `v`. There is no moving `latest`/`main` tag. Output is linux/amd64 only. A Generic package named `forklift-images` contains five JSON digest manifests for each build (`<version>-dev.<full-commit>` on main, exact version for release tags). Pull by the recorded digest when immutable deployment is required. OCI version tags are conventional registry tags; protect release tags and restrict package-write credentials, since registry administrators can otherwise retag them.
+Main publishes `sha-<full-commit>` tags. A tag exactly matching `v<Cargo.toml version>` also publishes the version without `v`. After all five images and their digest manifests are published, successful main builds also update `latest` for all five images. Release-tag builds do not change `latest`. Output is linux/amd64 only. A Generic package named `forklift-images` contains five JSON digest manifests for each build (`<version>-dev.<full-commit>` on main, exact version for release tags). Pull by the recorded digest when immutable deployment is required. OCI version tags are conventional registry tags; protect release tags and restrict package-write credentials, since registry administrators can otherwise retag them.
 
 The client publishes an executable, Ubuntu 24.04 amd64 `.deb`, `build.json` and `SHA256SUMS` into the owner's **forklift-client** Generic package. Main versions use `<version>-dev.<full-commit>`; Debian revisions use `0.dev.<full-commit>` so they sort below stable revision `1`. Release tags must match the manifest version. Image publishing checks existing single-platform image configurations and refuses to replace a different image at the same tag. Registry lookups must succeed or confirm absence before a new push; protect release tags/package access to cover concurrent external publishers. Existing Generic files are accepted on rerun only if byte-identical; differing output fails without deleting/overwriting the package. Packages are downloaded from Gitea's Packages UI/API; this is not an APT repository or a signature/release-asset service. Package visibility/access follows the owner's Gitea configuration.
 
 ## Deploy published images
 
-After the first successful publication, add these nonsecret values to your normal deployment environment (use your actual registry, lowercase namespace and build tag):
+After a successful main publication, set your registry and lowercase account name in `.env`. No image tag is required:
 
 ```dotenv
 FORKLIFT_IMAGE_PREFIX=git.example.test/your-account
-FORKLIFT_IMAGE_TAG=sha-FULL_COMMIT_SHA
 ```
+
+Compose uses `latest` automatically. To keep a particular build, optionally set `FORKLIFT_IMAGE_TAG=sha-FULL_COMMIT_SHA` instead.
+
+Run `docker compose pull` when you want to download updates, then recreate the stack. Running containers do not update automatically. Wait for the complete publishing workflow to succeed before pulling; registries update image tags individually, so a failed or interrupted publish can leave mixed `latest` tags. Use a common commit tag for a fixed build.
 
 Authenticate with a **read-only** package token if pulling private images. Do not distribute the CI write token to hosts. Keep the existing volumes and runtime configuration:
 

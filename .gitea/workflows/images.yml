@@ -35,6 +35,8 @@ jobs:
           docker info >/dev/null
           docker buildx version
           python3 -c "import sys; sys.path.insert(0, 'scripts'); from ci_common import metadata; metadata('backend/Cargo.toml')"
+      - name: Check image publishing behavior
+        run: python3 tests/test_ci_images.py
       - name: Rust and frontend checks in pinned build containers
         run: python3 scripts/ci_checks.py
       - name: Build all five images before publishing
