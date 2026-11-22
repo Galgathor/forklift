@@ -1,0 +1,46 @@
+name: Check and publish Forklift images
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  images:
+    if: gitea.ref == 'refs/heads/main' || startsWith(gitea.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+      CI_SERVER_URL: ${{ gitea.server_url }}
+      CI_REPOSITORY: ${{ gitea.repository }}
+      CI_OWNER: ${{ gitea.repository_owner }}
+      CI_REF: ${{ gitea.ref }}
+      CI_SHA: ${{ gitea.sha }}
+      PACKAGE_OWNER: ${{ vars.PACKAGE_OWNER }}
+      CONTAINER_REGISTRY: ${{ vars.CONTAINER_REGISTRY }}
+    steps:
+      - name: Check package publishing configuration
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: test -n "$PACKAGES_TOKEN" || { echo 'Set the PACKAGES_TOKEN Actions secret before running this workflow.' >&2; exit 1; }
+      - uses: https://github.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ gitea.sha }}
+          persist-credentials: false
+      - name: Verify runner tools and release identity
+        run: |
+          set -eu
+          test "$(uname -m)" = x86_64
+          docker info >/dev/null
+          docker buildx version
+          python3 -c "import sys; sys.path.insert(0, 'scripts'); from ci_common import metadata; metadata('backend/Cargo.toml')"
+      - name: Rust and frontend checks in pinned build containers
+        run: python3 scripts/ci_checks.py
+      - name: Build all five images before publishing
+        run: python3 scripts/ci_images.py build
+      - name: Publish images and digest manifests to Gitea Packages
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+          PACKAGES_USERNAME: ${{ vars.PACKAGES_USERNAME }}
+        run: python3 scripts/ci_images.py publish

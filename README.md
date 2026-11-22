@@ -108,3 +108,7 @@ These scripts require built manager, directory and maintenance images. Each crea
 Vite proxies `/api` to localhost:8080. For a development frontend, use its actual browser origin during setup (normally `http://localhost:5173`). The manager serves the production bundle without CDNs, external fonts, mock data or WebSockets.
 
 License: [MIT](LICENSE).
+
+## Automated builds
+
+Gitea Actions uses `ubuntu-latest` to check builds and publish container images/native client packages to the repository owner’s Packages. Configure the `PACKAGES_TOKEN` Actions secret in both repositories before the first run. See [CI setup, runner requirements and package usage](docs/ci.md).
