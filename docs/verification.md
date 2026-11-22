@@ -122,3 +122,25 @@ Chromium passes diagnostic tabs, issue acknowledgment, notification actions, mob
 Before the extended enrollment suite, build the existing Linux fixture with `docker build -t forklift-ubuntu-client -f tests/ubuntu/Dockerfile .`, build the manager/maintenance images, and build the native release executable. The suite also uses the external Playwright dependency, Python cryptography, passwordless sudo and isolated network/UTS namespaces described above. No production host configuration or installed authentication service is changed by these fixtures.
 
 Full installed-systemd boots, other Ubuntu releases/architectures, arbitrary custom PAM policy equivalence, genuine end-to-end password testing by the client, Debian packaging and credential rotation remain unverified or intentionally deferred. Diagnostics are observations, not authentication attestation. See [diagnostic operation and limits](client-diagnostics.md).
+
+## Native packaging and credential hardening (Milestone 4)
+
+Native client 0.4 passes six locked Rust tests, rustfmt and Clippy with warnings denied. Cancellation testing verifies that a real forked diagnostic descendant terminates when its check is cancelled. The server's 18 locked Rust tests, formatting/Clippy and the TypeScript/Vite/Prettier checks pass. The canonical client API contract remains byte-identical across repositories. Core LDAP regression passes 90 HTTP checks covering direct authentication, password reset/disable, administrator revocation, persistence, outages and TLS rejection. Real LAN discovery and stopped-publication removal also pass.
+
+`tests/client_enrollment.py` now includes `tests/client_rotation.py`, against the real native executable, private-CA HTTPS, LDAP administration, PowerDNS and browser. It passes WebUI rotation requests/confirmation, CSRF rejection, new-key activation, stable host/counters, old-key/token rejection, blocked bootstrap-token retrieval after rotation, lost preparation/confirmation replies, manager restart, local pending-expiry recovery, server expiry retaining the original credential, server-age-triggered automatic rotation, revocation of both identities, credential-free public status/SQLite and real encrypted restore quarantine of active/provisional identities. Existing enrollment, inventory, DNS, diagnostics, notifications, offline/reconnect and leave/revocation checks pass in the same run.
+
+Pinned cargo-deb 3.8.0 builds a real Ubuntu 24.04 amd64 Debian package. Derived dependencies include glibc >=2.39. Rebuilding identical source/toolchain/metadata/epoch produces byte-identical `.deb` archives. Build revisions 1 and 2 for the VM upgrade fixture:
+
+```sh
+cd ../forklift-client
+./scripts/build-deb.sh
+FORKLIFT_DEB_REVISION=2 ./scripts/build-deb.sh
+cd ../forklift
+python3 tests/client_vm.py
+```
+
+`tests/client_vm.py` boots the official Ubuntu 24.04 cloud image in an isolated QEMU VM, installs the package natively and contacts the real disposable Forklift HTTPS stack. It verifies installed-unit enrollment/start, root execution with no capabilities, strict filesystem sandbox, actual OpenSSH diagnostics, automatic daemon key rotation, package upgrade, reboot/heartbeat recovery, private-state permission/hardlink/symlink/size/JSON rejection, redacted errors, removal/purge preserving state without remote revocation, reinstall, unchanged legacy-unit migration, custom overrides and administrator masks. The development host's services, resolver and authentication files are unchanged; no client container deployment exists.
+
+The optional VM test needs passwordless sudo, QEMU x86/firmware, qemu-img, genisoimage and SSH. `FORKLIFT_TEST_VM_TOOLS` selects an extracted Ubuntu package root containing `usr/bin/` tools, `usr/share/qemu`, `usr/share/seabios` and their libraries (default `/tmp/forklift-client-vm-tools/root`). `FORKLIFT_TEST_VM_IMAGE` selects the image file (default `/tmp/forklift-client-vm-images/noble-amd64.img`). Download the image from `IMAGE_URL` in the fixture, verify the vendor HTTPS SHA256SUMS and the pinned SHA256 in the fixture before running; it refuses different bytes. QEMU opens KVM through sudo and drops to the calling user, with user-mode NAT, localhost-only test ports and no host filesystem shares. Keys/state stay in private disposable directories and are removed on exit. No production volumes are used.
+
+Initial package validation covers Ubuntu 24.04 amd64 only. Ubuntu 22.04, arm64, physical-network variations, signed distribution/release infrastructure, custom PAM-policy equivalence and genuine end-to-end password authentication remain outside these results. Upgrade the server before client 0.4; ordinary older-client requests remain compatible but cannot rotate. Routine rotation does not remediate a compromised root host: revoke and investigate/re-enroll.

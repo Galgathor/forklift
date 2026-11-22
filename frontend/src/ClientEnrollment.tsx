@@ -25,6 +25,18 @@ export type ClientRecord = {
   expires_at: number;
   enrolled_at: number | null;
   last_contact: number | null;
+  credentials?: {
+    generation: number;
+    rotated_at: number | null;
+    next_rotation_at: number;
+    rotation_due: boolean;
+    pending: {
+      id: string;
+      expires_at: number;
+      key_fingerprint: string;
+      expired: boolean;
+    } | null;
+  };
   monitoring?: {
     diagnostics?: {
       health: string;
@@ -321,6 +333,11 @@ export function ClientDetails({
   close: () => void;
   refresh: () => Promise<void>;
 }) {
+  const [rotate, setRotate] = useState(false),
+    [rotationNotice, setRotationNotice] = useState("");
+  const supportsRotation = (
+    client.monitoring?.inventory || client.identity
+  ).capabilities.includes("rotation-v1");
   const [confirm, setConfirm] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -371,6 +388,54 @@ export function ClientDetails({
               <dd>{date(client.last_contact)}</dd>
             </div>
           </dl>
+          <div className="heading-help">
+            <h3>Machine credentials</h3>
+            <Help label="Machine credential rotation">
+              Supported clients rotate their signing key and machine credential
+              automatically after 30 days. You can request an earlier rotation.
+              The daemon handles it at its next contact; the old credential
+              remains valid until the new key confirms. Interrupted rotations
+              resume from root-only local state. Revoke an identity if
+              compromise is suspected; rotation does not remove an attacker's
+              control of a compromised host.
+            </Help>
+          </div>
+          <dl>
+            <div>
+              <dt>Generation</dt>
+              <dd>{client.credentials?.generation || 1}</dd>
+            </div>
+            <div>
+              <dt>Last rotation</dt>
+              <dd>{date(client.credentials?.rotated_at || null)}</dd>
+            </div>
+            <div>
+              <dt>Rotation state</dt>
+              <dd>
+                {!supportsRotation
+                  ? "Client upgrade required"
+                  : client.credentials?.pending
+                    ? client.credentials.pending.expired
+                      ? "Unconfirmed rotation expired"
+                      : "Awaiting new-key confirmation"
+                    : client.credentials?.rotation_due
+                      ? "Rotation due"
+                      : "Current"}
+              </dd>
+            </div>
+          </dl>
+          {rotationNotice && <p role="status">{rotationNotice}</p>}
+          {client.state === "active" && (
+            <button
+              className="secondary"
+              disabled={
+                !supportsRotation || busy || client.credentials?.rotation_due
+              }
+              onClick={() => setRotate(true)}
+            >
+              Request credential rotation
+            </button>
+          )}
           <ClientDiagnostics client={client} api={api} refresh={refresh} />
           <ClientMonitoring client={client} api={api} refresh={refresh} />
           {["active", "approved"].includes(client.state) && (
@@ -380,6 +445,37 @@ export function ClientDetails({
           )}
         </section>
       </div>
+      {rotate && (
+        <ConfirmDialog
+          title="Rotate machine credentials?"
+          confirmLabel="Request rotation"
+          busy={busy}
+          cancel={() => setRotate(false)}
+          confirm={() => {
+            setBusy(true);
+            void api(`clients/${client.id}/rotate`, "POST", {
+              acknowledge: true,
+            })
+              .then(async () => {
+                setRotate(false);
+                setRotationNotice(
+                  "Rotation requested. The client will process it at its next contact.",
+                );
+                await refresh();
+              })
+              .catch((e) => {
+                setError(e.message);
+                setRotate(false);
+              })
+              .finally(() => setBusy(false));
+          }}
+        >
+          <p>
+            This requests a new signing key and machine credential for this
+            host. Host inventory, access settings and managed DNS remain.
+          </p>
+        </ConfirmDialog>
+      )}
       {confirm && (
         <ConfirmDialog
           title="Revoke client identity?"

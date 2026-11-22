@@ -231,8 +231,10 @@ async fn update_dns(a: &App, id: &str, policy: &Policy, identity: &Identity) -> 
     let result = dns_hosts::reconcile_locked(a, "machine", id).await?;
     Ok(json!(result))
 }
-fn response(id: &str, m: &Monitor) -> Value {
-    json!({"api_version":1,"host_id":id,"sequence":m.observation.sequence,"received_at":m.observation.received_at,"inventory":"accepted","dns":m.observation.dns})
+fn response(a: &App, id: &str, m: &Monitor) -> Result<Value> {
+    Ok(
+        json!({"api_version":1,"host_id":id,"sequence":m.observation.sequence,"received_at":m.observation.received_at,"inventory":"accepted","dns":m.observation.dns,"credentials":rotation::host_control(a,id)?}),
+    )
 }
 pub(crate) async fn heartbeat(
     State(a): State<App>,
@@ -264,7 +266,7 @@ pub(crate) async fn heartbeat(
     let hash = digest(&serde_json::to_string(&p).map_err(anyhow::Error::from)?);
     if p.sequence <= m.observation.sequence {
         if p.sequence == m.observation.sequence && hash == m.observation.hash {
-            return Ok(Json(response(&id, &m)));
+            return Ok(Json(response(&a, &id, &m)?));
         }
         return Err(fail(
             StatusCode::CONFLICT,
@@ -348,7 +350,7 @@ pub(crate) async fn heartbeat(
     }
     m.observation.dns = Some(outcome);
     save(&a, &id, &m)?;
-    Ok(Json(response(&id, &m)))
+    Ok(Json(response(&a, &id, &m)?))
 }
 fn history_view(a: &App, id: &str, m: &Monitor) -> Result<Vec<Value>> {
     let mut events = m.history.clone();
@@ -564,4 +566,19 @@ mod tests {
         m.observation.interval = 3600;
         assert_eq!(threshold(&m), 10800);
     }
+}
+
+pub(super) fn rotation_capable(a: &App, id: &str, credential: &str) -> Result<bool> {
+    let m = load(a, id)?;
+    Ok(m.credential_id == credential
+        && m.observation
+            .identity
+            .as_ref()
+            .is_some_and(|i| i.capabilities.iter().any(|v| v == "rotation-v1")))
+}
+
+pub(super) fn record_event(a: &App, id: &str, kind: &str, detail: Value) -> Result<()> {
+    let mut m = load(a, id)?;
+    event(&mut m, kind, detail);
+    save(a, id, &m)
 }

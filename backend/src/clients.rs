@@ -2,6 +2,7 @@
 use super::*;
 pub(super) mod diagnostics;
 pub(super) mod monitoring;
+pub(super) mod rotation;
 use axum::{extract::Request, middleware::Next};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use hmac::{Hmac, Mac};
@@ -46,6 +47,14 @@ struct Enrollment {
     enrolled_at: Option<i64>,
     last_contact: Option<i64>,
     generation: i64,
+    #[serde(default)]
+    rotated_at: Option<i64>,
+    #[serde(default)]
+    last_rotation: Option<String>,
+    #[serde(default)]
+    rotation: Option<rotation::Pending>,
+    #[serde(default)]
+    rotation_requested: bool,
 }
 pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS client_enrollments(id TEXT PRIMARY KEY,request_hash TEXT UNIQUE NOT NULL,device_hash TEXT UNIQUE NOT NULL,code_hash TEXT UNIQUE NOT NULL,host_id TEXT,data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS client_host_index ON client_enrollments(host_id); CREATE TABLE IF NOT EXISTS client_replays(thumb TEXT NOT NULL,jti TEXT NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(thumb,jti)); CREATE TABLE IF NOT EXISTS client_limits(scope TEXT PRIMARY KEY,at INTEGER NOT NULL,count INTEGER NOT NULL);")?;
@@ -291,7 +300,7 @@ fn credential(n: &Enrollment) -> String {
     )
 }
 fn view(n: &Enrollment) -> Value {
-    json!({"id":n.id,"identity":n.identity,"key_fingerprint":n.thumbprint,"state":if n.state=="pending"&&n.expires_at<=now(){"expired"}else{&n.state},"host_id":n.host_id,"created_at":n.created_at,"expires_at":n.expires_at,"enrolled_at":n.enrolled_at,"last_contact":n.last_contact})
+    json!({"credentials":rotation::control(n),"id":n.id,"identity":n.identity,"key_fingerprint":n.thumbprint,"state":if n.state=="pending"&&n.expires_at<=now(){"expired"}else{&n.state},"host_id":n.host_id,"created_at":n.created_at,"expires_at":n.expires_at,"enrolled_at":n.enrolled_at,"last_contact":n.last_contact})
 }
 fn validate_identity(i: &Identity) -> Result<()> {
     if !hosts::hostname(&i.hostname)
@@ -342,7 +351,7 @@ pub(super) async fn info(State(a): State<App>) -> Result<Json<Value>> {
             )
             .map_err(anyhow::Error::from)?;
     Ok(Json(
-        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1","inventory-v1","diagnostics-v1"]}),
+        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1","inventory-v1","diagnostics-v1","rotation-v1"]}),
     ))
 }
 #[derive(Deserialize)]
@@ -427,6 +436,10 @@ pub(super) async fn start(
         enrolled_at: None,
         last_contact: None,
         generation: 1,
+        rotated_at: None,
+        last_rotation: None,
+        rotation: None,
+        rotation_requested: false,
     };
     n.device_hash = digest(&device(&n));
     n.code_hash = digest(&code(&n));
@@ -471,7 +484,7 @@ pub(super) async fn poll(
     rate(&a, "poll", 1200)?;
     let _gate = a.gate.lock().await;
     let mut n = pending(&a, &h, &id, &p, "token")?;
-    if !["pending", "approved", "active"].contains(&n.state.as_str()) {
+    if !["pending", "approved", "active"].contains(&n.state.as_str()) || n.generation > 1 {
         return Err(fail(StatusCode::FORBIDDEN, "access_denied"));
     }
     if n.last_poll > now() - 5 {
@@ -721,7 +734,7 @@ pub(super) async fn session(
     n.last_contact = Some(now());
     store(&a, &n)?;
     Ok(Json(
-        json!({"api_version":1,"host_id":id,"server_time":now(),"enrollment":"active"}),
+        json!({"api_version":1,"host_id":id,"server_time":now(),"enrollment":"active","credentials":rotation::control(&n)}),
     ))
 }
 pub(super) async fn leave(

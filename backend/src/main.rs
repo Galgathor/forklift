@@ -1066,6 +1066,14 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/client/v1/hosts/{id}/session", post(clients::session))
         .route(
+            "/api/client/v1/hosts/{id}/rotation/prepare",
+            post(clients::rotation::prepare),
+        )
+        .route(
+            "/api/client/v1/hosts/{id}/rotation/confirm",
+            post(clients::rotation::confirm),
+        )
+        .route(
             "/api/client/v1/hosts/{id}/diagnostic-profile",
             post(clients::diagnostics::profile),
         )
@@ -1086,6 +1094,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(machine)
         .route("/api/clients", get(clients::index))
+        .route("/api/clients/{id}/rotate",post(clients::rotation::request))
         .route("/api/hosts/{id}/diagnostics",get(clients::diagnostics::details))
         .route("/api/hosts/{id}/issues/{issue}",post(clients::diagnostics::acknowledge_issue))
         .route("/api/notifications",get(clients::diagnostics::notifications))

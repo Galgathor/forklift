@@ -408,6 +408,8 @@ with Stack(https=True) as s:
         stop(monitor)
         assert state(first)['access_token']==token
         print('PASS: native daemon process restart, authenticated contact, bounded offline cache, graceful shutdown and recovery preserve the same credential.',flush=True)
+        from client_rotation import exercise as rotation_exercise
+        rotation_restore_check=rotation_exercise(s,CLIENT,state_dir,begin,enrolled,approve,cli,state,stop,processes,browser)
         # Back up an active credential, revoke it in the WebUI, then restore the snapshot.
 
         identity,headers=r('/api/maintenance/keys','POST',raw=True)
@@ -427,6 +429,7 @@ with Stack(https=True) as s:
 
         assert json.loads(cli(first,'status').stdout)['connectivity']=='unavailable'
         r('/api/recovery/complete','POST',dict(acknowledge=True))
+        rotation_restore_check()
         print('PASS: real encrypted installation restore quarantines client grants and rejects archived credentials while retaining inventory.',flush=True)
         r('/api/clients/'+item['id']+'/revoke','POST',dict(acknowledge=True),use_csrf=False,expect=403)
         r('/api/clients/'+item['id']+'/revoke','POST',dict(acknowledge=True))

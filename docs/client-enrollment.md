@@ -38,6 +38,13 @@ History retains the latest 100 server-timestamped monitoring events. Reload moni
 
 ## Implemented scope
 
-Milestones 1–3 provide the native CLI, LAN discovery, verified HTTPS, key-bound pairing, manual linking, root-only persistent state, root systemd service, live inventory, network events, independent heartbeat/offline history, authorized DNS address updates and WebUI revocation. Read-only DNS, LDAPS, SSSD, NSS, PAM and SSH diagnostics and issue/notification lifecycle are implemented. Credential rotation and Debian packaging remain Milestone 4. Unsupported/unverifiable checks are explicit. No synthetic health is shown.
+Milestones 1–3 provide the native CLI, LAN discovery, verified HTTPS, key-bound pairing, manual linking, root-only persistent state, root systemd service, live inventory, network events, independent heartbeat/offline history, authorized DNS address updates and WebUI revocation. Read-only DNS, LDAPS, SSSD, NSS, PAM and SSH diagnostics and issue/notification lifecycle are implemented. Milestone 4 adds native Debian packages and resumable machine credential rotation. Unsupported/unverifiable checks are explicit. No synthetic health is shown.
 
-Build/install the 0.3 client from its separate repository after updating the server. The source build and native integration currently target Ubuntu 24.04 amd64; other Ubuntu LTS/architectures, installed-service boots and packaged upgrades need later validation. See the canonical [v1 API contract](client-api-v1.md) and [integration plan](client-plan.md).
+Build/install the 0.4 client from its separate repository after updating the server. The source build and native integration currently target Ubuntu 24.04 amd64; other Ubuntu LTS/architectures need separate validation. See the canonical [v1 API contract](client-api-v1.md) and [integration plan](client-plan.md).
+
+
+## Credential rotation and packages
+
+Upgrade Forklift first, then install client 0.4 using its native Debian package. Package upgrade/removal preserves root-only machine state; removing the binary does not revoke the server identity. Use **Revoke client** when a machine is retired or compromised.
+
+Client details show actual credential generation, pending state and last confirmed rotation. **Request credential rotation** queues a replacement for a rotation-capable daemon; confirmation is required in the styled dialog. Automatic rotation also becomes due after 30 days, using server time. The client persists provisional keys before contacting Forklift and resumes interrupted confirmations, including lost acknowledgments. The original identity is invalidated only when the server commits the replacement. Expired unconfirmed attempts retain the original identity. Offline/revoked clients show errors rather than false completion. Rotation retains the stable host, report counters, monitoring policy and history. Compromised hosts require revocation/investigation and fresh enrollment.

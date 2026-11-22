@@ -1,6 +1,6 @@
 # Client diagnostics and host issues
 
-Update Forklift before installing Forklift Client 0.3. Existing enrollment identities and manual hosts remain compatible. The client continues to inspect and report only; it never installs packages, changes authentication/resolver files, repairs configuration, starts authentication services or attempts password logins.
+Update Forklift before installing Forklift Client 0.4. Existing enrollment identities and manual hosts remain compatible. The client continues to inspect and report only; it never installs packages, changes authentication/resolver files, repairs configuration, starts authentication services or attempts password logins.
 
 ## Enable checks
 
@@ -28,4 +28,4 @@ The daemon caches its latest diagnostic snapshot and trusted expectation profile
 
 External checks use fixed executable paths/arguments, no shell, closed stdin, a three-second execution limit and an 8 KiB output limit. Only curated results are reported. LDAP probes validate certificates using operating-system roots plus the public directory trust bundle supplied through the already-verified management connection; they confirm an anonymous LDAP protocol reply without binding with a user's password. Management-server trust is never changed by a response.
 
-Ubuntu 24.04 amd64 is the initial validation target. Disposable Linux fixtures exercise real SSSD, PAM, NSS, OpenSSH, LDAPS and DNS without changing the development host. Full installed-systemd boots, other Ubuntu releases/architectures, arbitrary custom PAM/access-policy equivalence and genuine end-to-end password login are not certified by these diagnostics. Debian packaging and credential rotation remain Milestone 4.
+Ubuntu 24.04 amd64 is the initial validation target. Disposable Linux fixtures exercise real SSSD, PAM, NSS, OpenSSH, LDAPS and DNS without changing the development host. A full Ubuntu 24.04 amd64 VM also verifies the installed root systemd service, sandbox, native Debian upgrade/reboot/removal lifecycle and OpenSSH service/syntax/listener checks. Other Ubuntu releases/architectures, arbitrary custom PAM/access-policy equivalence and genuine end-to-end password login remain unverified. Milestone 4 adds resumable key/credential rotation; these diagnostics remain observations rather than authentication attestation.
