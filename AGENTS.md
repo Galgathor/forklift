@@ -42,3 +42,5 @@ Use concise imperative subjects, matching history: `Remove promotional WebUI cop
 ## Security & Configuration
 
 Never commit `.env`, private keys, credentials, recovery bundles or LDAP data. Preserve verified TLS, server-side authorization and CSRF protections. Keep privileged provisioning behind fixed operations; do not expose Docker sockets or command endpoints. Routine directory administration belongs in the WebUI; console recovery is reserved for administrator lockout.
+
+Native clients may provision explicitly approved Forklift services through predefined operations. Existing SSSD, PAM/NSS, SSH and host resolver configuration stays read-only to avoid lockouts. Connectivity diagnostics must identify their probe source/path and transport; never claim a local listener proves remote firewall access, or change firewall rules automatically.

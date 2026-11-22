@@ -3,7 +3,9 @@ mod discovery;
 mod dns;
 mod hosts;
 mod maintenance;
+mod network;
 mod operations;
+mod port_checks;
 mod replica_setup;
 mod replicas;
 use axum::{
@@ -1113,6 +1115,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/me", get(me))
         .route("/api/logout", post(logout))
         .route("/api/overview", get(overview))
+        .route("/api/network/checks", post(network::checks))
+        .route("/api/hosts/{id}/network-checks", post(network::host_checks))
         .route("/api/dns", get(dns::index))
         .route("/api/dns/zones", post(dns::create))
         .route("/api/dns/zones/{zone}", get(dns::get_zone).delete(dns::delete).put(dns::settings))

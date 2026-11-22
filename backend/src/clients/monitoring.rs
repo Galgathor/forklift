@@ -503,7 +503,7 @@ fn offline(a: &App) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn diagnostic_config(a: &App, id: &str) -> Result<diagnostics::Config> {
+pub(crate) fn diagnostic_config(a: &App, id: &str) -> Result<diagnostics::Config> {
     Ok(load(a, id)?.policy.diagnostics)
 }
 #[cfg(test)]
@@ -581,4 +581,12 @@ pub(super) fn record_event(a: &App, id: &str, kind: &str, detail: Value) -> Resu
     let mut m = load(a, id)?;
     event(&mut m, kind, detail);
     save(a, id, &m)
+}
+
+pub(super) fn network_capable(a: &App, id: &str) -> Result<bool> {
+    let m = load(a, id)?;
+    Ok(m.observation
+        .identity
+        .as_ref()
+        .is_some_and(|i| i.capabilities.iter().any(|c| c == "network-v1")))
 }

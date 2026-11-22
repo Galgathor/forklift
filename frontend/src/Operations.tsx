@@ -1,3 +1,4 @@
+import { NetworkChecks } from "./NetworkChecks";
 import { Help } from "./Help";
 import { useEffect, useState } from "react";
 import { StorageControls, type DirectoryNetwork } from "./StorageControls";
@@ -69,6 +70,7 @@ export function Operations({
   }, [search]);
   return (
     <>
+      <NetworkChecks api={api} />
       <section className="panel">
         <div className="panel-title">
           <h2>Installation & recovery</h2>

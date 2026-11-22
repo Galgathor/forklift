@@ -409,6 +409,8 @@ with Stack(https=True) as s:
         assert state(first)['access_token']==token
         print('PASS: native daemon process restart, authenticated contact, bounded offline cache, graceful shutdown and recovery preserve the same credential.',flush=True)
         from client_rotation import exercise as rotation_exercise
+        from network_checks import exercise as network_exercise
+        network_exercise(s,host_id,browser)
         rotation_restore_check=rotation_exercise(s,CLIENT,state_dir,begin,enrolled,approve,cli,state,stop,processes,browser)
         # Back up an active credential, revoke it in the WebUI, then restore the snapshot.
 

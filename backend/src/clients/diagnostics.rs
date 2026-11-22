@@ -148,6 +148,18 @@ fn notification(issue: &Issue, kind: &str) -> Value {
     json!({"issue_id":issue.id,"check_id":issue.check_id,"kind":kind,"severity":issue.severity,"summary":issue.summary,"at":now(),"acknowledged":false,"dismissed":false})
 }
 fn known(id: &str) -> bool {
+    if id == "network.management" {
+        return true;
+    }
+    if ["network.ldap.", "network.dns_tcp.", "network.dns_udp."]
+        .iter()
+        .any(|p| {
+            id.strip_prefix(p)
+                .is_some_and(|s| s.len() == 1 && s.bytes().all(|b| b.is_ascii_digit() && b < b'4'))
+        })
+    {
+        return true;
+    }
     [
         "client.enrollment",
         "dns.resolver",
@@ -180,8 +192,8 @@ fn known(id: &str) -> bool {
 }
 fn validate_checks(checks: &[Check]) -> Result<()> {
     let mut ids = std::collections::HashSet::new();
-    if checks.is_empty() || checks.len() > 32 {
-        return Err(bad("Submit between 1 and 32 diagnostic checks"));
+    if checks.is_empty() || checks.len() > 48 {
+        return Err(bad("Submit between 1 and 48 diagnostic checks"));
     }
     for c in checks {
         if !known(&c.id)
@@ -348,6 +360,9 @@ fn profile_value(a: &App, id: &str) -> Result<Value> {
     drop(db);
     authorities.truncate(4);
     let mut value = json!({"api_version":1,"settings":config,"dns":host.dns,"authorities":authorities,"endpoints":host.draft.endpoints.iter().take(4).collect::<Vec<_>>(),"base":base(a)?,"ldap_ca":ca,"allowed_groups":host.draft.allowed_groups});
+    if monitoring::network_capable(a, id)? {
+        value["network"] = json!(true);
+    }
     value["revision"] = json!(digest(&value.to_string()));
     Ok(value)
 }
@@ -535,7 +550,23 @@ fn contexts(p: &Value) -> std::collections::BTreeMap<String, String> {
         .into_iter()
         .chain(["sssd.installed".into(), "ssh.installed".into()])
     {
-        let c = if id == "client.enrollment" || id == "dns.resolver" {
+        let c = if id.starts_with("network.dns_") {
+            let i = id
+                .rsplit('.')
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            json!({"server":p["authorities"][i]})
+        } else if id.starts_with("network.ldap.") {
+            let i = id
+                .rsplit('.')
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            json!({"endpoint":p["endpoints"][i]})
+        } else if id == "network.management" {
+            json!({"network":p["network"]})
+        } else if id == "client.enrollment" || id == "dns.resolver" {
             json!({"check":id})
         } else if id == "dns.zone" {
             json!({"zone":p["dns"]["zone"]})
@@ -578,6 +609,16 @@ fn contexts(p: &Value) -> std::collections::BTreeMap<String, String> {
 }
 fn required(p: &Value) -> Vec<String> {
     let mut ids = vec!["client.enrollment".into(), "dns.resolver".into()];
+    if p["network"] == true {
+        ids.push("network.management".into());
+        for i in 0..p["endpoints"].as_array().map(Vec::len).unwrap_or(0) {
+            ids.push(format!("network.ldap.{i}"));
+        }
+        for i in 0..p["authorities"].as_array().map(Vec::len).unwrap_or(0) {
+            ids.push(format!("network.dns_tcp.{i}"));
+            ids.push(format!("network.dns_udp.{i}"));
+        }
+    }
     if p["dns"].is_object() {
         ids.extend(["dns.forward".into(), "dns.zone".into()]);
         if p["dns"]["reverse"] == true {
@@ -864,4 +905,35 @@ mod tests {
             .contains(&"ssh.syntax".into())
         );
     }
+}
+
+pub(crate) fn network_observations(a: &App) -> Result<Vec<Value>> {
+    let ids: Vec<(String, String)> = {
+        let db = a.db.lock().unwrap();
+        let mut q = db
+            .prepare("SELECT id,data FROM hosts ORDER BY id LIMIT 128")
+            .map_err(anyhow::Error::from)?;
+        q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(anyhow::Error::from)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(anyhow::Error::from)?
+    };
+    let mut out = Vec::new();
+    for (id, raw) in ids {
+        let host: hosts::Host = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
+        let r = load(a, &id)?;
+        if r.received_at == 0 {
+            continue;
+        }
+        let active = by_host(a, &id)?
+            .iter()
+            .any(|n| n.id == r.credential_id && n.state == "active");
+        let fresh = active
+            && now() - r.received_at < 900.max(3 * r.interval)
+            && profile_value(a, &id).is_ok_and(|p| p["revision"] == r.profile);
+        for c in r.checks.iter().filter(|c| c.id.starts_with("network.")) {
+            out.push(json!({"host_id":id,"host":host.draft.name,"check":c,"received_at":r.received_at,"fresh":fresh}));
+        }
+    }
+    Ok(out)
 }

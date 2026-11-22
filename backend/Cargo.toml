@@ -29,3 +29,5 @@ tokio-util = { version = "0.7", features = ["io"] }
 base64 = "0.22"
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
 mdns-sd = "0.22"
+
+hickory-proto = "0.26.3"

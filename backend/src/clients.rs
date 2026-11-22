@@ -351,7 +351,7 @@ pub(super) async fn info(State(a): State<App>) -> Result<Json<Value>> {
             )
             .map_err(anyhow::Error::from)?;
     Ok(Json(
-        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1","inventory-v1","diagnostics-v1","rotation-v1"]}),
+        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1","inventory-v1","diagnostics-v1","rotation-v1","network-v1"]}),
     ))
 }
 #[derive(Deserialize)]
@@ -820,4 +820,8 @@ pub(super) fn revoke_host(a: &App, id: &str) -> Result<()> {
         diagnostics::retire(a, id)?;
     }
     Ok(())
+}
+
+pub(crate) fn network_rate(a: &App) -> Result<()> {
+    rate(a, "network-checks", 6)
 }

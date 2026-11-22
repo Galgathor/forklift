@@ -26,6 +26,7 @@ def exercise(s, client_binary, local_dir, saved, machine, proof, token, host_id,
     edit_monitor(diagnostics=settings)
     expected=profile()
     assert 'PRIVATE KEY' not in expected['ldap_ca'] and saved['access_token'] not in json.dumps(expected)
+    assert expected.get('network') is True
     assert expected['settings']['authentication'] and expected['allowed_groups']==['client-checks']
     r('/api/notifications',authenticated=False,expect=401)
     sequence=0
@@ -110,7 +111,7 @@ def exercise(s, client_binary, local_dir, saved, machine, proof, token, host_id,
         expected['authorities']=[dict(address='127.0.0.1',port=int(s.env['FORKLIFT_DNS_PORT']))]
         install_state(expected)
         healthy=checks()
-        for id in ['sssd.installed','sssd.syntax','sssd.directory','nss.configuration','nss.user','nss.group','pam.integration','pam.access','ssh.installed','ssh.syntax','ssh.authentication','ssh.listener','ldap.endpoint.0','dns.authority.0']:
+        for id in ['network.management','network.ldap.0','network.dns_tcp.0','network.dns_udp.0','sssd.installed','sssd.syntax','sssd.directory','nss.configuration','nss.user','nss.group','pam.integration','pam.access','ssh.installed','ssh.syntax','ssh.authentication','ssh.listener','ldap.endpoint.0','dns.authority.0']:
             assert healthy[id]['status']=='pass',(id,healthy[id])
         online=command('sssctl','domain-status','forklift','--online',data=b'',check=False)
         expected_online='pass' if online.returncode==0 and b'Online status: Online' in online.stdout else ('failure' if b'Online status: Offline' in online.stdout else 'unknown')
@@ -148,6 +149,15 @@ def exercise(s, client_binary, local_dir, saved, machine, proof, token, host_id,
         assert checks()['ssh.listener']['status']=='failure'
         command('python3','-c',"import os,signal;from pathlib import Path;os.kill(int(Path('/run/sssd.pid').read_text()),signal.SIGTERM)")
         stopped=checks();assert stopped['sssd.online']['status']!='pass'
+        # Port probes remain independent from zone/TLS/authentication health.
+        actual=checks()
+        assert actual['network.ldap.0']['status']=='pass'
+        s.compose('stop','dns')
+        try:
+            blocked=checks()
+            assert blocked['network.dns_tcp.0']['status']=='failure' and blocked['network.dns_udp.0']['status']=='failure'
+            assert blocked['network.management']['status']=='pass'
+        finally:s.compose('start','dns')
         # Actual observed checks travel through the same authenticated report API.
         send(list(stopped.values()))
         assert any(c['id']=='ssh.syntax' for c in r(detail_path)['checks'])

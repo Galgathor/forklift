@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { NetworkChecks } from "./NetworkChecks";
 import { Help } from "./Help";
 import type { ClientRecord } from "./ClientEnrollment";
 type Api = (path: string, method?: string, body?: unknown) => Promise<unknown>;
@@ -71,11 +72,15 @@ export function ClientDiagnostics({
   }, [client.host_id, status?.received_at, status?.active_issues]);
   const checks =
     data?.checks.filter((c) =>
-      tab === "DNS"
-        ? c.id.startsWith("dns.")
-        : tab === "SSH"
-          ? c.id.startsWith("ssh.")
-          : !c.id.startsWith("dns.") && !c.id.startsWith("ssh."),
+      tab === "Network"
+        ? c.id.startsWith("network.")
+        : tab === "DNS"
+          ? c.id.startsWith("dns.")
+          : tab === "SSH"
+            ? c.id.startsWith("ssh.")
+            : !c.id.startsWith("dns.") &&
+              !c.id.startsWith("ssh.") &&
+              !c.id.startsWith("network."),
     ) || [];
   return (
     <section className="client-monitoring">
@@ -124,7 +129,7 @@ export function ClientDiagnostics({
         role="tablist"
         aria-label="Host diagnostic sections"
       >
-        {["DNS", "Authentication", "SSH", "Issues"].map((name) => (
+        {["Network", "DNS", "Authentication", "SSH", "Issues"].map((name) => (
           <button
             key={name}
             role="tab"
@@ -136,6 +141,9 @@ export function ClientDiagnostics({
           </button>
         ))}
       </div>
+      {tab === "Network" && (
+        <NetworkChecks api={api} hostId={client.host_id || undefined} />
+      )}
       <div role="tabpanel" aria-label={`${tab} diagnostics`}>
         {!data ? (
           <p className="muted">Loading diagnostics…</p>

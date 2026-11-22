@@ -12,6 +12,7 @@ import signal
 import subprocess
 import threading
 import time
+import tomllib
 from fixture import Stack,SOURCE,run,port
 
 IMAGE_URL='https://cloud-images.ubuntu.com/noble/20261017/noble-server-cloudimg-amd64.img'
@@ -22,7 +23,8 @@ def exercise(s):
     tools=Path(os.environ.get('FORKLIFT_TEST_VM_TOOLS','/tmp/forklift-client-vm-tools/root')).resolve()
     image=Path(os.environ.get('FORKLIFT_TEST_VM_IMAGE','/tmp/forklift-client-vm-images/noble-amd64.img')).resolve()
     assert hashlib.file_digest(image.open('rb'),'sha256').hexdigest()==IMAGE_SHA256,'Use the pinned vendor-verified Ubuntu image'
-    packages=[SOURCE.parent/'forklift-client/target/packages'/f'forklift-client_0.4.0-{revision}_amd64.deb' for revision in [1,2]]
+    version=tomllib.loads((SOURCE.parent/'forklift-client/Cargo.toml').read_text())['package']['version']
+    packages=[SOURCE.parent/'forklift-client/target/packages'/f'forklift-client_{version}-{revision}_amd64.deb' for revision in [1,2]]
     assert all(p.is_file() for p in packages),'Build both package revisions before this fixture'
     root=s.root/'vm';root.mkdir(mode=0o700)
     env={**os.environ,'LD_LIBRARY_PATH':str(tools/'usr/lib/x86_64-linux-gnu')+':'+str(tools/'lib/x86_64-linux-gnu')}
