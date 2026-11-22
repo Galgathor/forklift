@@ -1,6 +1,6 @@
 # Forklift Client integration plan
 
-## Existing components
+## Inspection before Milestone 1
 
 The Axum manager authorizes human administrators through LDAP membership, session cookies, Origin/CSRF checks and recovery guards. SQLite schema 5 stores hosts as JSON under stable random IDs; manual host CRUD and per-host LDAP bundle generation already work. DNS intent, per-value ownership and retry journals live separately. None of these are machine enrollment or telemetry credentials. There is no client enrollment, host heartbeat or notification service yet. Keep client credentials separate from LDAP bind identities and preserve manual host behavior.
 
@@ -15,4 +15,16 @@ The Axum manager authorizes human administrators through LDAP membership, sessio
 
 ## Later milestones
 
-Milestone 2 adds netlink plus periodic inventory, independent freshness/offline detection and explicitly authorized DNS reconciliation. Milestone 3 adds read-only system diagnostics and authoritative issue/notification history. Milestone 4 completes Debian packaging, credential rotation and wider supported-Ubuntu recovery/security drills. No fake diagnostic results, automatic system repair, remote commands or automatic identity merging are permitted.
+Milestones 1–2 are implemented. Milestone 3 adds read-only system diagnostics and authoritative issue/notification history. Milestone 4 completes Debian packaging, credential rotation and wider supported-Ubuntu recovery/security drills. No fake diagnostic results, automatic system repair, remote commands or automatic identity merging are permitted.
+
+## Milestone 2 architecture
+
+Reuse enrollment keys, DPoP verification, stable host IDs and the existing DNS ownership journals. Add a separate monitoring table without rewriting schema-5 host rows or enrollment identity. Keep observed hostname/FQDN separate from administrator-configured inventory and DNS names.
+
+1. Accept bounded version-1 inventory reports with a durable monotonic sequence. Save server receipt time before DNS work; identical retries return the original receipt and cannot extend freshness.
+2. Reconcile the native inventory every configured heartbeat interval, with debounced route-netlink events for relevant address/interface changes. Cache the latest snapshot and sequence atomically before network access. Preserve read-only system inspection and root-only storage.
+3. Derive online/offline independently from heartbeat receipt, with a server watcher for transition history. Ordinary session checks do not count as heartbeats; manual inventory has no offline state.
+4. Require per-host DNS opt-in and explicit IPv4/optional IPv6 selectors. Refuse ambiguous/missing addresses and externally changed ownership; retain administrator-controlled names. Reuse native API reconciliation, per-value markers and durable retry plans. Bound DNS work separately and return independent inventory/DNS outcomes.
+5. Show actual inventory, freshness, DNS outcome, policy and bounded history in Hosts. Use contextual information buttons and existing styled dialogs. Verify native HTTPS, isolated netlink changes, real PowerDNS answers, persistence, stale reports, outages and revocation.
+
+System authentication diagnostics, issue/notification lifecycle, Debian packaging and credential rotation remain subsequent milestones.

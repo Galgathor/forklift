@@ -70,6 +70,8 @@ struct State {
     bindings: Vec<Binding>,
     deleted: bool,
     status: Status,
+    #[serde(default)]
+    client_revision: Option<i64>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Completion {
@@ -214,6 +216,7 @@ pub(crate) fn intent(a: &App, host: &hosts::Host) -> Result<()> {
         bindings: bindings.clone(),
         deleted: false,
         status: pending_status(bindings.len()),
+        client_revision: None,
     };
     let mut db = a.db.lock().unwrap();
     let tx = db.transaction().map_err(anyhow::Error::from)?;
@@ -234,6 +237,7 @@ pub(crate) fn retire(a: &App, host: &hosts::Host, remove: bool) -> Result<()> {
         bindings: vec![],
         deleted: false,
         status: pending_status(0),
+        client_revision: None,
     });
     let mut db = a.db.lock().unwrap();
     let tx = db.transaction().map_err(anyhow::Error::from)?;
@@ -597,6 +601,88 @@ async fn plan(a: &App, state: &State) -> Result<(Change, Vec<Binding>)> {
         },
         candidates,
     ))
+}
+/// Machine updates require ownership of every currently configured value, not a matching name.
+pub(crate) async fn authorize_client_update(a: &App, host: &hosts::Host) -> Result<()> {
+    let config = host
+        .dns
+        .as_ref()
+        .ok_or(bad("No managed DNS configuration"))?;
+    let state = get(a, &host.id)?.ok_or(bad(
+        "Apply managed host DNS before enabling automatic updates",
+    ))?;
+    if state.deleted
+        || state.status.state != "applied"
+        || state.desired.as_ref() != Some(config)
+        || state.revision != host.revision
+    {
+        return Err(bad(
+            "Reconcile and review the host's managed DNS before automatic address changes",
+        ));
+    }
+    let mut required = vec![("A", config.ipv4.to_string())];
+    if let Some(ip) = config.ipv6 {
+        required.push(("AAAA", ip.to_string()));
+    }
+    for (typ, address) in required {
+        let binding=state.bindings.iter().find(|b|b.name==config.fqdn && b.rr_type==typ && b.value==address)
+            .ok_or(bad("This host does not own its configured DNS address; review manually managed records first"))?;
+        let z = zone(&binding.zone).await?;
+        if !find(&z, &binding.name, &binding.rr_type).is_some_and(|r| owns(&r, &host.id, binding)) {
+            return Err(bad(
+                "DNS ownership changed outside Forklift; review the host's records before automatic updates",
+            ));
+        }
+        if config.reverse {
+            let owner = reverse(address.parse().map_err(|_| bad("Invalid host address"))?);
+            let binding=state.bindings.iter().find(|b|b.name==owner && b.rr_type=="PTR" && b.value==config.fqdn)
+                .ok_or(bad("This host does not own its reverse record; review manually managed records first"))?;
+            let z = zone(&binding.zone).await?;
+            if !find(&z, &binding.name, "PTR").is_some_and(|r| owns(&r, &host.id, binding)) {
+                return Err(bad(
+                    "Reverse DNS ownership changed outside Forklift; review before automatic updates",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+pub(crate) fn client_intent(a: &App, host: &hosts::Host) -> Result<()> {
+    intent(a, host)?;
+    let mut state = get(a, &host.id)?.ok_or(bad("No host DNS intent"))?;
+    state.client_revision = Some(host.revision);
+    store(a, &state)
+}
+pub(crate) async fn client_retry_allowed(a: &App, host: &hosts::Host) -> Result<()> {
+    let state = get(a, &host.id)?.ok_or(bad("No host DNS intent"))?;
+    if state.status.state == "applied" {
+        return authorize_client_update(a, host).await;
+    }
+    if state.deleted
+        || state.status.state == "needs_review"
+        || state.bindings.is_empty()
+        || state.client_revision != Some(host.revision)
+        || state.revision != host.revision
+    {
+        return Err(bad(
+            "DNS ownership or deferred administrator changes need review before automatic reconciliation",
+        ));
+    }
+    if state.status.operation_id.is_none() {
+        // Before a plan exists no writes were authorized. All previous markers must still exist.
+        for binding in &state.bindings {
+            let z = zone(&binding.zone).await?;
+            if !find(&z, &binding.name, &binding.rr_type)
+                .is_some_and(|r| owns(&r, &host.id, binding))
+            {
+                return Err(bad(
+                    "DNS ownership changed before automatic reconciliation; review the records",
+                ));
+            }
+        }
+    }
+    // A journaled partial plan checks every original record/comment revision before retrying writes.
+    Ok(())
 }
 pub(crate) async fn reconcile_locked(a: &App, who: &str, id: &str) -> Result<Status> {
     ensure(a)?;

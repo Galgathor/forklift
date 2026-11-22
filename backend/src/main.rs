@@ -1055,6 +1055,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     maintenance::watch(a.clone());
+    clients::monitoring::watch(a.clone());
     let machine = Router::new()
         .route("/api/client/v1/info", get(clients::info))
         .route("/api/client/v1/enrollments", post(clients::start))
@@ -1064,6 +1065,10 @@ async fn main() -> anyhow::Result<()> {
             post(clients::cancel),
         )
         .route("/api/client/v1/hosts/{id}/session", post(clients::session))
+        .route(
+            "/api/client/v1/hosts/{id}/heartbeat",
+            post(clients::monitoring::heartbeat),
+        )
         .route("/api/client/v1/hosts/{id}/leave", post(clients::leave))
         .layer(axum::extract::DefaultBodyLimit::max(16384))
         .layer(axum::middleware::from_fn_with_state(
@@ -1073,6 +1078,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(machine)
         .route("/api/clients", get(clients::index))
+        .route("/api/hosts/{id}/monitoring", get(clients::monitoring::details).put(clients::monitoring::policy))
         .route("/api/clients/lookup", post(clients::lookup))
         .route("/api/clients/{id}/approve", post(clients::approve))
         .route("/api/clients/{id}/revoke", post(clients::revoke))

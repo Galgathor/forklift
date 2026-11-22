@@ -4,7 +4,7 @@ import {
   type ClientRecord,
 } from "./ClientEnrollment";
 import { Help, FieldHelp } from "./Help";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Server, Plus, Pencil, Trash2, Download, X } from "lucide-react";
 type DnsConfig = {
   zone: string;
@@ -54,7 +54,16 @@ export function Hosts({
   perform,
 }: Props) {
   const [joining, setJoining] = useState(false),
-    [clientDetails, setClientDetails] = useState<ClientRecord | null>(null);
+    [clientDetailsId, setClientDetails] = useState<string | null>(null);
+  const clientDetails = hosts.find(
+    (h) => h.client?.id === clientDetailsId,
+  )?.client;
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refresh().catch(() => {});
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
   const [editing, setEditing] = useState<Host | null | undefined>(undefined),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
@@ -216,21 +225,40 @@ export function Hosts({
                           <>
                             <button
                               className="secondary"
-                              onClick={() => setClientDetails(h.client!)}
+                              onClick={() => setClientDetails(h.client!.id)}
                             >
                               {h.client.state === "active"
                                 ? "Client enrolled"
                                 : "Client " +
                                   h.client.state.replaceAll("_", " ")}
                             </button>
-                            <small>v{h.client.identity.client_version}</small>
                             <small>
-                              {h.client.last_contact
-                                ? "Last contact " +
+                              {h.client.monitoring?.connectivity.replaceAll(
+                                "_",
+                                " ",
+                              ) || "Not reporting"}
+                            </small>
+                            <small>
+                              v
+                              {
+                                (
+                                  h.client.monitoring?.inventory ||
+                                  h.client.identity
+                                ).client_version
+                              }
+                            </small>
+                            <small>
+                              {h.client.monitoring?.inventory?.addresses
+                                .map((a) => a.address)
+                                .join(", ")}
+                            </small>
+                            <small>
+                              {h.client.monitoring?.received_at
+                                ? "Last heartbeat " +
                                   new Date(
-                                    h.client.last_contact * 1000,
+                                    h.client.monitoring.received_at * 1000,
                                   ).toLocaleString()
-                                : "Contact not confirmed"}
+                                : "Heartbeat not reported"}
                             </small>
                           </>
                         ) : (

@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 from fixture import SOURCE, Stack, run
 
-client=Path(os.environ.get('FORKLIFT_CLIENT_BINARY',SOURCE.parent/'forklift-client/target/debug/forklift-client')).resolve()
+client=Path(os.environ.get('FORKLIFT_CLIENT_BINARY',SOURCE.parent/'forklift-client/target/release/forklift-client')).resolve()
 assert client.is_file()
 # Use an existing private interface and a dedicated TLS port; never alter network configuration.
 interfaces=json.loads(run(['ip','-j','-4','address','show','docker0']).stdout)

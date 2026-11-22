@@ -42,7 +42,7 @@ Choose the base DN carefully: suffix changes are unsupported. Setup refuses to o
 
 ## Optional native client
 
-Forklift Client pairs Linux machines through **Hosts → Join existing machine**. It adds a revocable, key-bound enrollment identity and session/contact visibility without changing Linux authentication or DNS configuration. Manual hosts remain supported. See [native client enrollment](docs/client-enrollment.md) for installation, trusted HTTPS, LAN discovery, linking, revocation and milestone limits.
+Forklift Client pairs Linux machines through **Hosts → Join existing machine**. It adds a revocable, key-bound identity, live inventory, heartbeat connectivity and monitoring history. Administrators can explicitly enable updates to that host’s managed DNS addresses. The native client never changes Linux authentication or resolver configuration. Manual hosts remain supported. See [native client enrollment](docs/client-enrollment.md) for installation, trusted HTTPS, LAN discovery, linking, revocation and milestone limits.
 
 ## Integrated DNS
 

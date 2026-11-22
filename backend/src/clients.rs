@@ -1,5 +1,6 @@
 //! Optional native-client enrollment. Never supplies authentication-service configuration.
 use super::*;
+pub(super) mod monitoring;
 use axum::{extract::Request, middleware::Next};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use hmac::{Hmac, Mac};
@@ -51,6 +52,7 @@ pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
         "INSERT OR IGNORE INTO settings(key,value) VALUES('client_instance_id',?)",
         [json!(token()[..32]).to_string()],
     )?;
+    monitoring::migrate(db)?;
     Ok(())
 }
 fn fail(code: StatusCode, message: &str) -> Error {
@@ -338,7 +340,7 @@ pub(super) async fn info(State(a): State<App>) -> Result<Json<Value>> {
             )
             .map_err(anyhow::Error::from)?;
     Ok(Json(
-        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1"]}),
+        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1","inventory-v1"]}),
     ))
 }
 #[derive(Deserialize)]
@@ -770,7 +772,7 @@ pub(super) async fn revoke(
     Ok(Json(json!({"revoked":true,"host_retained":true})))
 }
 pub(super) fn summary(a: &App, id: &str) -> Result<Option<Value>> {
-    Ok(by_host(a, id)?
+    by_host(a, id)?
         .into_iter()
         .filter(|n| n.host_id.as_deref() == Some(id))
         .max_by_key(|n| {
@@ -780,7 +782,12 @@ pub(super) fn summary(a: &App, id: &str) -> Result<Option<Value>> {
                 n.created_at,
             )
         })
-        .map(|n| view(&n)))
+        .map(|n| {
+            let mut v = view(&n);
+            v["monitoring"] = monitoring::summary(a, &n)?;
+            Ok::<Value, Error>(v)
+        })
+        .transpose()
 }
 pub(super) fn revoke_host(a: &App, id: &str) -> Result<()> {
     for mut n in by_host(a, id)?

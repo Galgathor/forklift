@@ -984,3 +984,24 @@ textarea {
   margin: 18px 0;
   line-height: 1.6;
 }
+
+.client-monitoring {
+  border-top: 1px solid var(--border);
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+}
+.client-history {
+  list-style: none;
+  padding: 0;
+  max-height: 20rem;
+  overflow: auto;
+}
+.client-history li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.client-history pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}

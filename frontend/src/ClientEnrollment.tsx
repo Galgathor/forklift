@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { FieldHelp, Help } from "./Help";
+import { ClientMonitoring } from "./ClientMonitoring";
 import { ConfirmDialog } from "./ConfirmDialog";
 export type ClientIdentity = {
   hostname: string;
@@ -23,6 +24,15 @@ export type ClientRecord = {
   expires_at: number;
   enrolled_at: number | null;
   last_contact: number | null;
+  monitoring?: {
+    connectivity: string;
+    received_at: number | null;
+    interval: number | null;
+    offline_after: number;
+    interfaces: string[];
+    inventory: ClientIdentity | null;
+    dns: { state: string; error?: string | null } | null;
+  };
 };
 type Inventory = {
   id: string;
@@ -34,8 +44,14 @@ type Inventory = {
 type Api = (path: string, method?: string, body?: unknown) => Promise<unknown>;
 const date = (at: number | null) =>
   at ? new Date(at * 1000).toLocaleString() : "Not yet confirmed";
-function Machine({ client }: { client: ClientRecord }) {
-  const i = client.identity;
+function Machine({
+  client,
+  live = false,
+}: {
+  client: ClientRecord;
+  live?: boolean;
+}) {
+  const i = (live && client.monitoring?.inventory) || client.identity;
   return (
     <dl>
       <div>
@@ -47,7 +63,11 @@ function Machine({ client }: { client: ClientRecord }) {
         <dd>{i.fqdn || "Not reported"}</dd>
       </div>
       <div>
-        <dt>Enrollment system</dt>
+        <dt>
+          {live && client.monitoring?.inventory
+            ? "Reported system"
+            : "Enrollment system"}
+        </dt>
         <dd>
           {i.os} {i.os_version} · {i.architecture}
         </dd>
@@ -61,7 +81,11 @@ function Machine({ client }: { client: ClientRecord }) {
         <dd>{i.client_version}</dd>
       </div>
       <div>
-        <dt>Enrollment addresses</dt>
+        <dt>
+          {live && client.monitoring?.inventory
+            ? "Reported addresses"
+            : "Enrollment addresses"}
+        </dt>
         <dd>
           {i.addresses.map((a) => (
             <div key={a.interface + a.address}>
@@ -306,10 +330,10 @@ export function ClientDetails({
             <div className="heading-help">
               <h2>Client enrollment</h2>
               <Help label="Client enrollment details">
-                System identity and addresses were reported during pairing. Last
-                contact confirms a credential-authenticated session, not
-                continuous monitoring or successful Linux authentication. Live
-                inventory and diagnostics will appear only when supported.
+                Inventory is reported by the enrolled client and may be stale
+                when offline. Last contact confirms a credential-authenticated
+                session; heartbeat freshness is tracked separately. Neither
+                proves successful Linux authentication.
               </Help>
             </div>
             <button aria-label="Close client details" onClick={close}>
@@ -321,7 +345,7 @@ export function ClientDetails({
               {error}
             </div>
           )}
-          <Machine client={client} />
+          <Machine client={client} live />
           <dl>
             <div>
               <dt>Enrollment</dt>
@@ -340,6 +364,7 @@ export function ClientDetails({
               <dd>{date(client.last_contact)}</dd>
             </div>
           </dl>
+          <ClientMonitoring client={client} api={api} refresh={refresh} />
           {["active", "approved"].includes(client.state) && (
             <button className="secondary" onClick={() => setConfirm(true)}>
               Revoke client identity
