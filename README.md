@@ -49,6 +49,6 @@ LDAP and DNS continue working when the management interface is offline. Replicas
 
 ## Builds and development
 
-Gitea Actions can publish ready-built images to your account’s Packages. See [CI setup and image downloads](docs/ci.md) to configure the publishing token and deploy those images.
+Gitea Actions publishes ready-built images to Gitea Packages and GitHub Container Registry (GHCR). See [CI setup and image downloads](docs/ci.md) to configure the publishing token and deploy those images.
 
 For development commands, see [Repository Guidelines](AGENTS.md). Detailed setup, reverse-proxy configuration and troubleshooting are in the [reference guide](docs/reference-guide.md). This project is under active development; [verification notes](docs/verification.md) describe what has been tested and current limits.

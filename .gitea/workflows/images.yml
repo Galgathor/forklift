@@ -46,3 +46,9 @@ jobs:
           PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
           PACKAGES_USERNAME: ${{ vars.PACKAGES_USERNAME }}
         run: python3 scripts/ci_images.py publish
+      - name: Publish the same images to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_OWNER: ${{ vars.GHCR_OWNER }}
+        run: python3 scripts/ci_images.py publish-ghcr

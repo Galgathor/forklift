@@ -65,3 +65,26 @@ The main Compose file uses published images directly; no overlay is needed. For 
 Until secrets are filled in and a real runner job completes, package publication is unverified. Re-run the workflow after configuring secrets; create `v<version>` tags explicitly when ready for a stable release. No workflow deploys containers to production or changes host authentication/firewall settings.
 
 References: [Gitea container packages](https://docs.gitea.com/usage/packages/container/), [Generic package API](https://docs.gitea.com/usage/packages/generic/), [Actions variables](https://docs.gitea.com/usage/actions/actions-variables/).
+
+## GitHub Container Registry mirror
+
+The server workflow also publishes the same five images to GHCR after Gitea publication succeeds. Forklift Client remains a native download in Gitea Packages; this does not add a client container or change its publishing workflow.
+
+Set these **Actions secrets** in the Forklift server repository (or make them available as shared secrets):
+
+- `GHCR_USERNAME`: your GitHub username.
+- `GHCR_TOKEN`: a GitHub personal access token (classic) with `write:packages`, authorized for the destination account or organization. If your organization requires SSO, authorize the token for it.
+
+The destination defaults to `ghcr.io/<lowercase-GHCR_USERNAME>/forklift-manager` and the corresponding `forklift-ldap`, `forklift-replica`, `forklift-dns` and `forklift-maintenance` packages. To publish under an organization, set the optional Actions **variable** `GHCR_OWNER` to its name. Keep `GHCR_USERNAME` as the token owner's username.
+
+Commit tags and release tags match Gitea. Successful main builds also update `latest`, after all five GHCR revision images have been published. Images are retagged from the existing local build, not rebuilt for GHCR. Existing revision tags are checked before writing and a different image is refused. Login uses standard input and a temporary Docker configuration; GHCR secrets are available only to the GHCR publishing step. The workflow writes local `dist/images/ghcr-*.json` digest records; Gitea's published digest records still refer to Gitea images.
+
+To use GHCR, set this in your deployment `.env`, using your account or organization name:
+
+```dotenv
+FORKLIFT_IMAGE_PREFIX=ghcr.io/your-account
+```
+
+Then run `docker compose pull` and `docker compose up -d`. No tag setting is needed. For private packages, sign in to `ghcr.io` with a read-only package token first. Newly created GHCR packages are private by default; change each package's visibility in GitHub if you want anonymous downloads. The workflow does not change visibility. A successful local check cannot verify your registry permissions; the first Actions run confirms actual publication.
+
+See GitHub's [container registry guide](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry) for token permissions, SSO and package visibility.

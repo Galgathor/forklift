@@ -2,6 +2,7 @@
 """Publish checked revision images, then advance latest after the full main build succeeds."""
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -20,18 +21,31 @@ if sys.argv[1:] == ['build']:
             '--label', 'org.opencontainers.image.revision=' + meta['sha'],
             '--label', 'org.opencontainers.image.source=' + os.environ['CI_SERVER_URL'] + '/' + os.environ['CI_REPOSITORY'],
             '--tag', image + ':' + meta['tags'][0], '--file', dockerfile, '.')
-elif sys.argv[1:] == ['publish']:
-    token = os.environ.get('PACKAGES_TOKEN', '')
-    if not token:raise ValueError('Set the PACKAGES_TOKEN Actions secret (write:package)')
+elif sys.argv[1:] in (['publish'], ['publish-ghcr']):
+    ghcr = sys.argv[1:] == ['publish-ghcr']
+    source_prefix = meta['registry'] + '/' + meta['owner'].lower()
+    if ghcr:
+        username = os.environ.get('GHCR_USERNAME', '')
+        owner = os.environ.get('GHCR_OWNER') or username
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]*', owner) or not username:
+            raise ValueError('Set GHCR_USERNAME and optionally GHCR_OWNER to a GitHub account/organization')
+        meta = dict(meta, registry='ghcr.io', owner=owner.lower())
+        token = os.environ.get('GHCR_TOKEN', '')
+        if not token:raise ValueError('Set GHCR_TOKEN (write:packages)')
+    else:
+        username = os.environ.get('PACKAGES_USERNAME') or os.environ['CI_OWNER']
+        token = os.environ.get('PACKAGES_TOKEN', '')
+        if not token:raise ValueError('Set PACKAGES_TOKEN (write:package)')
     # A private Docker config prevents leaving credentials on a reusable runner.
     with tempfile.TemporaryDirectory(prefix='forklift-registry-') as directory:
         env = dict(os.environ, DOCKER_CONFIG=directory)
-        run('docker', 'login', meta['registry'], '--username', os.environ.get('PACKAGES_USERNAME') or os.environ['CI_OWNER'],
+        run('docker', 'login', meta['registry'], '--username', username,
             '--password-stdin', input=token.encode(), env=env)
         for name in IMAGES:
             image = meta['registry'] + '/' + meta['owner'].lower() + '/forklift-' + name
+            source = source_prefix + '/forklift-' + name + ':' + meta['tags'][0]
             pins = []
-            local_id = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', image + ':' + meta['tags'][0]], env=env, text=True).strip()
+            local_id = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', source], env=env, text=True).strip()
             for tag in meta['tags']:
                 target = image + ':' + tag
                 existing = subprocess.run(['docker', 'buildx', 'imagetools', 'inspect', '--raw', target], env=env, capture_output=True, text=True)
@@ -44,20 +58,21 @@ elif sys.argv[1:] == ['publish']:
                     continue
                 if not any(s in existing.stderr.lower() for s in ['not found', 'manifest unknown', '404']):
                     raise RuntimeError('Registry lookup failed; refusing an unchecked push for ' + target)
-                run('docker', 'tag', image + ':' + meta['tags'][0], target, env=env)
+                run('docker', 'tag', source, target, env=env)
                 run('docker', 'push', target, env=env)
                 digests = json.loads(subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{json .RepoDigests}}', target], env=env))
                 pins.append(next(value for value in digests if value.startswith(image + '@sha256:')))
             pin = pins[0]
-            file = out / ('forklift-' + name + '.json')
+            file = out / (('ghcr-' if ghcr else '') + 'forklift-' + name + '.json')
             write_json(file, dict(image=pin, tags=meta['tags'], platform='linux/amd64', revision=meta['sha']))
-            upload(meta, 'forklift-images', file)
+            if not ghcr:
+                upload(meta, 'forklift-images', file)
         # Keep immutable build tags/manifests separate from the convenience alias.
         # Only advance latest after every image and digest manifest was published.
         if os.environ['CI_REF'] == 'refs/heads/main':
             for name in IMAGES:
                 image = meta['registry'] + '/' + meta['owner'].lower() + '/forklift-' + name
-                run('docker', 'tag', image + ':' + meta['tags'][0], image + ':latest', env=env)
+                run('docker', 'tag', source_prefix + '/forklift-' + name + ':' + meta['tags'][0], image + ':latest', env=env)
                 run('docker', 'push', image + ':latest', env=env)
 else:
-    raise SystemExit('Usage: python3 scripts/ci_images.py build|publish')
+    raise SystemExit('Usage: python3 scripts/ci_images.py build|publish|publish-ghcr')
