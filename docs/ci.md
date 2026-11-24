@@ -43,11 +43,7 @@ The client publishes an executable, Ubuntu 24.04 amd64 `.deb`, `build.json` and 
 
 ## Deploy published images
 
-After a successful main publication, set your registry and lowercase account name in `.env`. No image tag is required:
-
-```dotenv
-FORKLIFT_IMAGE_PREFIX=git.example.test/your-account
-```
+Compose pulls the published `ghcr.io/galgathor/forklift-*` images directly. No package-location setting is required in `.env`.
 
 Compose uses `latest` automatically. To keep a particular build, optionally set `FORKLIFT_IMAGE_TAG=sha-FULL_COMMIT_SHA` instead.
 
@@ -79,11 +75,7 @@ The destination defaults to `ghcr.io/<lowercase-GHCR_USERNAME>/forklift-manager`
 
 Commit tags and release tags match Gitea. Successful main builds also update `latest`, after all five GHCR revision images have been published. Images are retagged from the existing local build, not rebuilt for GHCR. Existing revision tags are checked before writing and a different image is refused. Login uses standard input and a temporary Docker configuration; GHCR secrets are available only to the GHCR publishing step. The workflow writes local `dist/images/ghcr-*.json` digest records; Gitea's published digest records still refer to Gitea images.
 
-To use GHCR, set this in your deployment `.env`, using your account or organization name:
-
-```dotenv
-FORKLIFT_IMAGE_PREFIX=ghcr.io/your-account
-```
+The supplied Compose files already use `ghcr.io/galgathor`. No registry or account setting is needed. Forks publishing elsewhere can replace the image names in their own Compose override.
 
 Then run `docker compose pull` and `docker compose up -d`. No tag setting is needed. For private packages, sign in to `ghcr.io` with a read-only package token first. Newly created GHCR packages are private by default; change each package's visibility in GitHub if you want anonymous downloads. The workflow does not change visibility. A successful local check cannot verify your registry permissions; the first Actions run confirms actual publication.
 

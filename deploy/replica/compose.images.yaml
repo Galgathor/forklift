@@ -1,4 +1,4 @@
 services:
   replica:
     build: !reset null
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX}/forklift-replica:${FORKLIFT_IMAGE_TAG:-latest}
+    image: ghcr.io/galgathor/forklift-replica:${FORKLIFT_IMAGE_TAG:-latest}

@@ -19,7 +19,7 @@ From the repository root:
 - In `backend/`, run `cargo fmt --check`, `cargo test --locked` and `cargo clippy --locked -- -D warnings`.
 - `docker compose pull` then `docker compose up -d`: run published Gitea images after configuring `.env`.
 - `docker compose -f compose.yaml -f compose.dev.yaml build`: build local development images.
-- `docker compose -f compose.yaml -f compose.dev.yaml up -d --build`: run local source builds. Set image variables in `.env` first; the development override uses local image names. Integration fixtures select this override automatically.
+- `docker compose -f compose.yaml -f compose.dev.yaml up -d --build`: run local source builds. The development override uses local image names. Integration fixtures select this override automatically.
 - `python3 tests/integration.py`, `python3 tests/hardening.py`, `python3 tests/replication.py`: exercise real LDAP, recovery and replication.
 
 ## Coding Style & Naming Conventions

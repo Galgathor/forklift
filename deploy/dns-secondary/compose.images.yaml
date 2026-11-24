@@ -1,4 +1,4 @@
 services:
   dns-secondary:
     build: !reset null
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX}/forklift-dns:${FORKLIFT_IMAGE_TAG:-latest}
+    image: ghcr.io/galgathor/forklift-dns:${FORKLIFT_IMAGE_TAG:-latest}

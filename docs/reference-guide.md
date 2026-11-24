@@ -12,7 +12,7 @@ Requirements: **Linux**, Docker Engine and Compose v2, private network connectiv
 git clone git@gitea-git:Galgathor/forklift.git
 cd forklift
 cp .env.example .env
-# Set your Gitea image location in .env; images default to latest (see ci.md).
+# Images use ghcr.io/galgathor and default to latest; no image settings are needed.
 # Choose deployment settings in .env, then:
 docker compose pull
 docker compose up -d

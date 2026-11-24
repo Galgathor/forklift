@@ -17,7 +17,7 @@ You need a Linux host with Docker Engine and Docker Compose v2. Docker Desktop i
    cp .env.example .env
    ```
 
-3. Set `FORKLIFT_IMAGE_PREFIX` to the published image location, such as `ghcr.io/your-account`. Images use `latest` automatically; no tag setting is needed. See [image setup](docs/ci.md#github-container-registry-mirror). For private images, sign in with `docker login ghcr.io` using a read-only package token.
+3. Compose pulls images directly from `ghcr.io/galgathor`. No image location or tag setting is needed; images use `latest` automatically. See [image setup](docs/ci.md#github-container-registry-mirror). For private images, sign in with `docker login ghcr.io` using a read-only package token.
 4. For remote access, set `FORKLIFT_PUBLIC_URL` to your HTTPS address and configure your reverse proxy. The default management port is 8080 and is reachable only from the Docker host. See the [network setup guide](docs/reference-guide.md).
 5. Download and start Forklift:
 

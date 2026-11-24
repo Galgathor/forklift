@@ -2,19 +2,19 @@
 services:
   initialize:
     build: !reset null
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX}/forklift-maintenance:${FORKLIFT_IMAGE_TAG:-latest}
+    image: ghcr.io/galgathor/forklift-maintenance:${FORKLIFT_IMAGE_TAG:-latest}
   ldap:
     build: !reset null
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX}/forklift-ldap:${FORKLIFT_IMAGE_TAG:-latest}
+    image: ghcr.io/galgathor/forklift-ldap:${FORKLIFT_IMAGE_TAG:-latest}
   maintenance:
     build: !reset null
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX}/forklift-maintenance:${FORKLIFT_IMAGE_TAG:-latest}
+    image: ghcr.io/galgathor/forklift-maintenance:${FORKLIFT_IMAGE_TAG:-latest}
   dns:
     build: !reset null
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX}/forklift-dns:${FORKLIFT_IMAGE_TAG:-latest}
+    image: ghcr.io/galgathor/forklift-dns:${FORKLIFT_IMAGE_TAG:-latest}
   discovery:
     build: !reset null
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX}/forklift-manager:${FORKLIFT_IMAGE_TAG:-latest}
+    image: ghcr.io/galgathor/forklift-manager:${FORKLIFT_IMAGE_TAG:-latest}
   manager:
     build: !reset null
-    image: ${FORKLIFT_IMAGE_PREFIX:?Set FORKLIFT_IMAGE_PREFIX}/forklift-manager:${FORKLIFT_IMAGE_TAG:-latest}
+    image: ghcr.io/galgathor/forklift-manager:${FORKLIFT_IMAGE_TAG:-latest}
