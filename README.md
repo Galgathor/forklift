@@ -17,7 +17,7 @@ You need a Linux host with Docker Engine and Docker Compose v2. Docker Desktop i
    cp .env.example .env
    ```
 
-3. Set `FORKLIFT_IMAGE_PREFIX` to your Gitea registry/account. Images use `latest` automatically; no tag setting is needed. Find the image location in Gitea Packages; see [image setup](docs/ci.md#deploy-published-images). For private packages, sign in with `docker login YOUR_REGISTRY` using a read-only package token.
+3. Set `FORKLIFT_IMAGE_PREFIX` to the published image location, such as `ghcr.io/your-account`. Images use `latest` automatically; no tag setting is needed. See [image setup](docs/ci.md#github-container-registry-mirror). For private images, sign in with `docker login ghcr.io` using a read-only package token.
 4. For remote access, set `FORKLIFT_PUBLIC_URL` to your HTTPS address and configure your reverse proxy. The default management port is 8080 and is reachable only from the Docker host. See the [network setup guide](docs/reference-guide.md).
 5. Download and start Forklift:
 
@@ -49,6 +49,6 @@ LDAP and DNS continue working when the management interface is offline. Replicas
 
 ## Builds and development
 
-Gitea Actions publishes ready-built images to Gitea Packages and GitHub Container Registry (GHCR). See [CI setup and image downloads](docs/ci.md) to configure the publishing token and deploy those images.
+Ready-built images are published to GitHub Container Registry (GHCR). See [build publishing and image downloads](docs/ci.md#github-container-registry-mirror) for configuration and deployment details.
 
 For development commands, see [Repository Guidelines](AGENTS.md). Detailed setup, reverse-proxy configuration and troubleshooting are in the [reference guide](docs/reference-guide.md). This project is under active development; [verification notes](docs/verification.md) describe what has been tested and current limits.
