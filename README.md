@@ -4,7 +4,7 @@ Forklift is a self-hosted application for managing Linux accounts and internal D
 
 Use it to manage users and groups, choose which groups can sign in to your Linux machines, maintain DNS records, and add backup directory servers. You do not need to edit LDAP files or run LDAP administration commands.
 
-Forklift Client is an optional companion for Linux machines. It reports health and address changes, and can deploy an LDAP replica after you approve it in Forklift. Linux sign-in still uses standard SSSD, PAM and SSH.
+Forklift Client is an optional companion for Linux machines. It reports health and address changes. Linux sign-in still uses standard SSSD, PAM and SSH.
 
 ## Basic setup
 

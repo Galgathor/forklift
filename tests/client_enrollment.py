@@ -287,8 +287,8 @@ with Stack(https=True) as s:
         dig('52.'+reverse_zone,'PTR','client.example.test.')
         assert current_host()['client']['monitoring']['inventory']['hostname']=='observed.example.test'
         # Saving applies DNS even when an old client sends the removed defer flag.
-        saved = configure_dns('192.168.1.54', apply=False, ipv6='fd00::52')
-        assert saved['dns_status']['state'] == 'applied'
+        saved_dns = configure_dns('192.168.1.54', apply=False, ipv6='fd00::52')
+        assert saved_dns['dns_status']['state'] == 'applied'
         dig('client.example.test.', value='192.168.1.54')
         configure_dns('192.168.1.52',ipv6='fd00::52')
         # A manual edit relinquishes ownership. An enrolled client must not reclaim it.
@@ -337,6 +337,7 @@ with Stack(https=True) as s:
                 if network_proc.poll() is not None:raise AssertionError('Isolated native network fixture failed: '+network_proc.stderr.read()[-1000:])
                 time.sleep(.2)
             else:raise AssertionError('Netlink change did not reach Forklift before the 300-second periodic heartbeat')
+            assert not any(capability.startswith('replica-deploy-') for capability in live['capabilities'])
             assert current_host()['hostname']=='client.example.test'
             assert state(first)['access_token']==token and state(first)['last_report']['inventory']=='accepted'
             stop(network_proc)

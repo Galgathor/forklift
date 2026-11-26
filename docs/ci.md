@@ -56,7 +56,7 @@ docker compose pull
 docker compose up -d
 ```
 
-The main Compose file uses published images directly; no overlay is needed. For local source builds, add `-f compose.yaml -f compose.dev.yaml` to build and startup commands. The older `compose.images.yaml` remains compatible but is unnecessary for the main stack. Container recreation preserves the existing named-volume configuration; take a normal backup before upgrades. Client-driven replica deployment still uses its locally compiled allowlist/build context; publishing images does not silently change that trust policy.
+The main Compose file uses published images directly; no overlay is needed. For local source builds, add `-f compose.yaml -f compose.dev.yaml` to build and startup commands. The older `compose.images.yaml` remains compatible but is unnecessary for the main stack. Container recreation preserves the existing named-volume configuration; take a normal backup before upgrades.
 
 Until secrets are filled in and a real runner job completes, package publication is unverified. Re-run the workflow after configuring secrets; create `v<version>` tags explicitly when ready for a stable release. No workflow deploys containers to production or changes host authentication/firewall settings.
 

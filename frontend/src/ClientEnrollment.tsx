@@ -2,7 +2,6 @@ import { HostDnsFields, hostDnsFromForm, reportedIpv4 } from "./HostDnsFields";
 import { useState } from "react";
 import { X } from "lucide-react";
 import { FieldHelp, Help } from "./Help";
-import { ClientReplica } from "./ClientReplica";
 import { ClientDiagnostics } from "./ClientDiagnostics";
 import { ClientMonitoring } from "./ClientMonitoring";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -443,7 +442,6 @@ export function ClientDetails({
               Replace client connection key
             </button>
           )}
-          <ClientReplica client={client} api={api} refresh={refresh} />
           <ClientDiagnostics client={client} api={api} refresh={refresh} />
           <ClientMonitoring client={client} api={api} refresh={refresh} />
           {["active", "approved"].includes(client.state) && (

@@ -25,6 +25,7 @@ s.client=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.requ
 with s:
     s.setup()
     descriptor=s.request('/api/client/v1/info')
+    assert 'replica-deploy-v1' not in descriptor['capabilities']
     publisher=s.project+'-discovery'
     run(['docker','run','-d','--name',publisher,'--network','host','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--tmpfs','/tmp:rw,noexec,nosuid,size=16m','-e','FORKLIFT_PUBLIC_URL='+s.url,'-e','FORKLIFT_DISCOVERY_CA_FILE=/ca.crt','-v',str(s.root/'ca.crt')+':/ca.crt:ro','--entrypoint','/app/forklift','forklift-manager:latest','publish-discovery'])
     try:
@@ -80,6 +81,13 @@ with s:
             status = json.loads(run([*command, 'status', '--offline']).stdout)
             assert status['server'] == s.url and status['instance_id'] == descriptor['instance_id']
             assert status['client_version'] == '0.6.0' and status['host_id'] == approved['host_id']
+            assert 'replica_deployment' not in status
+            host_id = approved['host_id']
+            for suffix in ('replica-deployment', 'replica-deployment/action'):
+                s.request(f'/api/hosts/{host_id}/{suffix}', 'POST', {}, expect=(404, 405), raw=True)
+            for action in ('poll', 'grant', 'progress'):
+                s.request(f'/api/client/v1/hosts/{host_id}/deployments/{action}', 'POST', {},
+                          expect=(404, 405), raw=True)
             assert s.request('/api/status')['version'] == '0.6.0'
             host = next(item for item in s.request('/api/hosts') if item['id'] == approved['host_id'])
             assert host['dns_status']['state'] == 'applied'

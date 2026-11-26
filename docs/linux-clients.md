@@ -8,7 +8,7 @@ First-launch setup creates the primary's private LDAPS listener and matching cer
 
 Change the address or renew the certificate under Settings. Regenerate/deploy affected host bundles afterward. The certificate must match the configured DNS/IP address; never disable TLS verification.
 
-Additional endpoint URIs are accepted for SSSD failover in listed order. Every endpoint must hold the same directory data and host read identity and present a matching DNS certificate. Regenerated bundles trust the primary CA plus the pinned leaf certificates of enrolled replicas in the endpoint list. Provision and monitor replicas through Directory Servers; see [replication](replication.md). An endpoint list alone does not create a replica.
+Additional endpoint URIs are accepted for SSSD failover in listed order. Every endpoint must hold the same directory data and host read identity and present a matching DNS certificate. Regenerated bundles trust the primary CA plus the pinned leaf certificates of enrolled replicas in the endpoint list. Add new directory servers through [node pairing](peer-controllers.md) and monitor them in Directory Servers.
 
 ## Register and generate a host bundle
 

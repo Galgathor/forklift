@@ -87,13 +87,11 @@ export function Servers({
                 <span className="muted">{health.servers.length}</span>
               </h2>
               <Help label="Directory server enrollment">
-                To add a writable node, approve pairing here and choose Join
-                existing installation on the new node. To add a read-only
-                replica using an enrolled client, open its details in Hosts and
-                choose LDAP replica service. Once synchronization is confirmed,
-                add the node to your Linux client configurations for backup
-                sign-in access. A disconnected node cannot receive new password
-                changes or account restrictions.
+                To add a directory server, approve pairing here and choose
+                Join Existing Installation on the new node. Once it has synced,
+                add it to your Linux sign-in settings for backup access. A
+                disconnected node cannot receive new password changes or
+                account restrictions.
               </Help>
             </div>
             <small>

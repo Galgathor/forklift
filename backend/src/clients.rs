@@ -1,6 +1,5 @@
 //! Optional native-client enrollment. Never supplies authentication-service configuration.
 use super::*;
-pub(super) mod deployments;
 pub(super) mod diagnostics;
 pub(super) mod monitoring;
 pub(super) mod rotation;
@@ -65,7 +64,6 @@ pub(super) fn migrate(db: &Connection) -> anyhow::Result<()> {
     )?;
     monitoring::migrate(db)?;
     diagnostics::migrate(db)?;
-    deployments::migrate(db)?;
     Ok(())
 }
 fn fail(code: StatusCode, message: &str) -> Error {
@@ -353,7 +351,7 @@ pub(super) async fn info(State(a): State<App>) -> Result<Json<Value>> {
             )
             .map_err(anyhow::Error::from)?;
     Ok(Json(
-        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1","inventory-v1","diagnostics-v1","rotation-v1","network-v1","replica-deploy-v1"]}),
+        json!({"api_version":1,"instance_id":serde_json::from_str::<String>(&instance).map_err(anyhow::Error::from)?,"name":config(&a).and_then(|d|d["name"].as_str().map(str::to_owned)),"url":public_url(&a),"pairing_lifetime":LIFETIME,"capabilities":["enrollment-v1","session-v1","inventory-v1","diagnostics-v1","rotation-v1","network-v1"]}),
     ))
 }
 #[derive(Deserialize)]

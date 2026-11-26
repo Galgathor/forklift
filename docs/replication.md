@@ -10,11 +10,9 @@ The setup wizard selects the primary Docker host's actual private interface, an 
 
 Expose the WebUI over HTTPS through NPM. Replicas need to reach that HTTPS hostname for one-time enrollment. LDAP itself uses the separate private port and never NPM's HTTP Proxy Host.
 
-## Deploy using an enrolled client
+## Existing replica installations
 
-For a target running client 0.5 and Docker/Compose, use **Hosts → Client enrolled → LDAP replica service**. Select its stable private address and LDAP/control ports, then approve. The client uses versioned components shipped with its package, builds/starts a dedicated Compose project and completes existing secure replica enrollment. No repository checkout or manual join configuration is needed. The existing Host record and login/DNS policies are retained. Read [client-driven deployment](client-replica-deployment.md) for prerequisites, ownership protection, retry, cancellation and initial-release limits.
-
-Standalone repository deployments were offered in earlier releases. Use the root Compose stack and [node pairing](peer-controllers.md) for a new Forklift node.
+Upgrading Forklift or Forklift Client leaves existing replica containers and data in place. Use the root Compose stack and [node pairing](peer-controllers.md) to add a new directory server.
 
 Every directory server appears in **Hosts** automatically, including pending replicas and the primary. These are inventory records with no SSH authorization. To enable conventional Linux authentication on that machine, edit its allowed groups and deploy its generated host configuration separately.
 
@@ -29,7 +27,7 @@ Use each server's WebUI controls:
 - **Reconnect primary:** apply the current setup/Settings primary address after it changes. The UI reports stale provider addresses.
 - **Renew certificate:** generate a new private key/certificate on the replica and stage its public pin in Forklift. Generate/deploy affected Linux host bundles with both pins. Activate through Forklift; it reloads LDAP/control TLS, verifies the actual LDAP certificate, then retires the old pin/key. Generate/deploy final host bundles afterward. Retry interrupted transitions through the same controls.
 
-The control service runs as the unprivileged directory user and accepts fixed authenticated operations over pinned TLS; no arbitrary commands, SSH or Docker socket are available. Do not publish it to the internet. If a replica is permanently lost, fence it, remove its record and deploy a fresh replica. Directory deletion removes an inventory-only Host; a Host with configured SSH policies remains as an ordinary Linux host. Removing metadata cannot stop a remote machine or revoke existing sessions there.
+The control service runs as the unprivileged directory user and accepts fixed authenticated operations over pinned TLS; no arbitrary commands, SSH or Docker socket are available. Do not publish it to the internet. If a replica is permanently lost, fence it and remove its record. Directory deletion removes an inventory-only Host; a Host with configured SSH policies remains as an ordinary Linux host. Removing metadata cannot stop a remote machine or revoke existing sessions there.
 
 ## Linux client failover
 

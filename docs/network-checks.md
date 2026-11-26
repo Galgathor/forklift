@@ -19,4 +19,4 @@ TCP acceptance proves a listener accepted a connection; LDAP certificate/protoco
 
 Refusal suggests a missing listener or rejection; timeouts can reflect routing, filtering or a service outage. Results do not name an unproven firewall cause. Check the configured bind address, published port/protocol, service, routing and applicable rules. No check edits firewall rules, SSSD, PAM/NSS, SSH or the host resolver. Manager checks are administrator-triggered and limited to six requests/minute; client checks run with the existing periodic diagnostics and issue/notification lifecycle. Manager checks cover the configured primary services, up to 12 LDAP replicas and eight DNS secondaries. Client profiles retain their existing four-endpoint/four-DNS-listener bounds.
 
-Client-driven installation of explicitly approved Forklift replica services is permitted by the clarified project boundary but remains planned. Network diagnostics do not deploy services or automatically repair connectivity.
+Network diagnostics do not deploy services or automatically repair connectivity.
