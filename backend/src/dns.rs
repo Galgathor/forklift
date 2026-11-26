@@ -1,4 +1,5 @@
 //! PowerDNS REST management. No DNS database writes or dependency in the LDAP login path.
+pub(crate) mod forwarding;
 pub(crate) mod host_records;
 pub(crate) mod imports;
 pub(crate) mod replication;

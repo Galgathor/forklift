@@ -54,3 +54,5 @@ Use **Stage DNS certificate**, then **Finish DNS certificate rotation**. The pri
 Upgrade older secondary containers from the current repository, retaining their volumes, before rotating identities. Older helpers continue transfers and ordinary reconciliation but are explicitly refused by the new rotation operations. See [upgrade and recovery procedures](dns-recovery.md).
 
 Encrypted installation backups include the **primary** DNS snapshot, installation secrets and matching management metadata. They do not capture remote secondary private keys/databases. After full restore, old peers must stay fenced: transfer authorization is cleared and archived enrollments require explicit removal/re-enrollment. Keep a consistent local secondary-volume backup if needed for disaster planning; resynchronizing a fresh secondary from the recovered primary is the supported management workflow. Do not reset existing LDAP or primary DNS volumes to add or upgrade a secondary.
+
+Primary DNS forwarding settings are managed separately under **DNS → DNS forwarding**. They are not copied to secondary DNS servers; secondaries continue answering synchronized authoritative zones.

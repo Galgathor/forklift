@@ -1,5 +1,6 @@
 """Consistent DNS snapshots and strict offline validation; no native configuration execution."""
 import hashlib
+import forwarding
 import json
 from pathlib import Path
 import re
@@ -14,6 +15,8 @@ def schema_identity(db):
 
 
 def validate(directory, secrets):
+    if (directory/'forwarding.json').exists():
+        forwarding.validate(json.loads((directory/'forwarding.json').read_text()))
     expected = hashlib.sha256(SCHEMA.read_bytes()).hexdigest()
     if json.loads((directory/'layout.json').read_text()) != {'schema': expected}:
         raise ValueError('DNS schema marker does not match the supported PowerDNS release')
@@ -59,4 +62,6 @@ def capture(destination):
     for source, target in [(Path('/dns/layout.json'), destination/'dns/layout.json'),
                            *[(Path('/dns-secrets')/name, destination/'dns-secrets'/name) for name in ['api-key','control']]]:
         shutil.copyfile(source, target)
+    if Path('/dns/forwarding.json').exists():
+        shutil.copyfile('/dns/forwarding.json', destination/'dns/forwarding.json')
     return validate(destination/'dns', destination/'dns-secrets')

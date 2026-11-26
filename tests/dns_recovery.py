@@ -14,6 +14,8 @@ from fixture import Stack, run, port
 with Stack(https=True) as source:
     source.setup()
     r=source.request
+    forwarding=dict(enabled=False,upstreams=[dict(address='192.168.1.1',port=53)],allowed_clients=['192.168.1.0/24'])
+    r('/api/dns/forwarding','PUT',forwarding)
     zone='example.test.'
     r('/api/dns/zones','POST',dict(name=zone,kind='forward',nameserver='ns1.example.test.',nameserver_address='192.168.1.2',ttl=300))
     r('/api/dns/zones','POST',dict(name='192.168.1.0/24',kind='reverse4',nameserver='ns1.example.test.',ttl=300))
@@ -101,6 +103,7 @@ with Stack(https=True) as source:
         assert target.request('/api/operations')['recovery_required']
         assert not any(k['name'].startswith('forklift-dns-') for k in native(target,'GET','/tsigkeys'))
         assert all(z['kind']=='Native' for z in t('/api/dns')['zones'])
+        assert t('/api/dns/forwarding')['settings']==forwarding
         server=t('/api/dns/servers')['servers'][0]
         assert server['state']=='restore_required' and server['expires_at']==0
         t('/api/dns/servers/'+peer['id']+'/enroll','POST',dict(token=token,certificate='invalid'),authenticated=False,expect=403)

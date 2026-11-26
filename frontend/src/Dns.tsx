@@ -1,5 +1,6 @@
 import { Help, FieldHelp } from "./Help";
 import { useEffect, useState } from "react";
+import { DnsForwarding } from "./DnsForwarding";
 import { DnsServers } from "./DnsServers";
 import { DnsImport } from "./DnsImport";
 import { Plus, RefreshCw, Pencil, Trash2, X, Download } from "lucide-react";
@@ -199,6 +200,7 @@ export function Dns({ api }: { api: Api }) {
           </>
         )}
       </section>
+      <DnsForwarding api={api} />
       <DnsServers
         api={api}
         zones={

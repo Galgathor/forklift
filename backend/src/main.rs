@@ -1154,6 +1154,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dns/servers/{id}/certificate/finalize", post(dns::replication::finalize_certificate))
         .route("/api/dns/servers/{id}/check", post(dns::replication::check))
         .route("/api/dns/servers/{id}", axum::routing::delete(dns::replication::remove))
+        .route("/api/dns/forwarding", get(dns::forwarding::get).put(dns::forwarding::put))
         .route("/api/dns/rotate", post(dns::rotate))
         .route("/api/maintenance", get(maintenance::index))
         .route("/api/maintenance/inspect", get(maintenance::inspect))

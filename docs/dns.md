@@ -1,6 +1,6 @@
 # DNS management
 
-PowerDNS Authoritative is a standard part of Forklift. It uses its own persistent SQLite database and continues answering configured zones when the manager or LDAP is stopped. DNS outages do not block LDAP startup, readiness or authentication. There is no recursive resolver, Kerberos, Windows domain join or automatic primary promotion.
+PowerDNS Authoritative is a standard part of Forklift. It uses its own persistent SQLite database and continues answering configured zones when the manager or LDAP is stopped. DNS outages do not block LDAP startup, readiness or authentication. The primary can forward queries for other zones to an existing DNS resolver. There is no Kerberos, Windows domain join or automatic primary promotion.
 
 ## Deployment and existing installations
 
@@ -58,6 +58,20 @@ Forklift tracks individual values in its metadata and [PowerDNS record-set comme
 Changing addresses or DNS names removes only still-owned old values and creates the new values/PTRs. A desired value already disabled in PowerDNS produces a visible registration error and is preserved. Disabling DNS management or deleting a host requires an explicit choice: **Keep records and release ownership** or **Delete only this host’s managed values**. Host deletion revokes its LDAP credential independently. If DNS cleanup fails after host deletion, **DNS → Host DNS tasks** retains a durable cleanup task. Retry there, or explicitly keep already-applied records to close the task. Superseding an unfinished host plan cancels its old retry and checks ownership of every possibly applied value before cleanup. Pending DNS plans block other record mutations until resolved.
 
 Existing installations need no storage reset. Desired settings and ownership metadata are additive; older host rows remain unmanaged until configured. Preserve matching Forklift metadata with DNS data during infrastructure backups, because ownership and pending cleanup plans live in the manager’s SQLite database.
+
+## Forwarding through Forklift
+
+Open **DNS → DNS forwarding**. Enable **Forward queries for other zones**, enter your upstream server’s IP address and port (usually `53`), and list the private networks allowed to use it. For example, use router `192.168.1.1` and client network `192.168.1.0/24`. Save the form. No Compose edits or extra published ports are needed after updating the manager, DNS and maintenance images.
+
+You can enter up to four upstreams. The first healthy server is preferred; another is selected when health checks mark it unavailable. A query already in flight may fail during that transition. If all upstreams are unavailable, external queries return `SERVFAIL`; local zones continue answering. Allowed networks apply to forwarded queries only. Queries outside those networks are refused instead of creating an open public resolver. Localhost queries passing through Docker NAT may appear to come from the private Docker bridge address; allow that private network too if local forwarding is needed.
+
+Managed forward and reverse zones always go to OpenLDAP-independent PowerDNS storage. Missing names and missing record types within those zones remain authoritative negative answers, even if an upstream has a different answer. Creating or deleting a zone immediately updates routing. Zone transfers still require the existing TSIG permissions. Forwarding is disabled initially; disabling it restores authoritative-only behavior.
+
+This uses the pinned Debian `dnsdist` package (`1.9.16-0+deb13u1`) inside the existing DNS image. Its public listener remains container port `5353`; PowerDNS Authoritative and its API listen only on container loopback. The supervisor generates a fixed configuration from validated fields. Administrators cannot submit Lua, configuration directives or commands. No DNS protocol is implemented in Forklift. Routing follows [dnsdist’s documented rules](https://www.dnsdist.org/reference/rules-management.html) and [primary transfer handling](https://www.dnsdist.org/advanced/axfr.html).
+
+Upstreams must already provide the DNS answers you need. This is query forwarding, not a new full recursive resolver: Forklift does not walk internet delegations, validate DNSSEC independently or chase external CNAME targets for an authoritative answer. A local alias pointing outside its managed zone may need a follow-up query from the client. Use your existing recursive resolver if that behavior is required. Upstream DNS uses ordinary UDP/TCP; DNS-over-TLS/HTTPS is not implemented. Do not use Forklift itself as an upstream, or configure an upstream to send the same queries back to Forklift.
+
+Settings apply to the primary only; secondary DNS deployments remain authoritative-only. They are saved with DNS storage, included in new encrypted backups, and restored with it. Existing backups without forwarding settings restore with forwarding disabled. The manager can be offline while saved forwarding continues. Saving settings briefly restarts the forwarding listener; PowerDNS storage is retained. The WebUI confirms configuration was saved, not that every upstream/network path is reachable.
 
 ## Conditional forwarding with an existing resolver
 

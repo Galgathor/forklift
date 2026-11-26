@@ -1,5 +1,6 @@
 """Fixed non-root PowerDNS lifecycle and authenticated Unix REST transport."""
 import hashlib
+import forwarding
 import hmac
 import http.client
 from http.server import BaseHTTPRequestHandler
@@ -23,6 +24,7 @@ CONTROL = DATA / 'control' if SECONDARY else Path('/run/dns-control')
 API_PORT = 8081
 SCHEMA = Path('/usr/local/share/doc/pdns/schema.sqlite3.sql')
 child = None
+frontend = None
 lock = threading.RLock()
 
 
@@ -91,8 +93,8 @@ def initialize():
 
 def configuration(isolated=False):
     settings = json.loads((DATA / 'secondary.json').read_text()) if SECONDARY else None
-    address = settings['address'] if settings else '127.0.0.1' if isolated else '0.0.0.0'
-    port = settings['dns_port'] if settings else 5353
+    address = settings['address'] if settings else '127.0.0.1'
+    port = settings['dns_port'] if settings else 5354
     return f'''launch=gsqlite3
 gsqlite3-dnssec=yes
 gsqlite3-database=/dns/pdns.sqlite3
@@ -142,11 +144,61 @@ def native(method, path, body=None, key=None):
 
 def stop():
     global child
+    stop_frontend()
     if child is not None:
         if child.poll() is None:
             child.terminate()
             child.wait(timeout=15)
         child = None
+
+
+def forwarding_settings():
+    path = DATA / 'forwarding.json'
+    return forwarding.validate(json.loads(path.read_text())) if path.exists() else dict(forwarding.DEFAULT)
+
+
+def stop_frontend():
+    global frontend
+    if frontend is not None:
+        if frontend.poll() is None:
+            frontend.terminate()
+            frontend.wait(timeout=10)
+        frontend = None
+
+
+def refresh_frontend(value=None):
+    global frontend
+    if SECONDARY:
+        raise ValueError('Forwarding is configured on the primary DNS server')
+    code, data, _ = native('GET', '/api/v1/servers/localhost/zones?rrsets=false')
+    if code != 200:
+        raise ValueError('Cannot read authoritative zones for forwarding')
+    zones = [zone['name'] for zone in json.loads(data)]
+    candidate = DATA / 'dnsdist.conf'
+    atomic(candidate, forwarding.configuration(value if value is not None else forwarding_settings(), zones).encode())
+    subprocess.run(['dnsdist', '--check-config', '-C', str(candidate)], check=True, timeout=10, capture_output=True)
+    stop_frontend()
+    frontend = subprocess.Popen(['dnsdist', '--supervised', '--disable-syslog', '-C', str(candidate)])
+    for _ in range(50):
+        if frontend.poll() is not None:
+            raise ValueError('DNS forwarding listener could not start')
+        probe = subprocess.run(['dig', '@127.0.0.1', '-p', '5353', 'version.bind', 'TXT', 'CH', '+time=1', '+tries=1'], capture_output=True, timeout=3)
+        if probe.returncode == 0:
+            return
+        time.sleep(.1)
+    raise ValueError('DNS forwarding listener did not become ready')
+
+
+def save_forwarding(value):
+    forwarding.validate(value)
+    previous = forwarding_settings()
+    try:
+        refresh_frontend(value)
+        atomic(DATA / 'forwarding.json', json.dumps(value).encode())
+    except Exception:
+        refresh_frontend(previous)
+        raise
+    return {'settings': value, 'listener_available': frontend is not None and frontend.poll() is None}
 
 
 def start(isolated=False):
@@ -158,6 +210,8 @@ def start(isolated=False):
             raise ValueError('PowerDNS exited; inspect its startup diagnostics')
         try:
             if native('GET', '/api/v1/servers/localhost')[0] == 200:
+                if not SECONDARY and not isolated:
+                    refresh_frontend()
                 return
         except (OSError, http.client.HTTPException):
             pass
@@ -176,14 +230,15 @@ def inspect():
     zones = json.loads(body)
     settings = json.loads((DATA / 'secondary.json').read_text()) if SECONDARY else None
     address = settings['address'] if settings else '127.0.0.1'
-    port = settings['dns_port'] if settings else 5353
+    port = settings['dns_port'] if settings else 5354
     name = zones[0]['name'] if zones else '.'
     query = subprocess.run(['dig', '@'+address, '-p', str(port), name, 'SOA', '+time=1', '+tries=1'], capture_output=True, timeout=3)
     answer = query.stdout.decode(errors='replace')
     responding = query.returncode == 0 and ('status: NOERROR' in answer if zones else 'status: REFUSED' in answer)
     flags = answer.split('flags:', 1)[1].split(';', 1)[0].split() if 'flags:' in answer else []
     authoritative = responding and 'aa' in flags if zones else None
-    return {'api_available': True, 'service_available': responding, 'authoritative_answer': authoritative,
+    listener = responding if SECONDARY else subprocess.run(['dig', '@127.0.0.1', '-p', '5353', 'version.bind', 'TXT', 'CH', '+time=1', '+tries=1'], capture_output=True, timeout=3).returncode == 0
+    return {'api_available': True, 'service_available': responding and listener, 'authoritative_answer': authoritative,
             'probe_zone': name if zones else None, 'version': server.get('version'), 'checked_at': int(time.time()),
             'replication': 'configured' if SECONDARY or any(z['kind'] in ['Primary', 'Master'] for z in zones) else 'not_configured', 'role': 'secondary' if SECONDARY else 'primary' if any(z['kind'] in ['Primary', 'Master'] for z in zones) else 'standalone'}
 
@@ -247,6 +302,14 @@ class Handler(BaseHTTPRequestHandler):
                     if not hmac.compare_digest(self.headers.get('X-API-Key', ''), secret('api-key')):
                         return self.reply(401, {'error': 'DNS API authentication rejected'})
                     code, content, mime = native(self.command, self.path, body)
+                    zone_change = (self.command == 'POST' and self.path.rstrip('/') == '/api/v1/servers/localhost/zones') or (self.command == 'DELETE' and self.path.startswith('/api/v1/servers/localhost/zones/'))
+                    if not SECONDARY and zone_change:
+                        if 200 <= code < 300:
+                            try:
+                                refresh_frontend()
+                            except Exception:
+                                stop_frontend()
+                                os._exit(1)  # Restart fail-closed with the updated zone list.
                     return self.reply(code, content, mime)
                 if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + secret('control')):
                     return self.reply(403, {'error': 'DNS control authorization rejected'})
@@ -268,6 +331,11 @@ class Handler(BaseHTTPRequestHandler):
                         initialize()
                         start()
                     return self.reply(200, {'started':True})
+                if self.path == '/forwarding' and not SECONDARY:
+                    if self.command == 'GET':
+                        return self.reply(200, {'settings': forwarding_settings(), 'listener_available': frontend is not None and frontend.poll() is None})
+                    if self.command == 'PUT':
+                        return self.reply(200, save_forwarding(json.loads(body or b'{}')))
                 if self.path == '/inspect' and self.command == 'GET':
                     return self.reply(200, inspect())
                 if self.path == '/rotate' and self.command == 'POST':
@@ -287,7 +355,7 @@ def watch():
     while True:
         time.sleep(1)
         with lock:
-            if child is not None and child.poll() is not None:
+            if (child is not None and child.poll() is not None) or (frontend is not None and frontend.poll() is not None):
                 print('PowerDNS exited unexpectedly; restarting through the container policy', file=sys.stderr, flush=True)
                 os._exit(1)
 

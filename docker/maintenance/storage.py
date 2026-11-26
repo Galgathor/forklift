@@ -248,7 +248,8 @@ def unpack(p):
     included_dns = manifest['format'] == 3
     if included_dns:
         required_dns = {'dns/pdns.sqlite3','dns/layout.json','dns-secrets/api-key','dns-secrets/control'}
-        if not required_dns.issubset(seen) or any(n.startswith(('dns/','dns-secrets/')) and n not in required_dns for n in seen):
+        allowed_dns = required_dns | {'dns/forwarding.json'}
+        if not required_dns.issubset(seen) or any(n.startswith(('dns/','dns-secrets/')) and n not in allowed_dns for n in seen):
             raise ValueError('DNS snapshot scope is incomplete or contains unsupported files')
         if dns_storage.validate(work/'dns', work/'dns-secrets') != manifest.get('dns_schema'):
             raise ValueError('DNS snapshot schema identity mismatch')

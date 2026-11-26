@@ -39,6 +39,7 @@ Keep `.env`, installation keys and backups private. Container recreation keeps y
 ## What to do next
 
 - Create users and groups in the WebUI.
+- Enable **DNS → DNS forwarding** if Forklift should send queries for other zones to your router or another DNS server.
 - [Set up Linux sign-in](docs/linux-clients.md).
 - [Enroll a machine with Forklift Client](docs/client-enrollment.md).
 - [Deploy a replica through an enrolled client](docs/client-replica-deployment.md), or [add a replica manually](docs/replication.md).
