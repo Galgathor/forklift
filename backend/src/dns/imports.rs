@@ -201,7 +201,7 @@ pub(crate) async fn export(
     h: HeaderMap,
     Path(z): Path<String>,
 ) -> Result<Response> {
-    authorize(&a, &h, false).await?;
+    peer::editor(&a, &h, false).await?;
     let z = name(&z, false)?;
     let data = zone(&z).await?;
     managed(&data)?;
@@ -226,7 +226,7 @@ pub(crate) async fn preview(
     Path(z): Path<String>,
     Json(p): Json<Preview>,
 ) -> Result<Json<Value>> {
-    authorize(&a, &h, true).await?;
+    peer::editor(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     no_pending(&a)?;
     let z = name(&z, false)?;
@@ -243,7 +243,7 @@ pub(crate) async fn commit(
     Path(z): Path<String>,
     Json(p): Json<Commit>,
 ) -> Result<Json<Value>> {
-    let who = authorize(&a, &h, true).await?;
+    let who = peer::editor(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     no_pending(&a)?;
     let z = name(&z, false)?;
@@ -269,6 +269,7 @@ pub(crate) async fn commit(
     }
     let change = Change {
         id: token()[..32].into(),
+        request_digest: None,
         key: format!("import:{z}"),
         steps: plan.steps,
         links: vec![],

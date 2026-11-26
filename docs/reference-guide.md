@@ -36,7 +36,7 @@ The first-launch wizard:
 1. Checks your installation key, directory supervisor and storage.
 2. Selects this Docker host's private interface and an IP or optional DNS name. Forklift creates the LDAPS listener and certificate automatically. **You do not need an existing LDAP endpoint.** The default directory port is **1636**.
 3. Creates a directory name, base DN such as `dc=homelab,dc=internal`, and administrator password (14+ characters), or restores a supported encrypted backup.
-4. Initializes schemas, access rules, service identities and the administrator group. Sign in to open the dashboard.
+4. Checks that PowerDNS is running, then initializes the directory schema, access rules, service identities and administrator group. If DNS setup fails, check `docker compose logs dns`, fix the problem and retry. Sign in after setup finishes.
 
 Choose the base DN carefully: suffix changes are unsupported. Setup refuses to overwrite a configured directory. Container recreation preserves state; deleting persistent volumes destroys it. A partial setup can be retried with its original base DN and administrator identity. Missing metadata beside an initialized directory requires recovery of a matching backup.
 

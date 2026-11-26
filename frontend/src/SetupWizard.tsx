@@ -22,7 +22,7 @@ export function SetupWizard({ api, completed }: Props) {
     }),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [restore, setRestore] = useState(false);
+    [mode, setMode] = useState<"create" | "join" | "restore">("create");
   async function perform(fn: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -48,10 +48,12 @@ export function SetupWizard({ api, completed }: Props) {
           forklift
         </div>
         <div className="heading-help">
-          <h1>{restore ? "Restore your directory" : "Set up Forklift"}</h1>
+          <h1>
+            {mode === "restore" ? "Restore your directory" : "Set up Forklift"}
+          </h1>
           <Help label="Initial setup">
-            Create your directory and administrator account, or restore a
-            backup.
+            Create your directory and administrator account, check that DNS is
+            running, join an existing installation, or restore a backup.
           </Help>
         </div>
 
@@ -194,20 +196,66 @@ export function SetupWizard({ api, completed }: Props) {
           <>
             <div className="wizard-actions">
               <button
-                className={!restore ? "primary" : "secondary"}
-                onClick={() => setRestore(false)}
+                className={mode === "create" ? "primary" : "secondary"}
+                onClick={() => setMode("create")}
               >
-                New directory
+                Create new installation
               </button>
               <button
-                className={restore ? "primary" : "secondary"}
-                onClick={() => setRestore(true)}
+                className={mode === "join" ? "primary" : "secondary"}
+                onClick={() => setMode("join")}
+              >
+                Join existing installation
+              </button>
+              <button
+                className={mode === "restore" ? "primary" : "secondary"}
+                onClick={() => setMode("restore")}
               >
                 Restore a backup
               </button>
             </div>
-            {restore ? (
+            {mode === "restore" ? (
               <BackupRestore bootstrapToken={token} network={network} />
+            ) : mode === "join" ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const values = Object.fromEntries(
+                    new FormData(e.currentTarget),
+                  );
+                  perform(async () => {
+                    await api("setup/join", "POST", {
+                      ...values,
+                      token,
+                      network,
+                      public_url: window.location.origin,
+                    });
+                    await completed();
+                  });
+                }}
+              >
+                <FieldHelp
+                  label="Existing Forklift HTTPS address"
+                  caption="Existing Forklift HTTPS address"
+                  help="Open DNS manager pairing on the existing installation and approve a directory and DNS node. Then enter the address and pairing key here."
+                >
+                  <input name="coordinator" type="url" required />
+                </FieldHelp>
+                <label>
+                  Pairing key
+                  <input
+                    name="key"
+                    type="password"
+                    autoComplete="off"
+                    required
+                  />
+                </label>
+                <button className="primary" disabled={busy || jobs.active}>
+                  {busy
+                    ? "Synchronizing directory and DNS…"
+                    : "Join installation"}
+                </button>
+              </form>
             ) : (
               <form
                 onSubmit={(e) => {

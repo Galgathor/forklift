@@ -168,3 +168,12 @@ This fixture tests real services on one Docker host using separate ports and vol
 ## DNS forwarding
 
 Build the manager, DNS and maintenance images with `compose.dev.yaml`, then run `python3 tests/dns_forwarding.py`. It uses two disposable real PowerDNS stacks and actual published UDP/TCP sockets. Coverage includes authenticated/CSRF-protected settings, restricted client networks, local negative answers, upstream failures and failover, immediate zone routing, persistence, and queries while the manager is stopped. `tests/dns_replication.py` covers native TSIG transfers through the primary listener. `tests/dns_recovery.py` verifies forwarding settings survive encrypted backup/restore. `tests/browser.py` covers the WebUI form; none of these tests change the host’s resolver or firewall.
+
+## Writable Forklift nodes
+
+Build the main Compose images before running the cluster fixtures.
+
+- Run `python3 tests/manager_cluster.py` for wizard enrollment, native LDAP writes from three nodes, group and password changes, partition recovery, container recreation, and restore from a peer backup.
+- Run `python3 tests/dns_manager_peers.py` for DNS-only pairing, verified HTTPS, edits from both managers, independent DNS responses, deletion, and credential revocation.
+
+The fixtures use isolated Docker projects on one host, with distinct private directory ports and independent persistent volumes. The coordinator's HTTPS trust is provided by a throwaway test CA.

@@ -102,3 +102,5 @@ API connectivity, local authoritative UDP probe, SOA serials and record counts u
 This release supports at most 128 zones, 100 values per edited set, bounded DNS API responses and 256 KiB record-change requests. Large-directory/load and separate physical-host network/firewall tests are not yet covered.
 
 Primary/secondary enrollment, TSIG transfers and verified serial monitoring are described in [DNS replication](dns-replication.md). Reviewed JSON import, in-place secondary credential/certificate rotation and integrated encrypted primary DNS recovery are implemented; their limits and recovery procedures are in [DNS recovery](dns-recovery.md). No simulated synchronization or secondary health is shown.
+
+To edit managed zones from a second Forklift manager running the standard Compose stack, see [DNS manager pairing](peer-controllers.md#dns-writes-from-every-paired-webui).

@@ -1,27 +1,35 @@
-# Peer controllers
+# Forklift nodes
 
-Every joined controller should serve the same managed DNS zones, forward other DNS queries using the same policy, authenticate users, and accept WebUI changes. A controller must keep operating from durable local state when another controller is off. Clients need two controller addresses configured ahead of time (DNS through DHCP or static settings, LDAP through SSSD). A client pointing only at one physical IP still loses that endpoint if its host goes down.
+Every node uses the main Compose stack and runs a manager, a persistent OpenLDAP directory and a persistent PowerDNS server. Any joined node can manage accounts and groups and answer DNS queries. DNS edits from any paired WebUI go through the installation's DNS coordinator.
 
-## Deliver DNS failover first
+## Join an installation
 
-The first implementation keeps authenticated zone transfers and uses the existing authenticated configuration channel to distribute upstream addresses, client networks, and managed zone names to updated DNS peers. Each peer persists the applied policy and uses it while the original controller is offline. The DNS server check compares the peer's loaded policy separately from zone serials. Assign all the same zones and configure both client DNS endpoints for query parity. Edits still use the existing controller in this stage.
+1. Run `docker compose up -d` from the repository on the new host and open its WebUI. Copy the installation key from `docker compose logs initialize`.
+2. Open the existing manager using its HTTPS address. In **DNS → DNS manager pairing**, choose **Approve directory and DNS node**. Keep the pairing key private and use it within ten minutes.
+3. On the new node, enter its installation key and choose a private address and port for its directory. Choose **Join existing installation** and enter the existing manager's HTTPS address and pairing key.
+4. Wait for setup to confirm the directory and DNS copy. Sign in using the existing administrator account. Check **Directory Servers** for live comparisons between the nodes and **DNS → DNS manager pairing** for the status of the local DNS copy.
+5. Configure clients with both directory and DNS addresses before relying on failover.
 
-## Replicate changes between controllers
+The new manager must trust the coordinator's HTTPS certificate. Use a certificate from a CA already trusted by the manager when possible. The node keeps its own LDAP private key. Forklift exchanges the directory trust certificates and creates replication credentials during pairing. Let joined nodes reach each other's private LDAP listeners by TCP. Let intended DNS clients reach both DNS listeners by TCP and UDP.
 
-Give every controller a stable identity and local durable storage. Authenticate peer traffic and exchange changes promptly, retry after disconnects, and track which changes each peer has applied. Keep separate health for DNS, LDAP and configuration replication. Seed new peers from a consistent snapshot with a replay position. Never announce synchronization merely because a peer responded.
+Join protects initialized local storage and can resume with the same pairing key and local address if the connection drops. Existing installations keep their volumes and can act as the first node. Existing read-only replicas and DNS secondaries can continue serving while you move clients to joined nodes.
 
-Use a durable change record with a stable operation ID, a logical timestamp informed by the controller clock, and a controller ID for deterministic ties. Record deletes as changes so delayed updates cannot restore deleted state. For conflicting edits to the same field or record set, take the newest version. Merge independent changes, including a profile edit and a password reset for the same account. Use complete DNS record sets as the conflict unit. Apply changes idempotently, retain an audit record of both competing edits, and surface replication lag without requiring conflict resolution by an administrator.
+## Directory changes and outages
 
-Use local PowerDNS storage and apply replicated zone and record changes through its API. Do not share SQLite files or expect zone transfers to merge independent edits. Evaluate native OpenLDAP multi-provider replication for directory entries, with explicit tests for concurrent changes, deletes and clock skew. Do not assume it replicates Forklift metadata or implements the product's entire conflict policy.
+Forklift configures OpenLDAP Syncrepl for reads and writes on each node. Each node has a distinct server ID, its own credentials and a separate range for Unix user and group IDs. OpenLDAP tracks and resolves changes using its native replication state. An available node can authenticate users and accept directory edits when another node is offline. Nodes catch up over verified private LDAP connections after reconnecting. [OpenLDAP replication guide](https://www.openldap.org/doc/admin25/replication.html)
 
-## Accept writes during a network split
+An isolated node may still accept an old password or grant access based on old group membership until it receives the change. Avoid editing the same account or group concurrently during an outage. Host inventory, host access policies and management sessions are stored on each manager. LDAP credentials, accounts and groups are shared through the directory.
 
-Each controller accepts local changes, including password resets, account disables, and administrator grants, while its peers are unreachable. A successful save means the local controller durably recorded the change. It sends changes to connected peers promptly and automatically exchanges missed changes when they reconnect. A third voter is unnecessary. The WebUI should show whether a change is saved locally or synchronized to peers.
+## DNS writes from every paired WebUI
 
-During a split, an isolated controller can still accept an old password or honor access that another controller revoked. That window closes when it applies the change. Each controller must track its local ordering state across restarts and report clock skew. A timestamp and controller ID produce the same winner on every peer even when clock skew makes the real order of independent edits unknowable.
+The first node is the DNS write coordinator. Each joined manager forwards DNS zone and record changes to it over verified HTTPS. For an independently initialized manager with an empty DNS server, **Approve DNS pairing** grants access to manage and serve DNS without joining the directory.
 
-Resolve conflicts at the smallest unit with a clear meaning. A profile edit cannot overwrite credentials, account status, or group membership. A password reset conflicts with another password reset, and a membership add conflicts with removal of that same membership. Apply timestamp ordering within each unit. Keep account deletion as a durable marker for that identity. Recreating a deleted account creates a new identity, so stale edits cannot revive the deleted account.
+The coordinator validates DNS edits and rejects stale record-set revisions. A retried WebUI record submission can return the original result or resume an interrupted change without writing it twice. Each peer fetches a complete snapshot of shared zones, updates its PowerDNS using the supported API, and records the revision after comparing the resulting records and SOA serials. Zones and records absent from a newer snapshot are removed from the peer's copy. [PowerDNS zone API](https://doc.powerdns.com/authoritative/http-api/zone.html)
 
-Assign each controller a nonoverlapping Unix ID allocation range during enrollment so disconnected peers can create accounts without reusing numeric IDs. If two peers independently claim the same username, select one owner by the same ordering rule. Disable sign-in for the losing identity and retain it for audit. Never merge two accounts or move their credentials, group grants, or file ownership to the winner.
+When the coordinator is offline, peers continue serving the last applied copy. DNS edits can resume when the coordinator returns. DNS forwarding settings are local to each node.
 
-Before switching the default deployment, test migration without wiping existing stores, offline DNS forwarding and uncached LDAP authentication, writes on a survivor, concurrent edits and deletes, recovery after a partition, duplicate identity handling, and restore into a cluster. Keep the existing deployment available until these checks pass.
+## Remove or recover a node
+
+Revoke the pairing on the coordinator and remove that node's endpoints from client configuration. A revoked node keeps serving its local LDAP and DNS data. Shut down or isolate a revoked node before relying on changed passwords, access restrictions or DNS records.
+
+Keep encrypted backups. Restore fences archived peer credentials. Recover a coordinator with older directory data only after isolating the old cluster, then pair fresh nodes. Select a Unix ID floor above IDs issued by any old node. [Backup and recovery](operations.md)

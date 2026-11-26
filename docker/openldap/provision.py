@@ -34,7 +34,27 @@ def atomic(path,data):
     temporary.replace(path)
     fd=os.open(path.parent,os.O_DIRECTORY);os.fsync(fd);os.close(fd)
 
-def configuration(base):
+LOCAL_DN = 'gidNumber=10001+uidNumber=10001,cn=peercred,cn=external,cn=auth'
+
+
+def configuration(base, peer=None):
+    external = f' by dn.exact="{LOCAL_DN}" write' if peer else ''
+    server_id = f"serverID {peer['sid']}" if peer else ''
+    root = f'rootdn "cn=forklift-local-replication,{base}"' if peer else ''
+    password_acl = replication_acl(base).replace(f' by dn.exact="cn=manager,{base}"', external + f' by dn.exact="cn=manager,{base}"')
+    replication = []
+    if peer and peer['providers']:
+        for target in peer['providers']:
+            sid = target['sid']
+            replication.append(
+                f'syncrepl rid={sid:03} provider="ldaps://{target["address"]}:{target["port"]}" '
+                f'searchbase="{base}" type=refreshAndPersist retry="5 +" timeout=5 network-timeout=5 '
+                f'bindmethod=simple binddn="cn=replica-{peer["id"]},{base}" credentials="{peer["credential"]}" '
+                f'tls_reqcert=demand tls_cacert=/directory/peer-ca-{sid}.crt'
+            )
+        replication.append('multiprovider on')
+    replication = '\n'.join(replication)
+
     return f'''# Forklift primary v5
 include /etc/ldap/schema/core.schema
 include /etc/ldap/schema/cosine.schema
@@ -46,6 +66,7 @@ modulepath /usr/lib/ldap
 moduleload back_mdb
 moduleload argon2
 moduleload syncprov
+{server_id}
 TLSCACertificateFile /run/secrets/ca.crt
 TLSCertificateFile /run/secrets/ldap.crt
 TLSCertificateKeyFile /run/secrets/ldap.key
@@ -56,12 +77,14 @@ password-hash {{ARGON2}}
 database mdb
 maxsize 1073741824
 suffix "{base}"
+{root}
 directory /directory/db
 index objectClass eq
 index uid,cn,memberUid eq
 index entryUUID,entryCSN eq
-{replication_acl(base)}
-access to * by dn.exact="cn=manager,{base}" write by users read by * none
+{password_acl}
+access to *{external} by dn.exact="cn=manager,{base}" write by users read by * none
+{replication}
 overlay syncprov
 syncprov-checkpoint 100 10
 syncprov-sessionlog 1000
@@ -168,6 +191,98 @@ def initialize(p):
     start()
     return {'initialized':True}
 
+def configure_peers(p):
+    # Only fixed Syncrepl fields enter the generated configuration.
+    base = p.get('base')
+    if not valid_base(base):
+        raise ValueError('Invalid peer directory suffix')
+    if type(p.get('sid')) is not int or not 1 <= p['sid'] <= 9:
+        raise ValueError('Invalid directory node number')
+    if not re.fullmatch(r'[0-9a-f]{32}', p.get('id', '')) or not re.fullmatch(r'[0-9a-f]{64}', p.get('credential', '')):
+        raise ValueError('Invalid directory peer identity')
+    providers = p.get('providers')
+    if not isinstance(providers, list) or len(providers) > 8:
+        raise ValueError('Invalid directory providers')
+    seen = {p['sid']}
+    for target in providers:
+        sid, port = target.get('sid'), target.get('port')
+        if type(sid) is not int or sid in seen or not 1 <= sid <= 9 or type(port) is not int or not 1 <= port <= 65535:
+            raise ValueError('Invalid directory provider')
+        seen.add(sid)
+        address = ipaddress.IPv4Address(target['address'])
+        if not address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+            raise ValueError('Directory peers must use private network addresses')
+        ca = target['ca']
+        if not isinstance(ca, str) or not re.fullmatch(r'-----BEGIN CERTIFICATE-----[\r\nA-Za-z0-9+/=]+-----END CERTIFICATE-----\s*', ca):
+            raise ValueError('Invalid directory peer certificate')
+        if subprocess.run(['openssl','x509','-noout'], input=ca.encode(), capture_output=True).returncode:
+            raise ValueError('Invalid directory peer certificate')
+    if (CONTROL/'offline.json').exists():
+        raise ValueError('Finish directory maintenance before changing peers')
+    if not (ROOT/'network.json').exists():
+        raise ValueError('Set the local directory address before joining')
+    complete = ROOT/'complete'
+    config = ROOT/'slapd.conf'
+    pending = ROOT/'peer-initialization.json'
+    enrolled = ROOT/'peer-mode'
+    initial = not complete.exists()
+    if initial and not providers:
+        raise ValueError('A new directory needs an existing synchronization source')
+    if initial:
+        marker = {'base':base,'sid':p['sid'],'id':p['id']}
+        if pending.exists() and json.loads(pending.read_text()) != marker:
+            raise ValueError('Retry directory enrollment with the same source')
+        if not pending.exists():
+            if config.exists() or (ROOT/'db').exists() or (ROOT/'initialization.json').exists():
+                raise ValueError('Directory storage already exists; recover it before joining')
+            atomic(pending,json.dumps(marker).encode())
+        (ROOT/'db').mkdir(exist_ok=True)
+    elif complete.read_text().strip() != base:
+        raise ValueError('The peer directory suffix differs from local storage')
+    if enrolled.exists() and int(enrolled.read_text()) != p['sid']:
+        raise ValueError('Directory node number changed')
+    current = config.read_bytes() if config.exists() else None
+    desired = configuration(base, p).encode()
+    certs = { ROOT/f'peer-ca-{t["sid"]}.crt': t['ca'].encode() for t in providers }
+    unchanged = current == desired and all(path.exists() and path.read_bytes() == ca for path, ca in certs.items())
+    if unchanged and not initial and enrolled.exists():
+        return start()
+    previous = {path:path.read_bytes() if path.exists() else None for path in certs}
+    stage = ROOT/'slapd.peer.new'
+    atomic(stage, desired)
+    try:
+        for path, ca in certs.items():
+            atomic(path, ca)
+        result = subprocess.run(['slaptest','-u','-f',str(stage)], capture_output=True, timeout=20)
+        if result.returncode:
+            raise ValueError('OpenLDAP refused the peer settings; check the installed LDAP image')
+        stop()
+        stage.replace(config)
+        if initial:
+            atomic(ROOT/'layout-v5',b'5')
+            atomic(complete,base.encode())
+        result = start()
+        atomic(enrolled,str(p['sid']).encode())
+        pending.unlink(missing_ok=True)
+        return result
+    except Exception:
+        stop()
+        for path, content in previous.items():
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic(path, content)
+        if current is not None:
+            atomic(config, current)
+        if initial:
+            complete.unlink(missing_ok=True)
+        elif current is not None:
+            start()
+        raise
+    finally:
+        stage.unlink(missing_ok=True)
+
+
 class Server(socketserver.ThreadingMixIn,socketserver.UnixStreamServer):daemon_threads=True
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args):pass
@@ -186,6 +301,7 @@ class Handler(BaseHTTPRequestHandler):
             p=json.loads(self.rfile.read(length))
             with lock:
                 if self.path=='/initialize':result=initialize(p)
+                elif self.path=='/peers':result=configure_peers(p)
                 elif self.path=='/pause':stop();result=state()
                 elif self.path=='/start':result=start(p.get('operation_id'))
                 elif self.path=='/validate-network':result=network(p)

@@ -94,6 +94,11 @@ pub(super) async fn create(
     Json(p): Json<Draft>,
 ) -> Result<Json<Value>> {
     let who = admin(&a, &h, true).await?;
+    if dns::peer::directory::local_sid(&a)?.is_some_and(|sid| sid > 1) {
+        return Err(bad(
+            "Set up read-only replicas from the first node, or pair a writable Forklift node",
+        ));
+    }
     https_required(&a)?;
     if p.name.trim().is_empty()
         || p.name.len() > 100
@@ -518,7 +523,7 @@ pub(super) async fn fallback(a: &App) -> anyhow::Result<Ldap> {
     }
     anyhow::bail!("Primary and enrolled replicas unavailable")
 }
-async fn context(l: &mut Ldap, b: &str) -> anyhow::Result<Vec<String>> {
+pub(crate) async fn context(l: &mut Ldap, b: &str) -> anyhow::Result<Vec<String>> {
     l.with_timeout(std::time::Duration::from_secs(5));
     let (rs, _) = l
         .search(b, Scope::Base, "(objectClass=*)", vec!["contextCSN"])
@@ -553,6 +558,7 @@ pub(super) async fn health(a: &App) -> Result<Value> {
     }
     replicas.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     nodes.extend(replicas);
+    nodes.extend(dns::peer::directory::health(a, primary_csn.as_deref()).await?);
     Ok(json!({"servers":nodes,"primary_available":primary.is_ok(),"checked_at":now()}))
 }
 async fn probe(a: App, s: Server, primary_csn: Option<Vec<String>>) -> Result<Value> {

@@ -164,7 +164,16 @@ pub(super) async fn fence(State(a): State<App>, request: Request, next: Next) ->
         )
         .into_response();
     }
-    next.run(request).await
+    let can_reload_directory = (request.method() == axum::http::Method::POST
+        && path == "/api/directory/peer/register")
+        || (request.method() == axum::http::Method::DELETE && path.starts_with("/api/dns/peers/"));
+    if can_reload_directory {
+        let _directory = a.directory_restart.write().await;
+        next.run(request).await
+    } else {
+        let _directory = a.directory_restart.read().await;
+        next.run(request).await
+    }
 }
 fn raw_session(h: &HeaderMap) -> Option<&str> {
     h.get(header::COOKIE)
@@ -462,6 +471,15 @@ pub(super) async fn launch(
         && p.acknowledge != Some(true)
     {
         return Err(bad("Acknowledge the requested maintenance operation"));
+    }
+    if matches!(p.action.as_str(), "rotate-service" | "configure-primary")
+        && dns::peer::directory::local_sid(&a)?.is_some_and(|sid| sid > 1)
+    {
+        return Err(bad(if p.action == "rotate-service" {
+            "Rotate the installation credentials on the first node"
+        } else {
+            "Keep this node's paired address. Pair a fresh node if the address must change."
+        }));
     }
     if ["verify", "restore"].contains(&p.action.as_str()) {
         secure_transport(&a, &h)?;

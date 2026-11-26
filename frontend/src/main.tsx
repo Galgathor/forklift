@@ -606,6 +606,7 @@ function App() {
               {page === "Directory Servers" && (
                 <Servers
                   health={data.directory_servers}
+                  openDnsPairing={() => setPage("DNS")}
                   busy={busy}
                   readOnly={data.read_only}
                   api={api}

@@ -16,7 +16,7 @@ use axum::{
     routing::{get, post, put},
 };
 use ldap3::{Ldap, LdapConnAsync, Mod, Scope, SearchEntry};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -33,6 +33,7 @@ struct App {
     jobs: Arc<maintenance::Jobs>,
     configured: Arc<std::sync::atomic::AtomicBool>,
     gate: Arc<tokio::sync::Mutex<()>>,
+    directory_restart: Arc<tokio::sync::RwLock<()>>,
 }
 type Result<T> = std::result::Result<T, Error>;
 struct Error(StatusCode, String);
@@ -132,9 +133,16 @@ async fn connect() -> anyhow::Result<Ldap> {
 async fn service(a: &App) -> anyhow::Result<Ldap> {
     let mut l = connect().await?;
     let b = base(a).map_err(|_| anyhow::anyhow!("setup required"))?;
-    l.simple_bind(&format!("cn=manager,{b}"), &secret("service"))
-        .await?
-        .success()?;
+    if dns::peer::directory::local_sid(a)
+        .map_err(|e| anyhow::anyhow!(e.1))?
+        .is_some_and(|sid| sid > 1)
+    {
+        l.sasl_external_bind().await?.success()?;
+    } else {
+        l.simple_bind(&format!("cn=manager,{b}"), &secret("service"))
+            .await?
+            .success()?;
+    }
     Ok(l)
 }
 async fn read_service(a: &App) -> anyhow::Result<(Ldap, bool)> {
@@ -313,6 +321,7 @@ async fn ready(State(a): State<App>) -> Result<Json<Value>> {
         ));
     }
     let _lease = a.jobs.lease.read().await;
+    let _directory = a.directory_restart.read().await;
     if a.jobs.active.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(Error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -375,6 +384,18 @@ async fn setup(State(a): State<App>, h: HeaderMap, Json(p): Json<Setup>) -> Resu
         ));
     }
     let readiness = maintenance::local("/inspect", Some(&json!({}))).await?;
+    let joining: bool =
+        a.db.lock()
+            .unwrap()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key='directory_join_pending')",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(anyhow::Error::from)?;
+    if joining {
+        return Err(bad("Resume the existing directory pairing"));
+    }
     let pending =
         a.db.lock()
             .unwrap()
@@ -397,6 +418,7 @@ async fn setup(State(a): State<App>, h: HeaderMap, Json(p): Json<Setup>) -> Resu
             ));
         }
     }
+    dns::check_setup().await?;
     a.db.lock()
         .unwrap()
         .execute(
@@ -429,6 +451,7 @@ async fn setup(State(a): State<App>, h: HeaderMap, Json(p): Json<Setup>) -> Resu
             "Use the original directory administrator to complete setup",
         ));
     }
+    dns::check_setup().await?;
     let value = json!({"name":p.name,"base":p.base,"network":network});
     {
         let mut db = a.db.lock().unwrap();
@@ -699,8 +722,24 @@ async fn password(l: &mut Ldap, dn: &str, p: &str) -> anyhow::Result<()> {
 }
 fn next_id(a: &App) -> Result<i64> {
     let db = a.db.lock().unwrap();
-    db.execute("UPDATE allocator SET value=value+1", [])
+    let bound: Option<i64> = db
+        .query_row(
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key='directory_allocator_max'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
         .map_err(anyhow::Error::from)?;
+    if db
+        .execute(
+            "UPDATE allocator SET value=value+1 WHERE value < coalesce(?,2147483647)",
+            [bound],
+        )
+        .map_err(anyhow::Error::from)?
+        != 1
+    {
+        return Err(bad("This directory node has used all its Unix IDs"));
+    }
     Ok(db
         .query_row("SELECT value FROM allocator", [], |r| r.get(0))
         .map_err(anyhow::Error::from)?)
@@ -1033,6 +1072,7 @@ async fn main() -> anyhow::Result<()> {
         db: Arc::new(Mutex::new(db)),
         url: Arc::new(std::sync::RwLock::new(url)),
         gate: Arc::new(tokio::sync::Mutex::new(())),
+        directory_restart: Arc::new(tokio::sync::RwLock::new(())),
         jobs: Arc::new(jobs),
         configured: Arc::new(std::sync::atomic::AtomicBool::new(configured)),
     };
@@ -1106,6 +1146,7 @@ async fn main() -> anyhow::Result<()> {
             a.clone(),
             clients::headers,
         ));
+    tokio::spawn(dns::peer::watch(a.clone()));
     let app = Router::new()
         .merge(machine)
         .route("/api/hosts/{id}/replica-deployment",get(clients::deployments::details).post(clients::deployments::create))
@@ -1125,6 +1166,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/{*path}", axum::routing::any(|| async { (StatusCode::NOT_FOUND, Json(json!({"error":"API endpoint not found"}))) }))
         .route("/api/status", get(status))
         .route("/api/setup", post(setup))
+        .route("/api/setup/join", post(dns::peer::directory::join_setup))
+        .route("/api/directory/peer/register", post(dns::peer::directory::register))
+        .route("/api/directory/peer/membership", get(dns::peer::directory::current))
+        .route("/api/directory/peers/invite", post(dns::peer::invite_directory))
         .route("/api/setup/inspect", post(inspect_setup))
         .route("/api/login", post(login))
         .route("/api/me", get(me))
@@ -1133,6 +1178,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/network/checks", post(network::checks))
         .route("/api/hosts/{id}/network-checks", post(network::host_checks))
         .route("/api/dns", get(dns::index))
+        .route("/api/dns/peers", get(dns::peer::invitations).post(dns::peer::invite))
+        .route("/api/dns/peers/{id}", axum::routing::delete(dns::peer::revoke))
+        .route("/api/dns/peer/join", post(dns::peer::join))
+        .route("/api/dns/peer/redeem", post(dns::peer::redeem))
+        .route("/api/dns/peer/snapshot", get(dns::peer::snapshot))
         .route("/api/dns/zones", post(dns::create))
         .route("/api/dns/zones/{zone}", get(dns::get_zone).delete(dns::delete).put(dns::settings))
         .route("/api/dns/zones/{zone}/records", post(dns::records).layer(axum::extract::DefaultBodyLimit::max(262144)))
@@ -1193,6 +1243,7 @@ async fn main() -> anyhow::Result<()> {
             ServeDir::new("/app/web").not_found_service(ServeFile::new("/app/web/index.html")),
         )
         .layer(axum::extract::DefaultBodyLimit::max(32768))
+        .layer(axum::middleware::from_fn_with_state(a.clone(),dns::peer::forward))
         .layer(
             tower_http::set_header::SetResponseHeaderLayer::if_not_present(
                 header::X_CONTENT_TYPE_OPTIONS,

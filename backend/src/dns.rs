@@ -1,7 +1,9 @@
 //! PowerDNS REST management. No DNS database writes or dependency in the LDAP login path.
+mod coordinator;
 pub(crate) mod forwarding;
 pub(crate) mod host_records;
 pub(crate) mod imports;
+pub(crate) mod peer;
 pub(crate) mod replication;
 use super::*;
 use axum::http::Method;
@@ -103,6 +105,25 @@ async fn request(method: Method, path: &str, body: Option<&Value>) -> Result<Val
             .map(normalize_kind)
             .map_err(|_| unavailable("PowerDNS returned an invalid response"))
     }
+}
+
+pub(crate) async fn check_setup() -> Result<()> {
+    let failure = || {
+        unavailable(
+            "DNS setup failed. Check the DNS container logs, fix the reported problem, and retry setup.",
+        )
+    };
+    let (status, body) = transport(Method::GET, "/inspect", None, true)
+        .await
+        .map_err(|_| failure())?;
+    let health: Value = serde_json::from_slice(&body).map_err(|_| failure())?;
+    if !status.is_success()
+        || health["api_available"] != true
+        || health["service_available"] != true
+    {
+        return Err(failure());
+    }
+    Ok(())
 }
 fn normalize_kind(mut value: Value) -> Value {
     match &mut value {
@@ -477,7 +498,7 @@ pub(super) async fn create(
     h: HeaderMap,
     Json(p): Json<ZoneDraft>,
 ) -> Result<Json<Value>> {
-    let who = authorize(&a, &h, true).await?;
+    let who = peer::editor(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     ttl(p.ttl)?;
     let z = match p.kind.as_str() {
@@ -569,6 +590,8 @@ struct Step {
 #[derive(Serialize, Deserialize, Clone)]
 struct Change {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    request_digest: Option<String>,
     key: String,
     steps: Vec<Step>,
     links: Vec<Link>,
@@ -673,9 +696,11 @@ async fn apply(a: &App, who: &str, c: &Change) -> Result<Value> {
     audit(a, who, "DNS complete record change", &change_target(c))?;
     Ok(json!({"id":c.id,"status":"completed","warnings":c.warnings}))
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RecordDraft {
+    #[serde(default)]
+    request_id: Option<String>,
     name: String,
     #[serde(rename = "type")]
     rr_type: String,
@@ -695,10 +720,16 @@ pub(super) async fn records(
     Path(z): Path<String>,
     Json(p): Json<RecordDraft>,
 ) -> Result<Json<Value>> {
-    let who = authorize(&a, &h, true).await?;
+    let who = peer::editor(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
-    no_pending(&a)?;
     let z = name(&z, false)?;
+    let (id, request_digest) = coordinator::record_identity(&who, &z, &p)?;
+    if let Some(result) =
+        coordinator::resume_record(&a, &who, &id, request_digest.as_deref()).await?
+    {
+        return Ok(Json(result));
+    }
+    no_pending(&a)?;
     let n = owner(&p.name, &z)?;
     ttl(p.ttl)?;
     let t = p.rr_type.to_ascii_uppercase();
@@ -895,7 +926,8 @@ pub(super) async fn records(
         }
     }
     let c = Change {
-        id: token()[..32].into(),
+        id,
+        request_digest,
         key,
         steps,
         links,
@@ -923,7 +955,7 @@ pub(super) async fn delete(
     Path(z): Path<String>,
     Json(p): Json<DeleteZone>,
 ) -> Result<Json<Value>> {
-    let who = authorize(&a, &h, true).await?;
+    let who = peer::editor(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     let z = name(&z, false)?;
     if !p.acknowledge || p.confirm_name != z {
@@ -1009,7 +1041,7 @@ pub(super) async fn settings(
     Path(z): Path<String>,
     Json(p): Json<Soa>,
 ) -> Result<Json<Value>> {
-    let who = authorize(&a, &h, true).await?;
+    let who = peer::editor(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     no_pending(&a)?;
     let z = name(&z, false)?;
@@ -1050,6 +1082,7 @@ pub(super) async fn settings(
     );
     let c = Change {
         id: token()[..32].into(),
+        request_digest: None,
         key: format!("{z}/{z}/SOA"),
         steps: vec![Step {
             zone: z.clone(),
@@ -1073,7 +1106,7 @@ pub(super) async fn get_zone(
     h: HeaderMap,
     Path(z): Path<String>,
 ) -> Result<Json<Value>> {
-    authorize(&a, &h, false).await?;
+    peer::editor(&a, &h, false).await?;
     let z = name(&z, false)?;
     let mut value = decorated(zone(&z).await?);
     if let Some(sets) = value["rrsets"].as_array_mut() {
@@ -1101,7 +1134,7 @@ pub(super) async fn retry(
     h: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    let who = authorize(&a, &h, true).await?;
+    let who = peer::editor(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     let (data, status) =
         a.db.lock()
@@ -1124,7 +1157,7 @@ pub(super) async fn abandon(
     Path(id): Path<String>,
     Json(p): Json<operations::Acknowledgment>,
 ) -> Result<Json<Value>> {
-    let who = authorize(&a, &h, true).await?;
+    let who = peer::editor(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     if !p.acknowledge {
         return Err(bad(
@@ -1153,7 +1186,7 @@ pub(super) async fn export(
     h: HeaderMap,
     Path(z): Path<String>,
 ) -> Result<Response> {
-    let who = authorize(&a, &h, false).await?;
+    let who = peer::editor(&a, &h, false).await?;
     let z = name(&z, false)?;
     let (status, body) = transport(
         Method::GET,
@@ -1213,7 +1246,7 @@ pub(super) async fn rotate(
     Ok(Json(json!({"rotated":true})))
 }
 pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
-    authorize(&a, &h, false).await?;
+    peer::editor(&a, &h, false).await?;
     let changes = {
         let db = a.db.lock().unwrap();
         let mut q=db.prepare("SELECT id,at,status,error FROM dns_changes WHERE status!='completed' ORDER BY at DESC LIMIT 30").map_err(anyhow::Error::from)?;

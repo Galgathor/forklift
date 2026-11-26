@@ -585,6 +585,7 @@ async fn plan(a: &App, state: &State) -> Result<(Change, Vec<Binding>)> {
     Ok((
         Change {
             id: token()[..32].into(),
+            request_digest: None,
             key: format!("host:{}", state.id),
             steps,
             links: vec![],

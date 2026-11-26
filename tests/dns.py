@@ -4,8 +4,21 @@ import hashlib,json,secrets,time
 from fixture import Stack,run
 
 with Stack() as s:
-    s.setup()
     r=s.request
+    s.net = s.network()
+    setup = dict(
+        token=s.bootstrap, name='Integration', base='dc=integration,dc=test',
+        username='admin', password=s.password, network=s.net, public_url=s.url,
+    )
+    s.compose('stop', 'dns')
+    failure = r('/api/setup', 'POST', setup, expect=503)
+    assert 'DNS setup failed' in failure['error'], failure
+    assert not r('/api/status')['configured']
+    assert not r('/api/setup/inspect', 'POST', dict(token=s.bootstrap))['initialized']
+    s.compose('up', '-d', '--no-build', '--wait', 'dns')
+    r('/api/setup', 'POST', setup)
+    s.login()
+    print('PASS: fresh setup reports unavailable DNS, leaves LDAP uninitialized and succeeds after DNS returns.', flush=True)
     dns_port=s.env['FORKLIFT_DNS_PORT']
     def get(name='example.test.'):
         return r('/api/dns/zones/'+name)
@@ -35,6 +48,29 @@ with Stack() as s:
     r('/api/dns/zones','POST',dict(base,name='../../api'),expect=400)
     r('/api/dns/zones','POST',base)
     r('/api/dns/zones','POST',base,expect=400)
+    record_path = '/api/dns/zones/example.test./records'
+    submitted = dict(
+        request_id=secrets.token_hex(16), name='duplicate-check', type='A',
+        ttl=300, values=['192.168.1.19'],
+    )
+    original = r(record_path, 'POST', submitted)
+    assert original['status'] == 'completed'
+    serial = get()['serial']
+    assert r(record_path, 'POST', submitted) == original
+    assert get()['serial'] == serial
+    r(record_path, 'POST', dict(submitted, values=['192.168.1.20']), expect=409)
+    r(record_path, 'POST', dict(submitted, request_id='invalid'), expect=400)
+    mark_interrupted = (
+        "import sqlite3,sys; db=sqlite3.connect('/metadata/forklift.db'); "
+        "db.execute(\"UPDATE dns_changes SET status='pending' WHERE id=?\", [sys.argv[1]]); db.commit()"
+    )
+    s.compose('exec', '-T', 'maintenance', 'python3', '-c', mark_interrupted, original['id'])
+    assert r(record_path, 'POST', submitted) == original
+    assert get()['serial'] == serial
+    record('duplicate-check', 'A', [], delete=True, acknowledge=True)
+    assert r(record_path, 'POST', submitted) == original
+    dig('duplicate-check.example.test.', 'A', rcode='NXDOMAIN')
+    print('PASS: duplicate DNS submissions retain their result and serial, resume after interruption, and preserve later deletion.', flush=True)
     reverse=dict(name='192.168.1.0/24',kind='reverse4',nameserver='ns1.example.test.',ttl=300)
     r('/api/dns/zones','POST',dict(reverse,name='192.168.1.1/24'),expect=400)
     r('/api/dns/zones','POST',dict(reverse,name='8.8.8.0/24'),expect=400)
@@ -137,6 +173,8 @@ with Stack() as s:
     dig('monolith.example.test.','A','192.168.1.12')
     s.compose('up','-d','--no-build','--force-recreate','--wait')
     s.wait();r('/api/me');dig('monolith.example.test.','A','192.168.1.12')
+    assert r(record_path, 'POST', submitted) == original
+    dig('duplicate-check.example.test.', 'A', rcode='NXDOMAIN')
     # DNS has no runtime dependency on Forklift or LDAP.
     s.compose('stop','manager','ldap');dig('monolith.example.test.','A','192.168.1.12',tcp=True)
     s.compose('start','ldap','manager');s.wait()

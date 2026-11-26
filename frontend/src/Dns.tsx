@@ -1,6 +1,8 @@
 import { Help, FieldHelp } from "./Help";
-import { useEffect, useState } from "react";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { useEffect, useRef, useState } from "react";
 import { DnsForwarding } from "./DnsForwarding";
+import { DnsPeers } from "./DnsPeers";
 import { DnsServers } from "./DnsServers";
 import { DnsImport } from "./DnsImport";
 import { Plus, RefreshCw, Pencil, Trash2, X, Download } from "lucide-react";
@@ -56,6 +58,29 @@ export function Dns({ api }: { api: Api }) {
     [editing, setEditing] = useState<RecordSet | null | undefined>(),
     [soa, setSoa] = useState(false),
     [importing, setImporting] = useState(false);
+  const [joined, setJoined] = useState(false);
+  const [deletingRecord, setDeletingRecord] = useState<{
+    zone: string;
+    record: RecordSet;
+  } | null>(null);
+  const recordRequest = useRef<{ body: string; id: string } | null>(null);
+  async function submitRecord(zone: string, body: Record<string, unknown>) {
+    const payload = JSON.stringify([zone, body]);
+    if (recordRequest.current?.body !== payload) {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      const id = Array.from(bytes, (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      recordRequest.current = { body: payload, id };
+    }
+    const result = await api(
+      `dns/zones/${encodeURIComponent(zone)}/records`,
+      "POST",
+      { ...body, request_id: recordRequest.current.id },
+    );
+    recordRequest.current = null;
+    return result;
+  }
   async function load(name = selected?.name) {
     const value = (await api("dns")) as Overview;
     setOverview(value);
@@ -108,7 +133,7 @@ export function Dns({ api }: { api: Api }) {
       <section className="panel">
         <div className="panel-title">
           <div className="heading-help">
-            <h2>DNS overview</h2>
+            <h2>{joined ? "Coordinator DNS overview" : "DNS overview"}</h2>
             <Help label="DNS service checks">
               This checks whether the DNS service answers inside its container.
               Other machines may still be blocked by network or firewall
@@ -176,7 +201,7 @@ export function Dns({ api }: { api: Api }) {
 
             <button
               className="secondary"
-              disabled={busy || !overview.available}
+              disabled={busy || !overview.available || joined}
               onClick={() =>
                 perform(async () => {
                   if (
@@ -196,14 +221,17 @@ export function Dns({ api }: { api: Api }) {
           </>
         )}
       </section>
+      <DnsPeers api={api} onStatus={setJoined} />
       <DnsForwarding api={api} />
-      <DnsServers
-        api={api}
-        zones={
-          overview?.zones.filter((z) => z.managed).map((z) => z.name) || []
-        }
-      />
-      {!!overview?.host_tasks?.length && (
+      {!joined && (
+        <DnsServers
+          api={api}
+          zones={
+            overview?.zones.filter((z) => z.managed).map((z) => z.name) || []
+          }
+        />
+      )}
+      {!joined && !!overview?.host_tasks?.length && (
         <section className="panel">
           <h2>Host DNS tasks</h2>
           {overview.host_tasks.map((t) => (
@@ -513,30 +541,13 @@ export function Dns({ api }: { api: Api }) {
                             r.type === "SOA" ||
                             (r.type === "NS" && r.name === selected.name)
                           }
-                          onClick={() =>
-                            perform(async () => {
-                              if (
-                                confirm(
-                                  `Delete the entire ${r.type} record set at ${r.name}?`,
-                                )
-                              )
-                                await outcome(
-                                  await api(
-                                    `dns/zones/${encodeURIComponent(selected.name)}/records`,
-                                    "POST",
-                                    {
-                                      name: r.name,
-                                      type: r.type,
-                                      ttl: r.ttl,
-                                      values: [],
-                                      delete: true,
-                                      acknowledge: true,
-                                      expected_revision: r.revision,
-                                    },
-                                  ),
-                                );
-                            })
-                          }
+                          onClick={() => {
+                            setError("");
+                            setDeletingRecord({
+                              zone: selected.name,
+                              record: r,
+                            });
+                          }}
                         >
                           <Trash2 size={16} />
                         </button>
@@ -548,6 +559,38 @@ export function Dns({ api }: { api: Api }) {
             </table>
           </div>
         </section>
+      )}
+      {deletingRecord && (
+        <ConfirmDialog
+          title={`Delete ${deletingRecord.record.type} records at ${deletingRecord.record.name}?`}
+          confirmLabel="Delete record set"
+          busy={busy}
+          cancel={() => setDeletingRecord(null)}
+          confirm={() =>
+            perform(async () => {
+              const { zone, record } = deletingRecord;
+              const result = await submitRecord(zone, {
+                name: record.name,
+                type: record.type,
+                ttl: record.ttl,
+                values: [],
+                delete: true,
+                acknowledge: true,
+                expected_revision: record.revision,
+              });
+              setDeletingRecord(null);
+              await outcome(result);
+            })
+          }
+        >
+          {error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
+          )}
+          This removes every value in the record set. To recover them, add the
+          values again.
+        </ConfirmDialog>
       )}
       {!!overview?.errors.length && (
         <section className="panel">
@@ -597,11 +640,7 @@ export function Dns({ api }: { api: Api }) {
           close={() => setEditing(undefined)}
           save={(body) =>
             perform(async () => {
-              const result = await api(
-                `dns/zones/${encodeURIComponent(selected.name)}/records`,
-                "POST",
-                body,
-              );
+              const result = await submitRecord(selected.name, body);
               setEditing(undefined);
               await outcome(result);
             })
@@ -785,7 +824,7 @@ function RecordForm({
   busy: boolean;
   error: string;
   close: () => void;
-  save: (v: unknown) => void;
+  save: (v: Record<string, unknown>) => void;
 }) {
   const [type, setType] = useState(record?.type || "A");
   return (

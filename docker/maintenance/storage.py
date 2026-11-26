@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import dns_storage
 from argon2 import PasswordHasher
@@ -162,6 +163,12 @@ def validate_config(directory, secrets):
     if not valid_base(base):
         raise ValueError('Invalid directory suffix')
     original = (directory/'slapd.conf').read_text()
+    if (directory/'peer-mode').exists():
+        if not re.fullmatch(r'[1-9]', (directory/'peer-mode').read_text()):
+            raise ValueError('Invalid archived directory peer number')
+        # An archive is validated as a standalone directory. Never run peer
+        # endpoints or config text carried in an archive through a parser.
+        original = configuration(base)
     lines = [s.strip() for s in original.splitlines() if s.strip() and not s.lstrip().startswith('#')]
     allowed = {s.strip() for s in configuration(base).splitlines() if s.strip() and not s.startswith('#')}
     legacy = f'access to attrs=userPassword by dn.exact="cn=manager,{base}" write by anonymous auth by * none'
@@ -186,6 +193,38 @@ def validate_config(directory, secrets):
     if dump.wait() != 0:
         raise ValueError('Native LDAP database validation failed')
     return base, largest
+
+
+def fence_peer_archive(stage):
+    directory, secrets = stage/'directory', stage/'directory-secrets'
+    if not (directory/'peer-mode').exists():
+        return
+    base = (directory/'complete').read_text().strip()
+    if not valid_base(base):
+        raise ValueError('Invalid archived peer suffix')
+    config = configuration(base)
+    with tempfile.NamedTemporaryFile(mode='w', dir='/tmp') as native:
+        native.write(config.replace('/directory/',str(directory)+'/').replace('/run/secrets/',str(secrets)+'/'))
+        native.flush()
+        raw = (stage/'secrets'/'service').read_text().strip()
+        password = '{ARGON2}'+PasswordHasher(time_cost=3, memory_cost=65536, parallelism=1).hash(raw)
+        changes = [f'dn: cn=manager,{base}\nchangetype: modify\nreplace: userPassword\nuserPassword: {password}\n-\n']
+        dump = subprocess.run(['slapcat','-f',native.name,'-b',base,'-a','(cn=replica-*)'],
+                              capture_output=True,check=True,timeout=60).stdout.decode()
+        for line in dump.replace('\n ', '').splitlines():
+            if re.fullmatch(r'dn: cn=replica-[0-9a-f]{32},'+re.escape(base),line):
+                changes.append(line+'\nchangetype: delete\n')
+        # OpenLDAP 2.6.10 crashes if offline delete records are used with -w.
+        # This archive is fenced and will seed fresh peers from a full refresh.
+        result = subprocess.run(['slapmodify','-f',native.name,'-b',base],
+                                input='\n'.join(changes).encode(),capture_output=True,timeout=60)
+        if result.returncode:
+            raise ValueError('Could not fence archived LDAP membership')
+    atomic(directory/'slapd.conf',config.encode())
+    for path in directory.glob('peer-ca-*.crt'):
+        path.unlink()
+    (directory/'peer-initialization.json').unlink(missing_ok=True)
+    (directory/'peer-mode').unlink()
 
 
 def unpack(p):

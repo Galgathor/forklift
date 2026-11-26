@@ -10,29 +10,22 @@ Forklift Client is an optional companion for Linux machines. It reports health a
 
 You need a Linux host with Docker Engine and Docker Compose v2. Docker Desktop is not supported. The published images currently support amd64 Linux.
 
-1. Clone this repository and open its folder.
-2. Copy the example settings and review `.env`:
+1. Clone this repository, open its folder, and start Forklift.
 
    ```sh
-   cp .env.example .env
-   ```
-
-3. Compose pulls images directly from `ghcr.io/galgathor`. No image location or tag setting is needed; images use `latest` automatically. See [image setup](docs/ci.md#github-container-registry-mirror). For private images, sign in with `docker login ghcr.io` using a read-only package token.
-4. For remote access, set `FORKLIFT_PUBLIC_URL` to your HTTPS address and configure your reverse proxy. The default management port is 8080 and is reachable only from the Docker host. See the [network setup guide](docs/reference-guide.md).
-5. Download and start Forklift:
-
-   ```sh
-   docker compose pull
    docker compose up -d
    ```
 
-6. Open your configured address, or `http://localhost:8080` on the Docker host. Enter the installation key from your settings. If you did not choose one, find the generated key in the initialize container’s logs:
+2. Open `http://localhost:8080` on the Docker host. For remote access, configure an HTTPS reverse proxy and set `FORKLIFT_PUBLIC_URL` in `.env` before setup. See the [network setup guide](docs/reference-guide.md).
+3. Enter the installation key from the initialize container’s logs.
 
    ```sh
    docker compose logs initialize
    ```
 
-7. Follow the setup wizard to choose your directory name, private server address and administrator account. Forklift creates the LDAP service and certificates for you. **You do not need an existing LDAP server.**
+4. Choose **Create new installation** for your first node. To add a node, run the same Compose command on the other host and choose **Join existing installation**. The existing manager needs a reachable HTTPS address. [Pair a Forklift node](docs/peer-controllers.md#join-an-installation)
+
+Forklift sets up the directory and checks PowerDNS before finishing setup. If setup reports a DNS problem, run `docker compose logs dns` and retry after fixing it.
 
 Keep `.env`, installation keys and backups private. Container recreation keeps your data; deleting storage volumes removes it.
 
@@ -42,7 +35,7 @@ Keep `.env`, installation keys and backups private. Container recreation keeps y
 - Enable **DNS → DNS forwarding** if Forklift should send queries for other zones to your router or another DNS server.
 - [Set up Linux sign-in](docs/linux-clients.md).
 - [Enroll a machine with Forklift Client](docs/client-enrollment.md).
-- [Deploy a replica through an enrolled client](docs/client-replica-deployment.md), or [add a replica manually](docs/replication.md).
+- [Add a writable Forklift node](docs/peer-controllers.md), or [operate an existing read-only replica](docs/replication.md).
 - [Back up and restore your installation](docs/operations.md).
 - [Check network connections and ports](docs/network-checks.md).
 

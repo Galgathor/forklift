@@ -207,6 +207,7 @@ def prepare_restore(p):
     stage=WORK/'stage'
     floor=p['uid_floor'];manifest=json.loads((stage/'validated.json').read_text())
     if manifest.get('format')!=3:raise ValueError('This legacy LDAP-only archive does not contain DNS data. It can be verified, but full installation restore requires a DNS-inclusive backup or the matching earlier release.')
+    storage.fence_peer_archive(stage)
     atomic(stage/'dns-secrets/control',Path('/dns-secrets/control').read_bytes())
     if type(floor) is not int or not manifest['id_high_water']<floor<=2147483647:raise ValueError('Choose a future Unix ID floor above every archived and subsequently allocated ID')
     # Keep local control authorization and the new host's advertised address; recover directory secrets/data.
@@ -241,7 +242,11 @@ def prepare_restore(p):
         for host_id,raw in db.execute('SELECT id,data FROM host_dns').fetchall():
             dns_state=json.loads(raw);dns_state['status'].update(state='needs_review',operation_id=None,error='Restored DNS state requires ownership reconciliation')
             db.execute('UPDATE host_dns SET data=? WHERE id=?',(json.dumps(dns_state),host_id))
-    db.execute("DELETE FROM settings WHERE key='dns_primary'")
+    if 'ldap_peers' in tables:
+        db.execute('DELETE FROM ldap_peers')
+    if 'dns_peer_keys' in tables:
+        db.execute('DELETE FROM dns_peer_keys')
+    db.execute("DELETE FROM settings WHERE key IN ('dns_primary','dns_coordinator','dns_coordinator_pending','dns_coordinator_revision','dns_coordinator_error','directory_local_sid','directory_peer_error','directory_join_pending','ldap_allocation_base','directory_allocator_max','directory_peer_topology')")
     db.execute("INSERT INTO settings VALUES('public_url',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(json.dumps(p['public_url']),))
     directory=json.loads(db.execute("SELECT value FROM settings WHERE key='directory'").fetchone()[0]);directory['network']=value
     db.execute("UPDATE settings SET value=? WHERE key='directory'",(json.dumps(directory),))
@@ -316,6 +321,9 @@ def execute(p,resume=False,rollback=False):
             storage.event(base,'restore','completed',checksum=params['sha256'],detail='Sessions revoked; directory/DNS replicas quarantined; DNS transfer rights removed; recovery review required')
             result={'restored':True,'recovery_required':True,'reauthenticate':True,'uid_floor':params['uid_floor']}
         elif action=='rotate-service':
+            marker = Path('/directory/peer-mode')
+            if marker.exists() and marker.read_text().strip() != '1':
+                raise ValueError('Rotate the installation credentials on the first node. This node uses its local directory socket.')
             pause(job);storage.rotate_service(base)
             atomic(Path('/directory-secrets/service'),Path('/secrets/service').read_bytes())
             start(job)
@@ -371,6 +379,14 @@ def emergency(p):
     modify=f'dn: uid={username},ou=people,{suffix}\nchangetype: modify\nreplace: userPassword\nuserPassword: {hashed}\n-\nreplace: shadowExpire\n\n'
     group=f'dn: cn=administrators,ou=groups,{suffix}\nchangetype: modify\nadd: memberUid\nmemberUid: {username}\n'
     def apply(data,allow_existing=False):
+        socket_url = 'ldapi://%2Frun%2Fldap-socket%2Fldap.sock'
+        marker = Path('/directory/peer-mode')
+        if marker.exists() and marker.read_text().strip() != '1':
+            result=subprocess.run(['ldapmodify','-Y','EXTERNAL','-H',socket_url],
+                                  input=data.encode(),capture_output=True,timeout=20)
+            if result.returncode and not (allow_existing and result.returncode==20):
+                raise ValueError('Existing account recovery failed; check the username and directory state')
+            return
         read,write=os.pipe();os.write(write,secret('service').encode());os.close(write)
         try:
             result=subprocess.run(['ldapmodify','-x','-H','ldapi://%2Frun%2Fldap-socket%2Fldap.sock','-D','cn=manager,'+suffix,'-y','/dev/fd/'+str(read)],input=data.encode(),pass_fds=(read,),capture_output=True,timeout=20)

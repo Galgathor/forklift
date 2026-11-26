@@ -1,5 +1,7 @@
 # Add a directory server
 
+For a writable server with its own WebUI, use [Forklift node pairing](peer-controllers.md). This guide covers existing read-only LDAP replicas.
+
 Your initial Forklift deployment **already contains the primary OpenLDAP server**. Setup creates its private LDAPS endpoint and certificate. A new replica needs a Linux machine with Docker and private connectivity; do not install OpenLDAP or prepare an LDAPS endpoint yourself.
 
 ## First-launch primary configuration

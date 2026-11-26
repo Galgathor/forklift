@@ -270,10 +270,10 @@ def restore_start(operation):
         return json.loads(data) if data else None
     # Archived peers cannot retain transfer rights or notifications after restoration.
     for zone in api('GET', '/zones?rrsets=false'):
-        if zone['account'] != 'forklift':
+        if zone['account'] not in ['forklift', 'forklift-peer']:
             raise ValueError('Unmanaged DNS zones require separate recovery review')
         name = zone['name']
-        api('PUT', '/zones/'+name, {'kind':'Native','master_tsig_key_ids':[]})
+        api('PUT', '/zones/'+name, {'kind':'Native','account':'forklift','master_tsig_key_ids':[],'soa_edit_api':'INCREASE'})
         for kind in ['ALSO-NOTIFY','ALLOW-AXFR-FROM']:
             api('PUT', '/zones/'+name+'/metadata/'+kind, {'kind':kind,'metadata':[]})
     for key in api('GET','/tsigkeys'):

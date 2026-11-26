@@ -7,7 +7,7 @@ export type DirectoryNode = {
   name: string;
   endpoint: string;
   provider?: string;
-  role: "primary" | "replica";
+  role: "primary" | "replica" | "provider";
   state: string;
   enrollment_state?: string;
   reachable: boolean;
@@ -36,6 +36,7 @@ type Props = {
   api: (path: string, method?: string, body?: unknown) => Promise<unknown>;
   perform: (f: () => Promise<void>) => Promise<void>;
   refresh: () => Promise<void>;
+  openDnsPairing: () => void;
 };
 const labels: Record<string, string> = {
   ready: "Primary ready",
@@ -60,6 +61,7 @@ export function Servers({
   api,
   perform,
   refresh,
+  openDnsPairing,
 }: Props) {
   const [adding, setAdding] = useState(false),
     [resuming, setResuming] = useState<DirectoryNode | undefined>();
@@ -89,31 +91,38 @@ export function Servers({
                 <span className="muted">{health.servers.length}</span>
               </h2>
               <Help label="Directory server enrollment">
-                To add a replica using an enrolled client, open its details in
-                Hosts and choose LDAP replica service. For manual deployment,
-                use Add server, enter the new machine’s private address, and
-                follow the join instructions. Forklift sets up LDAP and
-                certificates. Once synchronization is confirmed, add the replica
-                to your Linux client configurations for backup sign-in access. A
-                disconnected replica cannot receive new password changes or
-                account restrictions.
+                To add a writable node, approve pairing under DNS and choose
+                Join existing installation on the new node. To add a read-only
+                replica using an enrolled client, open its details in Hosts and
+                choose LDAP replica service. For manual deployment, use Add
+                server, enter the new machine’s private address, and follow the
+                join instructions. Forklift sets up LDAP and certificates. Once
+                synchronization is confirmed, add the replica to your Linux
+                client configurations for backup sign-in access. A disconnected
+                replica cannot receive new password changes or account
+                restrictions.
               </Help>
             </div>
             <small>
               Checked {date(health.checked_at)} · verified LDAP connections
             </small>
           </div>
-          <button
-            className="primary"
-            disabled={busy || readOnly}
-            onClick={() => {
-              setResuming(undefined);
-              setAdding(true);
-            }}
-          >
-            <Plus size={17} />
-            Add server
-          </button>
+          <div className="wizard-actions">
+            <button className="primary" onClick={openDnsPairing}>
+              <Plus size={17} />
+              Pair Forklift node
+            </button>
+            <button
+              className="secondary"
+              disabled={busy || readOnly}
+              onClick={() => {
+                setResuming(undefined);
+                setAdding(true);
+              }}
+            >
+              Add server
+            </button>
+          </div>
         </div>
         <div className="server-grid">
           {health.servers.map((node) => (
@@ -128,7 +137,9 @@ export function Servers({
                     <small>
                       {node.role === "primary"
                         ? "Read / write primary"
-                        : "Read / authentication replica"}
+                        : node.role === "provider"
+                          ? "Read / write peer"
+                          : "Read / authentication replica"}
                     </small>
                   </div>
                 </div>
@@ -201,7 +212,7 @@ export function Servers({
                         : "Not confirmed"}
                   </dd>
                 </div>
-                {node.role === "replica" && (
+                {node.role !== "primary" && (
                   <div>
                     <dt>Last confirmed synchronization</dt>
                     <dd>{date(node.last_sync_at)}</dd>

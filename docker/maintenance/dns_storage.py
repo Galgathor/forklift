@@ -32,7 +32,7 @@ def validate(directory, secrets):
             raise ValueError('DNS SQLite schema differs from the supported schema; custom triggers/views are not restored')
         if db.execute('PRAGMA quick_check').fetchone() != ('ok',) or db.execute('PRAGMA foreign_key_check').fetchone():
             raise ValueError('DNS SQLite integrity check failed')
-        if db.execute("SELECT 1 FROM domains WHERE account IS NOT 'forklift' OR type NOT IN ('NATIVE','MASTER') OR coalesce(master,'')!='' OR coalesce(options,'') NOT IN ('','{}') OR coalesce(catalog,'')!='' LIMIT 1").fetchone():
+        if db.execute("SELECT 1 FROM domains WHERE (account IS NULL OR account NOT IN ('forklift','forklift-peer')) OR type NOT IN ('NATIVE','MASTER') OR coalesce(master,'')!='' OR coalesce(options,'') NOT IN ('','{}') OR coalesce(catalog,'')!='' LIMIT 1").fetchone():
             raise ValueError('DNS restore supports Forklift-managed Native/Primary zones only')
         if db.execute("SELECT 1 FROM records WHERE type NOT IN ('A','AAAA','CNAME','PTR','TXT','MX','SRV','NS','SOA') LIMIT 1").fetchone():
             raise ValueError('DNS snapshot contains unsupported or executable record types')
