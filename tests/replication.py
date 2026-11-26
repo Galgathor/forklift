@@ -25,9 +25,11 @@ with Stack(https=True) as s:
     assert enrollment['token']!=decode(old['join_config'])['enrollment']['token']
     assert joined['expires_at']<=int(time.time())+900 and 'PRIVATE KEY' not in json.dumps(envelope)
     repo=s.root/'replica-repository'
-    for file in ['deploy/replica/compose.yaml','docker/replica/Dockerfile','backend/assets/replica.py','.dockerignore']:
+    for file in ['docker/replica/Dockerfile','backend/assets/replica.py','.dockerignore']:
         target=repo/file;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(SOURCE/file,target)
-    folder=repo/'deploy/replica'
+    folder = repo/'tests'/'fixtures'
+    folder.mkdir(parents=True)
+    shutil.copyfile(SOURCE/'tests/fixtures/ldap-replica.compose.yaml', folder/'compose.yaml')
     def configure(value):
         (folder/'.env').write_text(value+'\n');os.chmod(folder/'.env',0o600)
     def encoded(value):return 'FORKLIFT_REPLICA_JOIN='+base64.b64encode(json.dumps(value).encode()).decode()

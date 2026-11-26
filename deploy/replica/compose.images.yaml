@@ -1,4 +1,0 @@
-services:
-  replica:
-    build: !reset null
-    image: ghcr.io/galgathor/forklift-replica:${FORKLIFT_IMAGE_TAG:-latest}

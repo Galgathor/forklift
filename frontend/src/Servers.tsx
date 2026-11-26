@@ -1,8 +1,6 @@
 import { Help } from "./Help";
-import { useState } from "react";
 import { NodePairing, PairingCard, useNodePairing } from "./NodePairing";
-import { ReplicaWizard } from "./ReplicaWizard";
-import { Database, Plus, Download, Trash2 } from "lucide-react";
+import { Database, Trash2 } from "lucide-react";
 export type DirectoryNode = {
   id: string;
   name: string;
@@ -62,8 +60,6 @@ export function Servers({
   perform,
   refresh,
 }: Props) {
-  const [adding, setAdding] = useState(false),
-    [resuming, setResuming] = useState<DirectoryNode | undefined>();
   const pairing = useNodePairing(api, refresh);
   async function rotateCredential(node: DirectoryNode) {
     if (
@@ -94,30 +90,15 @@ export function Servers({
                 To add a writable node, approve pairing here and choose Join
                 existing installation on the new node. To add a read-only
                 replica using an enrolled client, open its details in Hosts and
-                choose LDAP replica service. For manual deployment, use Add
-                server, enter the new machine’s private address, and follow the
-                join instructions. Forklift sets up LDAP and certificates. Once
-                synchronization is confirmed, add the replica to your Linux
-                client configurations for backup sign-in access. A disconnected
-                replica cannot receive new password changes or account
-                restrictions.
+                choose LDAP replica service. Once synchronization is confirmed,
+                add the node to your Linux client configurations for backup
+                sign-in access. A disconnected node cannot receive new password
+                changes or account restrictions.
               </Help>
             </div>
             <small>
               Checked {date(health.checked_at)} · verified LDAP connections
             </small>
-          </div>
-          <div className="wizard-actions">
-            <button
-              className="secondary"
-              disabled={busy || readOnly}
-              onClick={() => {
-                setResuming(undefined);
-                setAdding(true);
-              }}
-            >
-              Add server
-            </button>
           </div>
         </div>
         <NodePairing pairing={pairing} disabled={busy || readOnly} />
@@ -142,19 +123,6 @@ export function Servers({
                 </div>
                 {node.role === "replica" && (
                   <div className="actions">
-                    {["pending", "failed", "expired"].includes(node.state) && (
-                      <button
-                        title="Generate join configuration"
-                        aria-label="Generate replica deployment"
-                        disabled={busy || readOnly}
-                        onClick={() => {
-                          setResuming(node);
-                          setAdding(true);
-                        }}
-                      >
-                        <Download size={18} /> Continue setup
-                      </button>
-                    )}
                     <button
                       aria-label="Remove server"
                       disabled={busy || readOnly}
@@ -380,17 +348,6 @@ export function Servers({
             ))}
         </div>
       </section>
-
-      {adding && (
-        <ReplicaWizard
-          existing={resuming}
-          health={health}
-          readOnly={readOnly}
-          api={api}
-          refresh={refresh}
-          close={() => setAdding(false)}
-        />
-      )}
     </>
   );
 }

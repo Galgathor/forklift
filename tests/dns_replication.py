@@ -85,13 +85,13 @@ with stack as s:
         image_override.write_text('services:\n  dns-secondary:\n    image: '+old_image+'\n')
         env = {**os.environ, 'FORKLIFT_DNS_JOIN': joined['join_config'].partition('=')[2]}
         def secondary(*args, check=True, input=None):
-            return run(['docker', 'compose', '-p', project, '-f', str(SOURCE/'deploy/dns-secondary/compose.yaml'), '-f', str(override), '-f', str(image_override), *args], env=env, check=check, data=input)
+            return run(['docker', 'compose', '-p', project, '-f', str(SOURCE/'tests/fixtures/dns-secondary.compose.yaml'), '-f', str(override), '-f', str(image_override), *args], env=env, check=check, data=input)
         second_address = str(subnet.network_address+102)
         override2 = s.root/'secondary2-network.yaml'
         override2.write_text(override.read_text().replace(address, second_address))
         env2 = {**os.environ, 'FORKLIFT_DNS_JOIN': ''}
         def second(*args, check=True):
-            return run(['docker', 'compose', '-p', project+'-second', '-f', str(SOURCE/'deploy/dns-secondary/compose.yaml'), '-f', str(override2), *args], env=env2, check=check)
+            return run(['docker', 'compose', '-p', project+'-second', '-f', str(SOURCE/'tests/fixtures/dns-secondary.compose.yaml'), '-f', str(override2), *args], env=env2, check=check)
         def configure(envelope):
             env['FORKLIFT_DNS_JOIN'] = base64.b64encode(json.dumps(envelope).encode()).decode()
         def public_query(name, kind='A', expected=None, tcp=False, dns_port=secondary_port, dns_address=None, status='NOERROR', authoritative=True):

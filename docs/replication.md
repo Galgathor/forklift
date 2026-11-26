@@ -14,27 +14,7 @@ Expose the WebUI over HTTPS through NPM. Replicas need to reach that HTTPS hostn
 
 For a target running client 0.5 and Docker/Compose, use **Hosts → Client enrolled → LDAP replica service**. Select its stable private address and LDAP/control ports, then approve. The client uses versioned components shipped with its package, builds/starts a dedicated Compose project and completes existing secure replica enrollment. No repository checkout or manual join configuration is needed. The existing Host record and login/DNS policies are retained. Read [client-driven deployment](client-replica-deployment.md) for prerequisites, ownership protection, retry, cancellation and initial-release limits.
 
-## Add server
-
-1. Open **Directory Servers → Add server**.
-2. Enter a friendly name and the new Docker host's private IP. Optionally supply its DNS name. Advanced settings choose its LDAPS port (1636) and management control port (9443). Keep both reachable only on the intended private networks, including the manager’s Docker network. Host firewalls can block bridge-to-host traffic; allow the manager to reach these ports. The inherited primary connection is displayed for clarity.
-3. Select **Generate join configuration**, then **Copy join configuration**. It includes the connection settings, primary public CA and a one-use enrollment credential expiring after 15 minutes. Generating another configuration invalidates the previous one. If your WebUI uses a private HTTPS CA, paste its **public CA certificate** into the optional field before generation; leave it blank for publicly trusted HTTPS.
-4. Clone the same Forklift release/revision on the new machine. In `deploy/replica`, paste the complete copied line into `.env`. Alternatively deploy this repository's `deploy/replica/compose.yaml` in a Git-based Docker hosting UI and set its `FORKLIFT_REPLICA_JOIN` environment value (the part after the first `=`). Start that standalone stack. There is no archive to transfer or extract, no separate repository, and no manual certificate exchange.
-5. Wait for **Synchronized** in Forklift. Checks bind over verified LDAPS, compare nonempty `contextCSN` sets against the primary and record the last confirmed match. A generated join configuration or healthy container is not proof of synchronization.
-
-For Docker Compose, after cloning the matching repository checkout:
-
-```sh
-cd deploy/replica
-# Save the copied FORKLIFT_REPLICA_JOIN line in .env using your editor.
-docker compose up -d --build
-```
-
-The join configuration is base64-encoded for reliable copying, **not encrypted**. Treat it as a password until consumed/expired, protect `.env`, and never commit it. Both Git and the Docker build context exclude `.env`. The replica generates its own private key and redeems the token only over verified HTTPS. Public certificates establish trust; they do not replace authorization. No CA signing key or primary private key is transferred.
-
-Once synchronized, remove the temporary join setting from your deployment if desired. Restarts read the replica's protected persistent state and do not require a join token, primary or manager. Do not delete its data volume. An invalid/expired join setting on an unconfigured node requires a fresh configuration from Forklift; no LDAP commands are needed.
-
-The older archive API remains available for existing automation; the WebUI uses the copyable flow. Previously deployed replicas do not need reenrollment.
+Standalone repository deployments were offered in earlier releases. Use the root Compose stack and [node pairing](peer-controllers.md) for a new Forklift node.
 
 Every directory server appears in **Hosts** automatically, including pending replicas and the primary. These are inventory records with no SSH authorization. To enable conventional Linux authentication on that machine, edit its allowed groups and deploy its generated host configuration separately.
 
