@@ -461,6 +461,13 @@ pub(crate) fn watch(a: App) {
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
             timer.tick().await;
+            if a.jobs.active.load(std::sync::atomic::Ordering::SeqCst) {
+                continue;
+            }
+            let _lease = a.jobs.lease.read().await;
+            if a.jobs.active.load(std::sync::atomic::Ordering::SeqCst) {
+                continue;
+            }
             let _gate = a.gate.lock().await;
             if let Err(e) = offline(&a) {
                 eprintln!("Client freshness check unavailable: {}", e.1);
