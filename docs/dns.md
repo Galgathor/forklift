@@ -29,7 +29,7 @@ Open **DNS → Create zone**. Choose:
 - Private IPv4 reverse: an aligned RFC1918 `/8`, `/16` or `/24`, such as `192.168.1.0/24` → `1.168.192.in-addr.arpa.`. Classless RFC2317 delegation is not implemented.
 - ULA IPv6 reverse: a nibble-form zone within `c.f.ip6.arpa.` or `d.f.ip6.arpa.`, for example `d.f.ip6.arpa.` for `fd00::/8`.
 
-Specify the primary nameserver and, when it belongs to the new zone, its IPv4/IPv6 address. Forklift creates SOA, NS and any in-zone nameserver address. Additional NS values can be edited afterward. Zone settings expose SOA mailbox/name/timers; SOA serials increase through PowerDNS's `INCREASE` API policy. Unassigned zones are **Native / standalone**; assigned zones become **Primary**. Add native secondary replication through [DNS servers](dns-replication.md).
+Specify the primary nameserver and, when it belongs to the new zone, its IPv4/IPv6 address. Forklift creates SOA, NS and any in-zone nameserver address. Additional NS values can be edited afterward. Zone settings expose SOA mailbox/name/timers; SOA serials increase through PowerDNS's `INCREASE` API policy. Joined nodes receive managed zones automatically. [Pair a Forklift node](peer-controllers.md)
 
 Select a zone to manage A, AAAA, CNAME, PTR, TXT, MX, SRV and NS record sets. Enter one value per line; editing replaces that selected set, not other types at the same owner. Relative names belong to the selected zone; `@` means its apex. Absolute names must stay inside that zone, and owners covered by a more specific configured zone must be edited there. CNAMEs cannot coexist with other records or occupy the apex. Duplicate values are rejected. TXT values use quoted DNS presentation strings; MX uses `priority target`, SRV uses `priority weight port target`. Hostname targets are treated as full names, not silently appended to the zone.
 
@@ -97,10 +97,10 @@ For AD DNS migration, retain AD until independently verified. Export zone record
 
 ## Status and remaining phases
 
-API connectivity, local authoritative UDP probe, SOA serials and record counts use actual backend state. A healthy process/API does not establish replication health. Unassigned single-node deployments report **replication not configured**; assigned primaries report replication configured, while per-secondary synchronization is verified separately in DNS servers. The local probe does not prove clients can cross your firewall or published port; integration tests query both published UDP and TCP sockets.
+API connectivity, local authoritative UDP probe, SOA serials and record counts use actual backend state. A healthy process/API does not establish replication health. Unassigned single-node deployments report **replication not configured**; assigned primaries report replication configured, while legacy secondaries have separate transfer checks. Joined-node DNS copy status is shown under **Directory Servers**. The local probe does not prove clients can cross your firewall or published port; integration tests query both published UDP and TCP sockets.
 
 This release supports at most 128 zones, 100 values per edited set, bounded DNS API responses and 256 KiB record-change requests. Large-directory/load and separate physical-host network/firewall tests are not yet covered.
 
-Primary/secondary enrollment, TSIG transfers and verified serial monitoring are described in [DNS replication](dns-replication.md). Reviewed JSON import, in-place secondary credential/certificate rotation and integrated encrypted primary DNS recovery are implemented; their limits and recovery procedures are in [DNS recovery](dns-recovery.md). No simulated synchronization or secondary health is shown.
+For existing native secondaries, see the [legacy DNS replication guide](dns-replication.md). Reviewed JSON import, in-place secondary credential/certificate rotation and integrated encrypted primary DNS recovery are implemented; their limits and recovery procedures are in [DNS recovery](dns-recovery.md). No simulated synchronization or secondary health is shown.
 
 To edit managed zones from a second Forklift manager running the standard Compose stack, see [Node pairing](peer-controllers.md#dns-writes-from-every-paired-webui).

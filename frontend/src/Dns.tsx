@@ -2,7 +2,6 @@ import { Help, FieldHelp } from "./Help";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useEffect, useRef, useState } from "react";
 import { DnsForwarding } from "./DnsForwarding";
-import { DnsServers } from "./DnsServers";
 import { DnsImport } from "./DnsImport";
 import { Plus, RefreshCw, Pencil, Trash2, X, Download } from "lucide-react";
 type RecordSet = {
@@ -225,14 +224,6 @@ export function Dns({ api }: { api: Api }) {
         )}
       </section>
       <DnsForwarding api={api} />
-      {!joined && (
-        <DnsServers
-          api={api}
-          zones={
-            overview?.zones.filter((z) => z.managed).map((z) => z.name) || []
-          }
-        />
-      )}
       {!joined && !!overview?.host_tasks?.length && (
         <section className="panel">
           <h2>Host DNS tasks</h2>
@@ -970,8 +961,8 @@ function SoaForm({
       error={error}
       help={
         <Help label="Zone serials and replication">
-          The zone’s version number increases when records change. To keep
-          another DNS server updated, assign this zone to it under DNS servers.
+          The zone’s version number increases when records change. Forklift
+          copies record changes to joined nodes automatically.
         </Help>
       }
     >

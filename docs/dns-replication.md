@@ -1,4 +1,6 @@
-# DNS servers
+# Legacy DNS secondaries
+
+Current Forklift deployments use [node pairing](peer-controllers.md) to add DNS capacity. This guide documents native secondaries and the controls in releases that offered a separate **DNS servers** panel.
 
 Forklift manages one writable PowerDNS primary and up to eight independent secondaries. Each secondary has its own SQLite database and serves previously transferred zones without Forklift or LDAP. There is no shared database, second management WebUI or automatic primary promotion. LDAP replicas and DNS secondaries are separate deployments and can run on the same second Docker host.
 
