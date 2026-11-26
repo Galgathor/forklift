@@ -21,7 +21,6 @@ export function DnsPeers({
   const [invite, setInvite] = useState<{
     url: string;
     key: string;
-    directory?: boolean;
   } | null>(null);
   const [revoke, setRevoke] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -56,11 +55,10 @@ export function DnsPeers({
   return (
     <section className="panel">
       <div className="heading-help">
-        <h2>DNS manager pairing</h2>
-        <Help label="DNS manager pairing">
-          Pair an empty DNS server with the manager where you already edit DNS.
-          Administrators on the paired manager can edit the shared zones. Its
-          DNS server keeps answering from its last copy during an outage.
+        <h2>Node pairing</h2>
+        <Help label="Node pairing">
+          Approve a new node here, then enter the pairing key in its setup
+          wizard. Forklift connects the directory and DNS automatically.
         </Help>
       </div>
       {error && (
@@ -69,28 +67,15 @@ export function DnsPeers({
         </p>
       )}
       {status?.coordinator ? (
-        <>
-          <p>DNS coordinator {status.coordinator}</p>
-          <p role="status">
-            {status.error ||
-              (status.applied_revision
-                ? "Local DNS copy applied"
-                : "Waiting for the first DNS copy")}
-          </p>
-        </>
+        <p role="status">
+          {status.error ||
+            (status.applied_revision
+              ? "Local DNS copy applied"
+              : "Waiting for the first DNS copy")}
+        </p>
       ) : (
         status && (
           <>
-            <button
-              disabled={busy}
-              onClick={() =>
-                perform(async () => {
-                  setInvite(await api("dns/peers", "POST", {}));
-                })
-              }
-            >
-              Approve DNS pairing
-            </button>
             <button
               disabled={busy}
               onClick={() =>
@@ -100,25 +85,24 @@ export function DnsPeers({
                     "POST",
                     {},
                   );
-                  setInvite({ ...pairing, directory: true });
+                  setInvite(pairing);
                 })
               }
             >
-              Approve directory and DNS node
+              Approve node pairing
             </button>
             {invite && (
               <>
                 <p>
-                  {invite.directory
-                    ? "Choose Join existing installation on the new node and enter this key within ten minutes."
-                    : "Enter this key on the other manager within ten minutes."}
+                  Choose Join existing installation on the new node and enter
+                  this key within ten minutes.
                 </p>
                 <label>
-                  Coordinator address
+                  Installation address
                   <input readOnly value={invite.url} />
                 </label>
                 <label>
-                  One-time DNS pairing key
+                  One-time pairing key
                   <input readOnly value={invite.key} />
                 </label>
                 <button onClick={() => setInvite(null)}>
@@ -140,42 +124,9 @@ export function DnsPeers({
           </>
         )
       )}
-      {status && (!status.coordinator || status.error) && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const body = Object.fromEntries(new FormData(e.currentTarget));
-            void perform(async () => {
-              await api("dns/peer/join", "POST", body);
-              window.location.reload();
-            });
-          }}
-        >
-          <label>
-            DNS coordinator HTTPS address
-            <input
-              name="url"
-              type="url"
-              defaultValue={status.coordinator || ""}
-              readOnly={!!status.coordinator}
-              placeholder="https://forklift.example.test"
-              required
-            />
-          </label>
-          <label>
-            DNS pairing key
-            <input name="key" type="password" autoComplete="off" required />
-          </label>
-          <button disabled={busy}>
-            {status.coordinator
-              ? "Replace DNS pairing"
-              : "Join DNS coordinator"}
-          </button>
-        </form>
-      )}
       {revoke && (
         <ConfirmDialog
-          title={`Revoke DNS pairing ${revoke}?`}
+          title={`Revoke node pairing ${revoke}?`}
           confirmLabel="Revoke pairing"
           busy={busy}
           cancel={() => setRevoke(null)}
@@ -186,9 +137,13 @@ export function DnsPeers({
             })
           }
         >
-          This manager will stop receiving updates and submitting edits. It will
-          keep serving the last DNS records it received. Pair it again to resume
-          synchronization.
+          This node will lose access to shared updates. It will keep serving its
+          last DNS copy.
+          {status?.peers.find((peer) => peer.id === revoke)?.directory &&
+            " It can still accept sign-ins using its last directory copy."}
+          {
+            " Remove its addresses from client settings and shut it down to stop it from serving."
+          }
         </ConfirmDialog>
       )}
     </section>

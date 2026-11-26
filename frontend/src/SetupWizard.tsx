@@ -237,7 +237,7 @@ export function SetupWizard({ api, completed }: Props) {
                 <FieldHelp
                   label="Existing Forklift HTTPS address"
                   caption="Existing Forklift HTTPS address"
-                  help="Open DNS manager pairing on the existing installation and approve a directory and DNS node. Then enter the address and pairing key here."
+                  help="Open Node pairing on the existing installation and approve a pairing. Then enter the address and pairing key here."
                 >
                   <input name="coordinator" type="url" required />
                 </FieldHelp>
