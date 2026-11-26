@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real HTTPS DNS edits and authoritative answers across identical Compose stacks."""
+import json
 import secrets
 import time
 from pathlib import Path
@@ -23,7 +24,12 @@ def answer(machine, owner, kind, wanted):
     return wanted in result.stdout.decode()
 
 
-with Stack(https=True) as coordinator:
+with Stack(dns_bind='0.0.0.0') as upstream, Stack(https=True) as coordinator:
+    upstream.setup()
+    upstream.request('/api/dns/zones', 'POST', dict(
+        name='upstream.test', kind='forward', nameserver='ns.upstream.test.',
+        nameserver_address='192.168.1.81', ttl=300,
+    ))
     coordinator.setup()
     r = coordinator.request
     zone = dict(name='shared.test', kind='forward', nameserver='ns.shared.test.',
@@ -61,11 +67,33 @@ with Stack(https=True) as coordinator:
         until(lambda: answer(peer, 'host.shared.test.', 'A', '192.168.1.50'),
               'Peer did not apply its edit')
         assert answer(coordinator, 'host.shared.test.', 'A', '192.168.1.50')
+        forwarding_path = '/api/dns/forwarding'
+        allowed = ['127.0.0.0/8']
+        for node in (coordinator, peer):
+            network = json.loads(run(['docker', 'network', 'inspect', node.project + '_default']).stdout)[0]
+            allowed.extend([network['IPAM']['Config'][0]['Subnet'], node.net['address'] + '/32'])
+        policy = dict(
+            enabled=True,
+            upstreams=[dict(address=upstream.net['address'], port=int(upstream.env['FORKLIFT_DNS_PORT']))],
+            allowed_clients=list(dict.fromkeys(allowed)),
+        )
+        p(forwarding_path, 'PUT', policy, use_csrf=False, expect=403)
+        p(forwarding_path, 'PUT', policy)
+        assert r(forwarding_path)['settings'] == p(forwarding_path)['settings'] == policy
+        until(lambda: answer(peer, 'ns.upstream.test.', 'A', '192.168.1.81'),
+              'Peer did not apply shared forwarding')
+        assert answer(coordinator, 'ns.upstream.test.', 'A', '192.168.1.81')
         coordinator.compose('stop','manager')
         p(endpoint,'POST',edit,expect=503)
         assert answer(peer,'host.shared.test.','A','192.168.1.50')
+        peer.compose('up', '-d', '--no-build', '--force-recreate', '--no-deps', '--wait', 'dns')
+        assert answer(peer, 'ns.upstream.test.', 'A', '192.168.1.81')
         coordinator.compose('start','manager')
         coordinator.wait()
+        r(forwarding_path, 'PUT', dict(policy, enabled=False))
+        until(lambda: answer(peer, 'ns.upstream.test.', 'A', 'REFUSED'),
+              'Peer did not apply forwarding disable after reconnection')
+        print('PASS: shared forwarding edits, offline persistence and reconnection.', flush=True)
         rrset = next(v for v in r('/api/dns/zones/shared.test.')['rrsets'] if v['name']=='host.shared.test.')
         r(endpoint,'POST',dict(name='host',type='A',ttl=300,values=[],
           expected_revision=rrset['revision'],delete=True,acknowledge=True))

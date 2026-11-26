@@ -71,9 +71,9 @@ This uses the pinned Debian `dnsdist` package (`1.9.16-0+deb13u1`) inside the ex
 
 Upstreams must already provide the DNS answers you need. This is query forwarding, not a new full recursive resolver: Forklift does not walk internet delegations, validate DNSSEC independently or chase external CNAME targets for an authoritative answer. A local alias pointing outside its managed zone may need a follow-up query from the client. Use your existing recursive resolver if that behavior is required. Upstream DNS uses ordinary UDP/TCP; DNS-over-TLS/HTTPS is not implemented. Do not use Forklift itself as an upstream, or configure an upstream to send the same queries back to Forklift.
 
-The manager automatically sends saved forwarding settings to updated, enrolled DNS peers over their authenticated management connections. A peer keeps its last applied settings on disk and can forward queries while the manager and original DNS server are offline. Only assigned zones are served on each peer. Queries inside other known Forklift zones stay local and are refused when the peer has no copy. For failover, assign the same zones to both servers and give clients both DNS addresses ahead of time. Choose upstreams reachable from both DNS servers. DNS server checks report forwarding settings separately from zone synchronization.
+Save forwarding from any joined manager. The coordinator applies the policy first. Joined nodes copy it automatically and keep applying their last saved policy during an outage. Use upstream servers that all nodes can reach. Applying a changed policy briefly restarts the local DNS listener.
 
-Update both the main stack and existing DNS peers to use this feature. A saved change applies to the main DNS server first. Peers normally receive it on the next sync pass, about ten seconds later, and disconnected peers catch up automatically. Backups include the main server's forwarding settings. Older backups without forwarding settings restore with forwarding disabled. Applying a changed policy briefly restarts the DNS listener.
+Existing native secondaries receive policy updates through their [legacy management connection](dns-replication.md). Backups include the local copy of the forwarding settings.
 
 ## Conditional forwarding with an existing resolver
 

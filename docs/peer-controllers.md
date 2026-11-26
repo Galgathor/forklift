@@ -26,7 +26,7 @@ The first node is the DNS write coordinator. Each joined manager forwards DNS zo
 
 The coordinator validates DNS edits and rejects stale record-set revisions. A retried WebUI record submission can return the original result or resume an interrupted change without writing it twice. Each peer fetches a complete snapshot of shared zones, updates its PowerDNS using the supported API, and records the revision after comparing the resulting records and SOA serials. Zones and records absent from a newer snapshot are removed from the peer's copy. [PowerDNS zone API](https://doc.powerdns.com/authoritative/http-api/zone.html)
 
-When the coordinator is offline, peers continue serving the last applied copy. DNS edits can resume when the coordinator returns. DNS forwarding settings are local to each node.
+When the coordinator is offline, peers continue serving the last applied copy. DNS edits can resume when the coordinator returns. Changes to DNS forwarding apply to all joined nodes. Each node keeps its last applied forwarding settings on disk.
 
 ## Remove or recover a node
 

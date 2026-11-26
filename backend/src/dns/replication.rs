@@ -105,13 +105,12 @@ pub(crate) fn primary(a: &App) -> Result<Option<Primary>> {
             .map_err(Error::from);
     }
     let network = config(a).unwrap_or_default();
+    Ok(published_primary(network["network"]["address"].as_str()))
+}
+pub(super) fn published_primary(host: Option<&str>) -> Option<Primary> {
     let bind = std::env::var("FORKLIFT_DNS_BIND").unwrap_or("0.0.0.0".into());
     let port = std::env::var("FORKLIFT_DNS_PORT").unwrap_or("53".into());
-    Ok(automatic_primary(
-        &bind,
-        &port,
-        network["network"]["address"].as_str(),
-    ))
+    automatic_primary(&bind, &port, host)
 }
 fn automatic_primary(bind: &str, port: &str, host: Option<&str>) -> Option<Primary> {
     let address: Ipv4Addr = host?.parse().ok()?;

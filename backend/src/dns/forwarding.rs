@@ -70,7 +70,7 @@ fn validate(value: &Settings, own: Option<&replication::Primary>) -> Result<()> 
     Ok(())
 }
 pub(crate) async fn get(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
-    authorize(&a, &h, false).await?;
+    peer::editor(&a, &h, false).await?;
     control(Method::GET, None).await
 }
 pub(super) async fn control(method: Method, value: Option<&Value>) -> Result<Json<Value>> {
@@ -84,12 +84,29 @@ pub(super) async fn control(method: Method, value: Option<&Value>) -> Result<Jso
         serde_json::from_slice(&body).map_err(anyhow::Error::from)?,
     ))
 }
+pub(super) async fn current() -> Result<Settings> {
+    let Json(value) = control(Method::GET, None).await?;
+    serde_json::from_value(value["settings"].clone())
+        .map_err(anyhow::Error::from)
+        .map_err(Error::from)
+}
+
+pub(super) async fn apply(value: &Settings, own: Option<&replication::Primary>) -> Result<()> {
+    validate(value, own)?;
+    let desired = serde_json::to_value(value).map_err(anyhow::Error::from)?;
+    let Json(local) = control(Method::GET, None).await?;
+    if local["settings"] != desired {
+        let _ = control(Method::PUT, Some(&desired)).await?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn put(
     State(a): State<App>,
     h: HeaderMap,
     Json(value): Json<Settings>,
 ) -> Result<Json<Value>> {
-    let who = authorize(&a, &h, true).await?;
+    let who = peer::editor(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
     validate(&value, replication::primary(&a)?.as_ref())?;
     for endpoint in replication::peer_endpoints(&a)? {

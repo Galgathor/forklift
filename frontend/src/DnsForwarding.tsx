@@ -35,9 +35,8 @@ export function DnsForwarding({ api }: { api: Api }) {
         <h2>DNS forwarding</h2>
         <Help label="DNS forwarding">
           Forklift answers managed zones locally and sends other queries to your
-          upstream DNS servers. Updated DNS peers copy these settings
-          automatically and keep using them during an outage. Each peer answers
-          the managed zones assigned to it.
+          upstream DNS servers. These settings apply to all joined nodes. Each
+          node keeps using its last saved settings during an outage.
         </Help>
       </div>
       {error && (

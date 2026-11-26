@@ -571,6 +571,10 @@ pub(crate) async fn join_setup(
     }
     let snapshot: Snapshot = serde_json::from_slice(&body).map_err(anyhow::Error::from)?;
     apply_snapshot(&snapshot).await?;
+    if let Some(policy) = &snapshot.forwarding {
+        let endpoint = replication::published_primary(network["address"].as_str());
+        forwarding::apply(policy, endpoint.as_ref()).await?;
+    }
     let config = json!({"name":m.name,"base":m.base,"network":network});
     {
         let mut db = a.db.lock().unwrap();

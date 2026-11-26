@@ -388,6 +388,9 @@ fn forwardable(method: &Method, path: &str) -> bool {
     if path == "/api/dns" {
         return method == Method::GET;
     }
+    if path == "/api/dns/forwarding" {
+        return matches!(*method, Method::GET | Method::PUT);
+    }
     if path == "/api/dns/zones" {
         return method == Method::POST;
     }
@@ -483,6 +486,8 @@ const COPY_OWNER: &str = "forklift-peer";
 struct Snapshot {
     revision: String,
     zones: BTreeMap<String, Vec<Value>>,
+    #[serde(default)]
+    forwarding: Option<forwarding::Settings>,
 }
 
 fn published_sets(z: &Value) -> Vec<Value> {
@@ -509,7 +514,8 @@ pub(crate) async fn snapshot(State(a): State<App>, h: HeaderMap) -> Result<Json<
     let revision = digest(&serde_json::to_string(&records).map_err(anyhow::Error::from)?);
     let document = json!(Snapshot {
         revision,
-        zones: records
+        zones: records,
+        forwarding: Some(forwarding::current().await?)
     });
     if document.to_string().len() > LIMIT {
         return Err(unavailable(
@@ -612,6 +618,9 @@ async fn sync(a: &App) -> Result<()> {
     let snapshot: Snapshot = serde_json::from_slice(&data).map_err(anyhow::Error::from)?;
     let _guard = a.gate.lock().await;
     apply_snapshot(&snapshot).await?;
+    if let Some(policy) = &snapshot.forwarding {
+        forwarding::apply(policy, replication::primary(a)?.as_ref()).await?;
+    }
     let db = a.db.lock().unwrap();
     db.execute("INSERT INTO settings VALUES('dns_coordinator_revision',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[snapshot.revision])
         .map_err(anyhow::Error::from)?;
