@@ -268,7 +268,7 @@ pub(crate) async fn register(
             ));
         }
         identity(&a, &id).await?;
-        configure(&membership(&a, FIRST_ID, 1)?).await?;
+        install_local(&a, &membership(&a, FIRST_ID, 1)?).await?;
         return seeded_membership(&a, &id, sid).await;
     }
     if providers(&a)?
@@ -327,7 +327,8 @@ async fn install_local(a: &App, m: &Membership) -> Result<()> {
             [m.sid.to_string()],
         )
         .map_err(anyhow::Error::from)?;
-    configure(m).await
+    configure(m).await?;
+    sync_hosts(a, &m.providers)
 }
 
 pub(crate) async fn current(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
@@ -362,7 +363,9 @@ pub(crate) async fn revoke(a: &App, id: &str) -> Result<()> {
         if result.rc != 32 {
             result.success()?;
         }
-        configure(&membership(a, FIRST_ID, 1)?).await?;
+        let m = membership(a, FIRST_ID, 1)?;
+        configure(&m).await?;
+        sync_hosts(a, &m.providers)?;
     }
     Ok(())
 }
@@ -378,6 +381,55 @@ pub(crate) fn local_sid(a: &App) -> Result<Option<i64>> {
         .optional()
         .map_err(anyhow::Error::from)
         .map_err(Error::from)
+}
+
+fn sync_hosts(a: &App, providers: &[Provider]) -> Result<()> {
+    let mut current = HashSet::new();
+    for p in providers {
+        let id = format!("provider-{}", p.sid);
+        let hostname = p.endpoint.address.to_string();
+        hosts::sync_provider(
+            a,
+            &id,
+            &hostname,
+            &format!("ldaps://{hostname}:{}", p.endpoint.port),
+        )?;
+        current.insert(id);
+    }
+    for host in hosts::list(a)? {
+        if host.directory_role.as_deref() == Some("provider")
+            && let Some(id) = host.directory_id
+            && !current.contains(&id)
+        {
+            hosts::unlink_directory(a, &id)?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn sync_saved_hosts(a: &App) -> Result<()> {
+    match local_sid(a)? {
+        Some(1) => sync_hosts(a, &providers(a)?),
+        Some(_) => {
+            let raw: Option<String> =
+                a.db.lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT value FROM settings WHERE key='directory_peer_topology'",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(anyhow::Error::from)?;
+            if let Some(raw) = raw {
+                let topology: Membership =
+                    serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
+                sync_hosts(a, &topology.providers)?;
+            }
+            Ok(())
+        }
+        None => sync_hosts(a, &[]),
+    }
 }
 
 pub(crate) async fn refresh(a: &App) -> Result<()> {
@@ -399,7 +451,8 @@ pub(crate) async fn refresh(a: &App) -> Result<()> {
     let _directory = a.directory_restart.write().await;
     let _guard = a.gate.lock().await;
     configure(&m).await?;
-    save_topology(a, &m)
+    save_topology(a, &m)?;
+    sync_hosts(a, &m.providers)
 }
 
 #[derive(Deserialize)]
@@ -615,10 +668,11 @@ pub(crate) async fn join_setup(
     hosts::sync_directory(
         &a,
         "primary",
-        "Local directory",
+        "Directory Server",
         network["hostname"].as_str().unwrap_or(""),
         "primary",
     )?;
+    sync_hosts(&a, &m.providers)?;
     audit(&a, "directory pairing", "join installation", &m.id)?;
     Ok(Json(json!({"ok":true})))
 }
@@ -701,7 +755,7 @@ pub(crate) async fn health(a: &App, local: Option<&[String]>) -> Result<Vec<Valu
                 .is_some_and(|(remote,local)|covers(local,remote) && covers(remote,local));
             let state = if confirmed {"synchronized"} else if remote.is_some() {"catching_up"} else {"unreachable"};
             let endpoint = format!("ldaps://{}:{}",provider.endpoint.address,provider.endpoint.port);
-            json!({"id":format!("provider-{}",provider.sid),"name":format!("Directory node {}",provider.sid),
+            json!({"id":format!("provider-{}",provider.sid),"name":format!("Directory Server {}",provider.sid),
                 "role":"provider","endpoint":endpoint,"reachable":remote.is_some(),"state":state,
                 "context_csn":remote,"checked_at":now(),"last_sync_at":confirmed.then(now),
                 "error":if remote.is_some(){None}else{Some("Could not check this node over verified directory TLS")}})

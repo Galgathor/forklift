@@ -146,7 +146,7 @@ function App() {
       !session ||
       busy ||
       maintenance.active ||
-      !["Dashboard", "Directory Servers"].includes(page)
+      !["Dashboard", "Directory Servers", "Hosts"].includes(page)
     )
       return;
     const interval = setInterval(() => perform(refresh), 30000);
@@ -275,6 +275,8 @@ function App() {
               onClick={() => {
                 setPage(label);
                 setQuery("");
+                if (label === "Hosts" && !maintenance.active)
+                  void perform(refresh);
               }}
             >
               <Icon size={19} />
@@ -324,7 +326,7 @@ function App() {
             <div className="error" role="status">
               {data.read_only_reason === "recovery_review"
                 ? "Restored directory: writes are paused until recovery review is completed in Settings."
-                : "Primary unavailable. Showing replica-backed reads; administrative writes are disabled. Replica data may lag behind the primary."}
+                : "The local Directory Server is unavailable. Reads use another Directory Server, and administrative writes are paused. Its data may be behind."}
             </div>
           )}
           <div className="page-heading">
@@ -399,7 +401,7 @@ function App() {
                           <CheckCircle2 size={14} />
                           {data.directory_source === "replica"
                             ? "Replica-backed reads"
-                            : "Primary connected"}
+                            : "Directory Server connected"}
                         </span>
                       </div>
                       <div className="directory-art">
@@ -414,7 +416,7 @@ function App() {
                           <dt>Directory endpoint</dt>
                           <dd>
                             {data.directory_source === "replica"
-                              ? "Verified replica"
+                              ? "Verified Directory Server"
                               : "ldaps://ldap:636"}
                           </dd>
                         </div>
@@ -423,7 +425,7 @@ function App() {
                           <dd>
                             {data.read_only
                               ? "Read-only management"
-                              : "Read / write primary"}
+                              : "Read / write"}
                           </dd>
                         </div>
                         <div>

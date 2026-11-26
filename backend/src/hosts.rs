@@ -157,6 +157,10 @@ pub(super) fn store(a: &App, h: &Host) -> Result<()> {
     {
         return Err(bad("A host with that hostname already exists"));
     }
+    write_host(a, h)
+}
+
+fn write_host(a: &App, h: &Host) -> Result<()> {
     let mut stored = h.clone();
     stored.dns_status = None;
     stored.client = None;
@@ -551,24 +555,73 @@ pub(super) fn sync_directory_for(
     role: &str,
     target: Option<&str>,
 ) -> Result<()> {
+    sync_directory_entry(a, directory_id, name, hostname, role, target, None)
+}
+
+pub(super) fn sync_provider(
+    a: &App,
+    directory_id: &str,
+    hostname: &str,
+    endpoint: &str,
+) -> Result<()> {
+    sync_directory_entry(
+        a,
+        directory_id,
+        "Directory Server",
+        hostname,
+        "provider",
+        None,
+        Some(endpoint),
+    )
+}
+
+fn sync_directory_entry(
+    a: &App,
+    directory_id: &str,
+    name: &str,
+    hostname: &str,
+    role: &str,
+    target: Option<&str>,
+    endpoint: Option<&str>,
+) -> Result<()> {
     let records = list(a)?;
-    let existing = records.into_iter().find(|h| {
-        if let Some(id) = target {
-            h.id == id
-        } else {
-            h.directory_id.as_deref() == Some(directory_id)
-                || (h.directory_id.is_none() && h.draft.hostname == hostname)
-        }
-    });
+    let existing = if let Some(id) = target {
+        records.into_iter().find(|h| h.id == id)
+    } else {
+        records
+            .iter()
+            .find(|h| h.directory_id.as_deref() == Some(directory_id))
+            .cloned()
+            .or_else(|| {
+                records
+                    .into_iter()
+                    .find(|h| h.directory_id.is_none() && h.draft.hostname == hostname)
+            })
+    };
     if target.is_some() && existing.is_none() {
         return Err(bad("Host no longer exists"));
     }
-    let primary = config(a)
-        .and_then(|c| c["network"]["endpoint"].as_str().map(str::to_owned))
-        .ok_or(bad("Configure the primary in setup"))?;
+    let endpoint = endpoint
+        .map(str::to_owned)
+        .or_else(|| config(a).and_then(|c| c["network"]["endpoint"].as_str().map(str::to_owned)))
+        .ok_or(bad("Complete directory setup first"))?;
+    if let Some(host) = &existing
+        && host.directory_id.as_deref() == Some(directory_id)
+        && host.directory_role.as_deref() == Some(role)
+        && (target.is_some() || host.client.is_some() || host.draft.hostname == hostname)
+        && !(directory_id == "primary"
+            && matches!(
+                host.draft.name.as_str(),
+                "Primary directory" | "Local directory"
+            ))
+    {
+        return Ok(());
+    }
     let mut host = existing.unwrap_or(Host {
         id: if directory_id == "primary" {
             "00000000000000000000000000000001".into()
+        } else if role == "provider" {
+            provider_host_id(directory_id)
         } else {
             directory_id.into()
         },
@@ -577,7 +630,7 @@ pub(super) fn sync_directory_for(
         draft: HostDraft {
             name: name.into(),
             hostname: hostname.into(),
-            endpoints: vec![primary],
+            endpoints: vec![endpoint],
             allowed_groups: vec![],
         },
         dns: None,
@@ -594,15 +647,30 @@ pub(super) fn sync_directory_for(
     if target.is_none() && host.client.is_none() {
         host.draft.hostname = hostname.into();
     }
+    if directory_id == "primary"
+        && matches!(
+            host.draft.name.as_str(),
+            "Primary directory" | "Local directory"
+        )
+    {
+        host.draft.name = name.into();
+    }
     host.updated_at = now();
     store(a, &host)
 }
+fn provider_host_id(directory_id: &str) -> String {
+    digest(&format!("forklift:directory-host:{directory_id}"))[..32].into()
+}
+
 pub(super) fn unlink_directory(a: &App, directory_id: &str) -> Result<()> {
     for mut host in list(a)?
         .into_iter()
         .filter(|h| h.directory_id.as_deref() == Some(directory_id))
     {
-        if host.client.is_none()
+        let generated = host.directory_role.as_deref() != Some("provider")
+            || host.id == provider_host_id(directory_id);
+        if generated
+            && host.client.is_none()
             && host.draft.allowed_groups.is_empty()
             && host.dns.is_none()
             && host.dns_status.is_none()
@@ -614,7 +682,7 @@ pub(super) fn unlink_directory(a: &App, directory_id: &str) -> Result<()> {
         } else {
             host.directory_id = None;
             host.directory_role = None;
-            store(a, &host)?;
+            write_host(a, &host)?;
         }
     }
     Ok(())

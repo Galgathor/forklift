@@ -37,7 +37,7 @@ type Props = {
   refresh: () => Promise<void>;
 };
 const labels: Record<string, string> = {
-  ready: "Primary ready",
+  ready: "Ready",
   pending: "Awaiting enrollment",
   redeeming: "Enrollment in progress",
   enrolled: "Enrolled",
@@ -48,7 +48,7 @@ const labels: Record<string, string> = {
   catching_up: "Catching up",
   unreachable: "Unreachable / TLS error",
   unavailable: "LDAP query failed",
-  primary_unavailable: "Primary unavailable · sync unconfirmed",
+  primary_unavailable: "Directory Server unavailable · sync unconfirmed",
 };
 const date = (timestamp?: number | null) =>
   timestamp ? new Date(timestamp * 1000).toLocaleString() : "Not confirmed";
@@ -112,13 +112,7 @@ export function Servers({
                   </span>
                   <div>
                     <h3>{node.name}</h3>
-                    <small>
-                      {node.role === "primary"
-                        ? "Read / write primary"
-                        : node.role === "provider"
-                          ? "Read / write peer"
-                          : "Read / authentication replica"}
-                    </small>
+                    <small>Directory Server</small>
                   </div>
                 </div>
                 {node.role === "replica" && (
@@ -222,7 +216,7 @@ export function Servers({
                           })
                         }
                       >
-                        Reconnect to current primary
+                        Reconnect to the local Directory Server
                       </button>
                     )}
                     <button

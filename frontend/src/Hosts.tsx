@@ -202,11 +202,7 @@ export function Hosts({
                       <td>
                         <strong>{h.name}</strong>
                         {h.directory_role && (
-                          <span className="pill">
-                            {h.directory_role === "primary"
-                              ? "Primary directory"
-                              : "Directory replica"}
-                          </span>
+                          <span className="pill">Directory Server</span>
                         )}
                         <small>{h.hostname}</small>
                         <small>{h.endpoints.join(", ")}</small>

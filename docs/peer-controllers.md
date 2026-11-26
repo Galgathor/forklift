@@ -18,7 +18,7 @@ Join protects initialized local storage and can resume with the same pairing key
 
 Forklift configures OpenLDAP Syncrepl for reads and writes on each node. Each node has a distinct server ID, its own credentials and a separate range for Unix user and group IDs. OpenLDAP tracks and resolves changes using its native replication state. An available node can authenticate users and accept directory edits when another node is offline. Nodes catch up over verified private LDAP connections after reconnecting. [OpenLDAP replication guide](https://www.openldap.org/doc/admin25/replication.html)
 
-An isolated node may still accept an old password or grant access based on old group membership until it receives the change. Avoid editing the same account or group concurrently during an outage. Host inventory, host access policies and management sessions are stored on each manager. LDAP credentials, accounts and groups are shared through the directory.
+An isolated node may still accept an old password or grant access based on old group membership until it receives the change. Avoid editing the same account or group concurrently during an outage. Directory servers appear automatically in Hosts on every joined manager. Other host entries, host access policies and management sessions are stored on each manager. LDAP credentials, accounts and groups are shared through the directory.
 
 ## DNS writes from every paired WebUI
 

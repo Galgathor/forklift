@@ -474,7 +474,7 @@ async fn setup(State(a): State<App>, h: HeaderMap, Json(p): Json<Setup>) -> Resu
     hosts::sync_directory(
         &a,
         "primary",
-        "Primary directory",
+        "Directory Server",
         network["hostname"].as_str().unwrap_or(""),
         "primary",
     )?;
@@ -1080,7 +1080,7 @@ async fn main() -> anyhow::Result<()> {
         hosts::sync_directory(
             &a,
             "primary",
-            "Primary directory",
+            "Directory Server",
             directory["network"]["hostname"].as_str().unwrap_or(""),
             "primary",
         )
@@ -1095,6 +1095,7 @@ async fn main() -> anyhow::Result<()> {
             )
             .map_err(|e| anyhow::anyhow!(e.1))?;
         }
+        dns::peer::directory::sync_saved_hosts(&a).map_err(|e| anyhow::anyhow!(e.1))?;
     }
     maintenance::watch(a.clone());
     dns::replication::watch_forwarding(a.clone());

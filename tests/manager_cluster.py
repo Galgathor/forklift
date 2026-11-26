@@ -88,6 +88,17 @@ with Stack(https=True) as first, Stack(https=True) as peer:
     peer.login()
     paired = next(item for item in r('/api/dns/peers')['peers'] if item['id'] == invite['id'])
     assert paired['active'] and paired['server_id'] == 'provider-2'
+    def directory_hosts(machine):
+        return {host['directory_id']: host for host in machine.request('/api/hosts')
+                if host.get('directory_id')}
+
+    first_hosts = directory_hosts(first)
+    peer_hosts = directory_hosts(peer)
+    assert set(first_hosts) == {'primary', 'provider-2'}
+    assert set(peer_hosts) == {'primary', 'provider-1'}
+    assert first_hosts['provider-2']['endpoints'] == [f"ldaps://{peer.net['address']}:{peer.net['port']}"]
+    assert peer_hosts['provider-1']['endpoints'] == [f"ldaps://{first.net['address']}:{first.net['port']}"]
+    assert all(host['name'] == 'Directory Server' for host in [*first_hosts.values(), *peer_hosts.values()])
     peer.bind('before')
     assert dns_answer(peer, 'ns.cluster.test.', '192.168.1.2')
     print('PASS: approved same-Compose join seeded existing native LDAP and DNS data.', flush=True)
@@ -138,6 +149,8 @@ with Stack(https=True) as first, Stack(https=True) as peer:
             node['id'] == 'provider-3' and node['state'] == 'synchronized'
             for node in p('/api/overview')['directory_servers']['servers']
         ), 'Peer did not establish a direct verified relationship with the third node')
+        until(lambda: 'provider-3' in directory_hosts(peer), 'Third node missing from peer Hosts')
+        assert set(directory_hosts(third)) == {'primary', 'provider-1', 'provider-2'}
         first.compose('stop', 'ldap', 'manager')
         p('/api/users', 'POST', peer.user('second-while-first-down'))
         third.request('/api/users', 'POST', third.user('third-while-first-down'))

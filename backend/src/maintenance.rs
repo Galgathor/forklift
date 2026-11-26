@@ -348,6 +348,9 @@ pub(super) async fn settle(a: &App, value: Value) -> Result<Value> {
             }
             tx.commit().map_err(anyhow::Error::from)?;
         }
+        if value["result"]["restored"] == true {
+            dns::peer::directory::sync_saved_hosts(a)?;
+        }
         if value["status"] == "awaiting_ack" {
             for retry in 0..4 {
                 match local("/ack", Some(&json!({"id":value["id"]}))).await {

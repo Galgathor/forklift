@@ -548,7 +548,7 @@ export function BackupRestore({
             checked={fenced}
             onChange={(e) => setFenced(e.target.checked)}
           />
-          I have disconnected the old primary LDAP/DNS servers and all old
+          I have disconnected the old directory and DNS servers and all old
           replicas.
         </label>
         <label className="checkbox">

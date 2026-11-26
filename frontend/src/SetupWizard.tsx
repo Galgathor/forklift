@@ -108,8 +108,8 @@ export function SetupWizard({ api, completed }: Props) {
               <CheckCircle2 size={15} /> Storage and supervisor ready
             </div>
             <div className="heading-help">
-              <h2>Your primary directory server</h2>
-              <Help label="Primary directory server">
+              <h2>Directory Server</h2>
+              <Help label="Directory Server">
                 Choose this Docker host’s private network address. Linux
                 machines and replicas will connect to it. Forklift sets up
                 encrypted LDAP access and the certificate for you.
@@ -319,7 +319,7 @@ export function SetupWizard({ api, completed }: Props) {
                   <button className="primary" disabled={busy || jobs.active}>
                     {busy ? "Creating your directory…" : "Initialize directory"}
                   </button>
-                  <Help label="Primary host registration">
+                  <Help label="Directory Server registration">
                     This server connects at {network.hostname}:{network.port}.
                     It appears in Hosts automatically. Adding it does not enable
                     Linux sign-in.

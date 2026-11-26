@@ -546,7 +546,7 @@ pub(super) async fn health(a: &App) -> Result<Value> {
     };
     let primary_csn = primary.as_ref().ok().cloned();
     let mut nodes = vec![
-        json!({"id":"primary","name":"Primary directory","endpoint":config(a).map(|v|v["network"]["endpoint"].clone()),"role":"primary","reachable":primary.is_ok(),"state":if primary.is_ok(){"ready"}else{"unreachable"},"context_csn":primary_csn,"checked_at":now(),"error":primary.as_ref().err().map(|_|"Primary LDAP/TLS connection failed; administrative writes unavailable")}),
+        json!({"id":"primary","name":"Directory Server","endpoint":config(a).map(|v|v["network"]["endpoint"].clone()),"role":"primary","reachable":primary.is_ok(),"state":if primary.is_ok(){"ready"}else{"unreachable"},"context_csn":primary_csn,"checked_at":now(),"error":primary.as_ref().err().map(|_|"Directory server LDAP/TLS connection failed; administrative writes unavailable")}),
     ];
     let mut probes = tokio::task::JoinSet::new();
     for server in records(a)? {
