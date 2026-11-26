@@ -84,7 +84,7 @@ def finish_dns(job, restore=False):
 def initialize():
     for path in [*ROOTS.values(),WORK,Path('/backups'),Path('/transfers'),CONTROL,LDAP_CONTROL,Path('/run/ldap-socket')]:path.mkdir(parents=True,exist_ok=True);os.chmod(path,0o700)
     required=['bootstrap','provision','service','maintenance','node-control-key']
-    if Path('/directory/complete').exists() and not Path('/secrets/initialized-v5').exists():raise ValueError('Version 0.5 requires fresh volumes; preserve old installation storage and use the previous release for old backups')
+    if Path('/directory/complete').exists() and not Path('/secrets/initialized-v5').exists():raise ValueError('This installation requires version-5 directory storage; preserve old installation storage and use the previous release for old backups')
     if Path('/secrets/initialized-v5').exists() and (any(not (Path('/secrets')/name).is_file() for name in required) or not Path('/authority/ca.key').is_file()):raise ValueError('Persistent secrets are incomplete; restore a matching backup instead of regenerating credentials')
     authority=Path('/authority')
     if not (authority/'ca.crt').exists():
@@ -294,7 +294,7 @@ def execute(p,resume=False,rollback=False):
             if file.exists():result={'artifact':filename,'sha256':storage.sha(file),'bytes':file.stat().st_size}
             else:
                 (Path('/backups')/('.'+job['id']+'.partial')).unlink(missing_ok=True)
-                result=storage.pack({**base,'recipient':params['recipient'],'filename':filename,'owner_uid':10001,'owner_gid':10001,'source':{'version':'0.5.0'},'max_bytes':params.get('max_gib',8)*1024**3})
+                result=storage.pack({**base,'recipient':params['recipient'],'filename':filename,'owner_uid':10001,'owner_gid':10001,'source':{'version':'0.6.0'},'max_bytes':params.get('max_gib',8)*1024**3})
             atomic(Path('/backups')/(job['id']+'.json'),encode({**result,'id':job['id'],'at':int(time.time())}))
             storage.event(base,'backup','completed',filename,result['sha256']);finish_pause(job)
         elif action=='verify':

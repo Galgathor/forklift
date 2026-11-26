@@ -1028,7 +1028,7 @@ async fn main() -> anyhow::Result<()> {
         let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         anyhow::ensure!(
             version == 0 || version == 5,
-            "Forklift 0.5 requires fresh storage; preserve old volumes and use the previous release for old backups"
+            "Forklift requires fresh storage for unsupported database versions; preserve old volumes and use the previous release for old backups"
         );
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,username TEXT NOT NULL,csrf TEXT NOT NULL,expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS attempts(at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL); CREATE TABLE IF NOT EXISTS allocator(value INTEGER NOT NULL); INSERT INTO allocator SELECT 10000 WHERE NOT EXISTS(SELECT 1 FROM allocator);")?;
         clients::migrate(&connection)?;

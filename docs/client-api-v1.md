@@ -1,5 +1,7 @@
 # Forklift Client API v1
 
+Forklift 0.6 continues to use client API v1. Each node has its own client enrollment records. Approve a pairing on the node that issued the code.
+
 **Canonical contract:** this file in the Forklift server repository. The companion repository mirrors it under `docs/`. Protocol version is independent of either product release. No client credential grants LDAP, administrative API, direct DNS API or command-execution access. Administrators may explicitly authorize backend-managed address updates for that client’s host.
 
 ## Transport and identity

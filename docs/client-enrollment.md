@@ -12,7 +12,7 @@ Pairing codes expire in ten minutes and are consumed by approval. Interrupted jo
 
 ## LAN discovery
 
-The client discovers `_forklift._tcp.local.` services and presents a numbered selection. TXT records carry `name`, `url`, `api=1` and a nonsecret `instance` identifier. Discovery is untrusted; the selected HTTPS endpoint is verified independently before enrollment information is sent.
+The client discovers `_forklift._tcp.local.` services and presents a numbered selection. TXT records carry `name`, `url`, `api=1` and a nonsecret `instance` identifier. The client verifies HTTPS and checks that the verified manager matches the selected advertisement before sending enrollment information. Each node can publish its own address. Open the address the client prints when approving a pairing.
 
 The manager normally uses Docker bridge networking, which does not advertise to physical LAN clients. Enable the **server stack's** `discovery` Compose profile in your deployment settings to run a separate, non-root LAN publisher with host networking. Set deployment `FORKLIFT_PUBLIC_URL` to the same saved HTTPS origin used by Forklift. The publisher has no metadata, credentials or privileged sockets mounted. It validates the public HTTPS information endpoint, advertises its resolved endpoint addresses, and withdraws the advertisement when it cannot verify the manager.
 

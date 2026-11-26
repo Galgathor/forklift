@@ -76,6 +76,7 @@ function App() {
     [query, setQuery] = useState(""),
     [modal, setModal] = useState<{ kind: string; entry?: Entry } | null>(null),
     [light, setLight] = useState(localStorage.getItem("theme") === "light");
+  const [version, setVersion] = useState("");
   async function api(path: string, method = "GET", body?: unknown) {
     const r = await fetch("/api/" + path, {
       method,
@@ -118,6 +119,7 @@ function App() {
   async function initialize() {
     const s = await api("status");
     setConfigured(s.configured);
+    setVersion(s.version || "");
     if (s.maintenance) {
       maintenance.start({ bootstrap: s.maintenance_bootstrap });
       return;
@@ -288,7 +290,7 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <small>Forklift v0.5</small>
+          <small>Forklift{version && ` v${version}`}</small>
         </div>
       </aside>
       <div className="main">

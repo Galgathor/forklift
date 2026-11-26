@@ -40,7 +40,7 @@ The first-launch wizard:
 
 Choose the base DN carefully: suffix changes are unsupported. Setup refuses to overwrite a configured directory. Container recreation preserves state; deleting persistent volumes destroys it. A partial setup can be retried with its original base DN and administrator identity. Missing metadata beside an initialized directory requires recovery of a matching backup.
 
-**0.4 storage and backups are incompatible with 0.5.** Use fresh volumes for this development release. Preserve old volumes and use their matching release if you need to recover them. There is no automatic conversion or reset. The development/test suites use isolated projects and never delete default installation volumes.
+Forklift 0.6 uses the same storage format as 0.5. Keep your existing volumes when upgrading from 0.5. Version 0.4 storage and backups require their matching release. The development/test suites use isolated projects and never delete default installation volumes.
 
 ## Optional native client
 
