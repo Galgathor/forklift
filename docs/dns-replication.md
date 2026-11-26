@@ -1,21 +1,15 @@
-# DNS secondary servers
+# DNS servers
 
 Forklift manages one writable PowerDNS primary and up to eight independent secondaries. Each secondary has its own SQLite database and serves previously transferred zones without Forklift or LDAP. There is no shared database, second management WebUI or automatic primary promotion. LDAP replicas and DNS secondaries are separate deployments and can run on the same second Docker host.
 
-## Prepare the primary
+## Check this host’s DNS endpoint
 
-The main stack already includes your primary DNS server. Forklift automatically uses the private server address chosen during initial setup and the DNS port from your Docker settings. You do not need to enter that endpoint again. A specific private `FORKLIFT_DNS_BIND` address takes precedence over the setup address.
+The main stack includes DNS. The WebUI shows its endpoint using the private address from Forklift setup and the published DNS port. If port 53 is already occupied, you can still adjust the Docker listener in your deployment settings. Existing deployments with a saved endpoint override keep that endpoint for compatibility.
 
-New installations listen on host interfaces (`FORKLIFT_DNS_BIND=0.0.0.0`) by default. Restrict DNS access to your private network using your host/network firewall. If another service owns port 53, choose a free private interface or another published port in `.env`, then recreate the DNS container without deleting its volumes. For example, use `192.168.1.2:1053` if your DNS resolver supports a custom destination port.
+## Add a DNS server
 
-Existing `.env` files are preserved. If yours still uses `127.0.0.1`, DNS remains local-only: change the bind address before adding a secondary. Forklift will explain this rather than advertise an unreachable address. **DNS → DNS servers** displays the detected endpoint. The advanced override is only for networks where other servers must use a different address; it does not change Docker port publishing. Existing saved overrides remain in effect.
-
-Secondary endpoints are filled in from the address and ports chosen when deploying each secondary. You do not need to configure an existing DNS service first. DNS traffic does not pass through an HTTP reverse proxy.
-
-## Add a secondary
-
-1. Create the forward/reverse zones you want to replicate in DNS.
-2. Choose **Add DNS secondary**. Supply a friendly name, the second machine's private IPv4 interface, its DNS port (normally `53`) and a distinct private management port (normally `9544`). Select up to 32 zones. Forklift prepares the keys and native configuration; no existing DNS endpoint or manually configured certificate is needed.
+1. Register the other host in **Directory Servers** and create the DNS zones you want it to serve.
+2. Under **DNS → DNS servers**, choose **Add DNS server** and select the registered Forklift host. Forklift uses the host’s existing address and name. Choose the DNS port (normally `53`), the private management port (normally `9544`), and up to 32 zones.
 3. Generate the DNS join configuration. Forklift's configured public URL must use HTTPS and be reachable from the new machine. If it uses private HTTPS PKI, paste its public CA certificate in the optional field. Never paste a private key. Publicly trusted HTTPS certificates need no additional CA.
 4. On the second machine, open a checkout of this repository in your Docker Compose hosting tool and deploy `deploy/dns-secondary/compose.yaml`. It builds the pinned PowerDNS image from the repository. Paste the generated `FORKLIFT_DNS_JOIN=…` environment setting into that stack's deployment settings and start it within 15 minutes. No archive transfer is required.
 5. Keep the `dns_secondary` volume. The container generates its own HTTPS private key, validates Forklift HTTPS, redeems its one-use token, creates a local SQLite database and provisions native Secondary zones. Once configured, restarts use persistent credentials even with an empty/expired join setting or an offline manager.

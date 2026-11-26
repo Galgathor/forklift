@@ -114,7 +114,11 @@ pub(crate) fn primary(a: &App) -> Result<Option<Primary>> {
     ))
 }
 fn automatic_primary(bind: &str, port: &str, host: Option<&str>) -> Option<Primary> {
-    let address: Ipv4Addr = if bind == "0.0.0.0" { host? } else { bind }.parse().ok()?;
+    let address: Ipv4Addr = host?.parse().ok()?;
+    let bind: Ipv4Addr = bind.parse().ok()?;
+    if !bind.is_unspecified() && bind != address {
+        return None;
+    }
     let dns_port = port.parse().ok()?;
     private(address, dns_port).ok()?;
     Some(Primary { address, dns_port })
@@ -435,8 +439,20 @@ pub(crate) fn watch_forwarding(a: App) {
 
 pub(crate) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
     authorize(&a, &h, false).await?;
+    let entries = nodes(&a)?;
+    let hosts = replicas::records(&a)?
+        .into_iter()
+        .filter(|host| matches!(host.state.as_str(), "pending" | "enrolled"))
+        .filter_map(|host| {
+            let address = host.address.parse::<Ipv4Addr>().ok()?;
+            if !address.is_private() || entries.iter().any(|node| node.draft.address == address) {
+                return None;
+            }
+            Some(json!({"id":host.id,"name":host.name,"address":address}))
+        })
+        .collect::<Vec<_>>();
     Ok(Json(
-        json!({"primary":primary(&a)?,"servers":nodes(&a)?.iter().map(public).collect::<Vec<_>>()}),
+        json!({"primary":primary(&a)?,"servers":entries.iter().map(public).collect::<Vec<_>>(),"hosts":hosts}),
     ))
 }
 #[derive(Deserialize)]
@@ -493,17 +509,59 @@ pub(crate) async fn set_primary(
 pub(crate) async fn create(
     State(a): State<App>,
     h: HeaderMap,
-    Json(mut p): Json<Draft>,
+    Json(p): Json<Draft>,
 ) -> Result<Json<Value>> {
     let who = authorize(&a, &h, true).await?;
     let _guard = a.gate.lock().await;
-    if primary(&a)?.is_none() {
+    register(&a, &who, p).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HostDraft {
+    host_id: String,
+    dns_port: u16,
+    control_port: u16,
+    zones: Vec<String>,
+}
+
+pub(crate) async fn create_for_host(
+    State(a): State<App>,
+    h: HeaderMap,
+    Json(p): Json<HostDraft>,
+) -> Result<Json<Value>> {
+    let who = authorize(&a, &h, true).await?;
+    let _guard = a.gate.lock().await;
+    let host = replicas::records(&a)?
+        .into_iter()
+        .find(|host| host.id == p.host_id && matches!(host.state.as_str(), "pending" | "enrolled"))
+        .ok_or(bad("Choose a registered Forklift host"))?;
+    let address = replica_setup::private_ipv4(&host.address)?;
+    if nodes(&a)?.iter().any(|node| node.draft.address == address) {
+        return Err(bad("This host already has a DNS server"));
+    }
+    register(
+        &a,
+        &who,
+        Draft {
+            name: host.name,
+            address,
+            dns_port: p.dns_port,
+            control_port: p.control_port,
+            zones: p.zones,
+        },
+    )
+    .await
+}
+
+async fn register(a: &App, who: &str, mut p: Draft) -> Result<Json<Value>> {
+    if primary(a)?.is_none() {
         return Err(bad(
             "DNS is not reachable from other machines. Check the DNS listening address in your Docker settings.",
         ));
     }
     validate_draft(&mut p).await?;
-    let all = nodes(&a)?;
+    let all = nodes(a)?;
     if all.len() >= 8 {
         return Err(bad("This release supports up to eight DNS secondaries"));
     }
@@ -518,7 +576,7 @@ pub(crate) async fn create(
             "A DNS node already uses one of these private listener ports",
         ));
     }
-    if primary(&a)?.is_some_and(|v| {
+    if primary(a)?.is_some_and(|v| {
         v.address == p.address && (v.dns_port == p.dns_port || v.dns_port == p.control_port)
     }) {
         return Err(bad(
@@ -545,8 +603,8 @@ pub(crate) async fn create(
         certificate_staged_at: None,
         certificate_retirement_pending: false,
     };
-    store(&a, &n)?;
-    audit(&a, &who, "DNS register secondary", &n.id)?;
+    store(a, &n)?;
+    audit(a, who, "DNS register secondary", &n.id)?;
     Ok(Json(public(&n)))
 }
 #[derive(Deserialize)]
@@ -992,14 +1050,15 @@ mod tests {
         assert_eq!(p.address.to_string(), "192.168.1.2");
         assert_eq!(p.dns_port, 1053);
         assert_eq!(
-            automatic_primary("192.168.1.3", "53", host)
+            automatic_primary("192.168.1.2", "53", host)
                 .unwrap()
                 .address
                 .to_string(),
-            "192.168.1.3"
+            "192.168.1.2"
         );
         for (bind, port, host) in [
             ("127.0.0.1", "53", host),
+            ("192.168.1.3", "53", host),
             ("0.0.0.0", "53", None),
             ("0.0.0.0", "0", host),
             ("0.0.0.0", "invalid", host),

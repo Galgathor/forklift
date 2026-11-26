@@ -1145,6 +1145,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/dns/hosts/{id}/reconcile", post(dns::host_records::reconcile))
         .route("/api/dns/hosts/{id}/retain", post(dns::host_records::retain))
         .route("/api/dns/servers", get(dns::replication::index).post(dns::replication::create))
+        .route("/api/dns/servers/from-host", post(dns::replication::create_for_host))
         .route("/api/dns/primary", put(dns::replication::set_primary))
         .route("/api/dns/servers/{id}/deployment", post(dns::replication::deployment))
         .route("/api/dns/servers/{id}/enroll", post(dns::replication::enroll))

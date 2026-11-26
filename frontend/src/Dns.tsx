@@ -29,7 +29,6 @@ type Overview = {
     service_available: boolean | null;
     authoritative_answer?: boolean | null;
     version?: string;
-    role: string;
     replication: string;
     probe_zone?: string;
     address?: string;
@@ -170,11 +169,8 @@ export function Dns({ api }: { api: Api }) {
                 </dd>
               </div>
               <div>
-                <dt>Role / replication</dt>
-                <dd>
-                  {overview.server.role.replaceAll("_", " ")} ·{" "}
-                  {overview.server.replication.replaceAll("_", " ")}
-                </dd>
+                <dt>Replication</dt>
+                <dd>{overview.server.replication.replaceAll("_", " ")}</dd>
               </div>
             </dl>
 

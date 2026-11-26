@@ -43,6 +43,7 @@ type Node = {
 type Inventory = {
   primary: { address: string; dns_port: number } | null;
   servers: Node[];
+  hosts: { id: string; name: string; address: string }[];
 };
 export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
   const [inventory, setInventory] = useState<Inventory | null>(null),
@@ -81,12 +82,11 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
         <div className="heading-help">
           <h2>DNS servers</h2>
           <Help label="DNS replication">
-            The primary server accepts changes. Secondary servers keep copies
-            and can answer DNS requests when the primary or Forklift is offline.
-            Forklift checks the copies before showing them as synchronized. Keep
-            server management ports private. Zone transfers verify the sender
-            but do not encrypt the records; use a trusted private network or
-            VPN.
+            Edit DNS records here. Other servers keep copies and answer queries
+            if this host goes offline. Forklift checks the copies before showing
+            them as synchronized. Keep server management ports private. Zone
+            transfers verify the sender but do not encrypt the records; use a
+            trusted private network or VPN.
           </Help>
         </div>
         <button
@@ -109,78 +109,14 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
       )}
 
       {inventory && (
-        <>
-          <p role="status">
-            {inventory.primary
-              ? `Primary DNS: ${inventory.primary.address}:${inventory.primary.dns_port}`
-              : "Forklift could not find a DNS address that other machines can use. Check the DNS listening address and port in your Docker settings."}
-          </p>
-          <details>
-            <summary>Advanced: override primary address</summary>
-            <form
-              key={JSON.stringify(inventory.primary)}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const f = new FormData(e.currentTarget);
-                void perform(async () => {
-                  await api("dns/primary", "PUT", {
-                    address: String(f.get("address")),
-                    dns_port: Number(f.get("dns_port")),
-                    acknowledge: f.has("acknowledge"),
-                  });
-                  await load();
-                  setNotice(
-                    "Primary endpoint saved. Reconcile enrolled nodes if the address changed.",
-                  );
-                });
-              }}
-            >
-              <label>
-                Primary private IPv4 address
-                <input
-                  aria-label="Primary private IPv4 address"
-                  name="address"
-                  defaultValue={inventory.primary?.address || ""}
-                  placeholder="192.168.1.2"
-                  required
-                />
-              </label>
-              <FieldHelp
-                label="Primary DNS endpoint"
-                help={
-                  <>
-                    Forklift fills this in from your setup and Docker settings.
-                    Only override it if other servers need a different address,
-                    such as when your router forwards DNS traffic. Changing this
-                    value does not change the Docker listening address.
-                  </>
-                }
-                caption={<>Published primary DNS port</>}
-              >
-                <input
-                  aria-label="Published primary DNS port"
-                  name="dns_port"
-                  type="number"
-                  min="1"
-                  max="65535"
-                  defaultValue={inventory.primary?.dns_port || 53}
-                  required
-                />
-              </FieldHelp>
-
-              <label className="checkbox">
-                <input name="acknowledge" type="checkbox" required />
-                This endpoint is reachable from the secondary over TCP and UDP.
-              </label>
-              <button className="primary" disabled={busy}>
-                Save primary DNS endpoint
-              </button>
-            </form>
-          </details>
-        </>
+        <p role="status">
+          {inventory.primary
+            ? `This host: ${inventory.primary.address}:${inventory.primary.dns_port}`
+            : "DNS is unavailable at this host’s network address."}
+        </p>
       )}
       <div className="table-toolbar">
-        <h3>Secondary servers</h3>
+        <h3>Other DNS servers</h3>
         <button
           className="primary"
           disabled={busy || !inventory?.primary}
@@ -190,19 +126,19 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
           }}
         >
           <Plus size={17} />
-          Add DNS secondary
+          Add DNS server
         </button>
       </div>
       {!inventory ? (
         <p className="hint">Loading servers…</p>
       ) : !inventory.servers.length ? (
-        <p className="hint">No secondaries enrolled.</p>
+        <p className="hint">No other DNS servers enrolled.</p>
       ) : (
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
-                <th>Server / role</th>
+                <th>Server</th>
                 <th>State</th>
                 <th>Last check / confirmed sync</th>
                 <th>Actions</th>
@@ -214,7 +150,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                   <td>
                     <strong>{n.name}</strong>
                     <small>
-                      {n.address}:{n.dns_port} · Secondary
+                      {n.address}:{n.dns_port}
                     </small>
                     <small>
                       Private HTTPS management: {n.address}:{n.control_port}
@@ -257,7 +193,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                       </small>
                     )}
                     {n.transfers_revoked && (
-                      <small>Primary transfer authorization revoked</small>
+                      <small>Zone transfer access revoked</small>
                     )}
                   </td>
                   <td>
@@ -413,7 +349,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                           perform(async () => {
                             if (
                               !confirm(
-                                `Revoke ${n.name}'s zone transfers and delete its managed secondary zones? Stop/remove its Docker stack separately.`,
+                                `Revoke ${n.name}'s zone transfers and delete its managed zone copies? Stop/remove its Docker stack separately.`,
                               )
                             )
                               return;
@@ -468,10 +404,10 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                               {z.synchronized
                                 ? "Synchronization confirmed"
                                 : "Synchronization not confirmed"}{" "}
-                              · primary serial {z.expected_serial ?? "unknown"}
+                              · expected serial {z.expected_serial ?? "unknown"}
                             </small>
                             <small>
-                              Secondary UDP{" "}
+                              Server UDP{" "}
                               {z.udp.authoritative
                                 ? z.udp.serial
                                 : "no authoritative SOA"}{" "}
@@ -481,7 +417,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                                 : "no authoritative SOA"}
                             </small>
                             <small>
-                              Primary from secondary:{" "}
+                              Source from this server:{" "}
                               {z.primary.authoritative
                                 ? z.primary.serial
                                 : "unreachable / no authoritative SOA"}
@@ -504,10 +440,10 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
             className="dialog"
             role="dialog"
             aria-modal="true"
-            aria-label={editing ? "Assign DNS zones" : "Add DNS secondary"}
+            aria-label={editing ? "Assign DNS zones" : "Add DNS server"}
           >
             <div className="panel-title">
-              <h2>{editing ? "Assign DNS zones" : "Add DNS secondary"}</h2>
+              <h2>{editing ? "Assign DNS zones" : "Add DNS server"}</h2>
               <button
                 aria-label="Close DNS server dialog"
                 onClick={() => setEditing(undefined)}
@@ -532,9 +468,8 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                       revision: editing.revision,
                     });
                   else {
-                    const n = await api("dns/servers", "POST", {
-                      name: String(f.get("name")),
-                      address: String(f.get("address")),
+                    const n = await api("dns/servers/from-host", "POST", {
+                      host_id: String(f.get("host_id")),
                       dns_port: Number(f.get("dns_port")),
                       control_port: Number(f.get("control_port")),
                       zones: selected,
@@ -555,28 +490,32 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
               {!editing && (
                 <>
                   <label>
-                    DNS server name
-                    <input
-                      aria-label="DNS server name"
-                      name="name"
-                      placeholder="Secondary DNS"
-                      maxLength={100}
+                    Forklift host
+                    <select
+                      aria-label="Forklift host"
+                      name="host_id"
                       required
-                    />
+                      defaultValue=""
+                    >
+                      <option value="" disabled>
+                        Select a host
+                      </option>
+                      {inventory?.hosts?.map((host) => (
+                        <option key={host.id} value={host.id}>
+                          {host.name} ({host.address})
+                        </option>
+                      ))}
+                    </select>
                   </label>
+                  {!inventory?.hosts?.length && (
+                    <p className="hint">
+                      Add a host in Directory Servers first.
+                    </p>
+                  )}
                   <label>
-                    Secondary private IPv4 address
+                    DNS port
                     <input
-                      aria-label="Secondary private IPv4 address"
-                      name="address"
-                      placeholder="192.168.1.3"
-                      required
-                    />
-                  </label>
-                  <label>
-                    Secondary DNS port
-                    <input
-                      aria-label="Secondary DNS port"
+                      aria-label="DNS port"
                       name="dns_port"
                       type="number"
                       min="1"
@@ -586,12 +525,12 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                     />
                   </label>
                   <FieldHelp
-                    label="Secondary DNS deployment"
+                    label="DNS deployment"
                     help={
                       <>
-                        Choose the new Docker host’s private address and two
-                        unused ports. Forklift creates the DNS service and its
-                        certificates for you.
+                        Forklift uses the address already registered for this
+                        host. Choose unused ports for DNS and private
+                        management.
                       </>
                     }
                     caption={<>Private DNS management port</>}
@@ -614,7 +553,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                     Zones to replicate
                     <Help label="DNS zone assignments">
                       Choose the zones this server should copy. Removing a zone
-                      here removes only its secondary copy; the primary records
+                      here removes only its local copy; the original records
                       stay unchanged. Add new zones to this list when you want
                       them copied. Your network’s DNS resolver must be set up to
                       use both servers.
@@ -653,10 +592,10 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
             className="dialog"
             role="dialog"
             aria-modal="true"
-            aria-label="Deploy DNS secondary"
+            aria-label="Deploy DNS server"
           >
             <div className="panel-title">
-              <h2>Deploy DNS secondary</h2>
+              <h2>Deploy DNS server</h2>
               <button
                 aria-label="Close DNS enrollment"
                 onClick={() => {
@@ -720,7 +659,7 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
             ) : (
               <>
                 <FieldHelp
-                  label="Deploy the DNS secondary"
+                  label="Deploy the DNS server"
                   caption={<>DNS join configuration</>}
                   help={
                     <>
