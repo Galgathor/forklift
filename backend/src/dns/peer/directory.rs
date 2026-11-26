@@ -381,7 +381,7 @@ pub(crate) fn local_sid(a: &App) -> Result<Option<i64>> {
 }
 
 pub(crate) async fn refresh(a: &App) -> Result<()> {
-    if !local_sid(a)?.is_some_and(|sid| sid > 1) || config(a).is_none() {
+    if local_sid(a)?.is_none_or(|sid| sid <= 1) || config(a).is_none() {
         return Ok(());
     }
     let up = upstream(a)?.ok_or(bad("Directory peer enrollment is missing"))?;
