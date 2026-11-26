@@ -1245,6 +1245,52 @@ pub(super) async fn rotate(
     audit(&a, &who, "DNS rotate API credential", "local")?;
     Ok(Json(json!({"rotated":true})))
 }
+fn default_host_zone(a: &App) -> Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+    a.db.lock()
+        .unwrap()
+        .query_row(
+            "SELECT value FROM settings WHERE key='default_host_dns_zone'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(anyhow::Error::from)
+        .map_err(Error::from)
+}
+
+#[derive(Deserialize)]
+pub(super) struct DefaultHostZone {
+    zone: Option<String>,
+}
+
+pub(super) async fn set_default_host_zone(
+    State(a): State<App>,
+    h: HeaderMap,
+    Json(p): Json<DefaultHostZone>,
+) -> Result<Json<Value>> {
+    let who = peer::editor(&a, &h, true).await?;
+    let _guard = a.gate.lock().await;
+    if let Some(value) = p.zone {
+        let selected = name(&value, false)?;
+        if selected.ends_with(".arpa.") {
+            return Err(bad("Choose a managed forward DNS zone"));
+        }
+        managed(&zone(&selected).await?)?;
+        a.db.lock().unwrap().execute(
+            "INSERT INTO settings VALUES('default_host_dns_zone',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [&selected],
+        ).map_err(anyhow::Error::from)?;
+        audit(&a, &who, "set default host DNS zone", &selected)?;
+    } else {
+        a.db.lock()
+            .unwrap()
+            .execute("DELETE FROM settings WHERE key='default_host_dns_zone'", [])
+            .map_err(anyhow::Error::from)?;
+        audit(&a, &who, "reset default host DNS zone", "automatic")?;
+    }
+    Ok(Json(json!({"ok":true})))
+}
+
 pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
     peer::editor(&a, &h, false).await?;
     let changes = {
@@ -1258,6 +1304,7 @@ pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Val
         q.query_map([],|r|Ok(json!({"at":r.get::<_,i64>(0)?,"action":r.get::<_,String>(1)?,"target":r.get::<_,String>(2)?}))).map_err(anyhow::Error::from)?.collect::<std::result::Result<Vec<_>,_>>().map_err(anyhow::Error::from)?
     };
     let host_tasks = host_records::tasks(&a)?;
+    let default_host_zone = default_host_zone(&a)?;
     let endpoint = replication::primary(&a)?;
     let address = endpoint
         .as_ref()
@@ -1295,10 +1342,10 @@ pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Val
     .await;
     match data {
         Ok((health, list)) => Ok(Json(
-            json!({"available":true,"server":health,"zones":list,"changes":changes,"host_tasks":host_tasks,"errors":errors}),
+            json!({"available":true,"server":health,"zones":list,"changes":changes,"host_tasks":host_tasks,"default_host_zone":default_host_zone,"errors":errors}),
         )),
         Err(e) => Ok(Json(
-            json!({"available":false,"error":e.1,"zones":[],"changes":changes,"host_tasks":host_tasks,"errors":errors,"server":{"api_available":false,"service_available":null,"role":"standalone","replication":"not_configured","address":address,"port":port}}),
+            json!({"available":false,"error":e.1,"zones":[],"changes":changes,"host_tasks":host_tasks,"default_host_zone":default_host_zone,"errors":errors,"server":{"api_available":false,"service_available":null,"role":"standalone","replication":"not_configured","address":address,"port":port}}),
         )),
     }
 }

@@ -5,14 +5,13 @@ import {
 } from "./ClientEnrollment";
 import { Help, FieldHelp } from "./Help";
 import { useEffect, useState } from "react";
-import { Server, Plus, Pencil, Trash2, Download, X } from "lucide-react";
-type DnsConfig = {
-  zone: string;
-  fqdn: string;
-  ipv4: string;
-  ipv6: string | null;
-  reverse: boolean;
-};
+import { Server, Plus, Pencil, Trash2, X } from "lucide-react";
+import {
+  HostDnsFields,
+  hostDnsFromForm,
+  reportedIpv4,
+  type HostDnsConfig,
+} from "./HostDnsFields";
 export type HostDnsStatus = {
   state: string;
   error?: string;
@@ -22,7 +21,7 @@ export type HostDnsStatus = {
 };
 export type Host = {
   client?: ClientRecord | null;
-  dns?: DnsConfig | null;
+  dns?: HostDnsConfig | null;
   dns_status?: HostDnsStatus | null;
   id: string;
   name: string;
@@ -38,21 +37,12 @@ export type Host = {
 type Props = {
   hosts: Host[];
   groups: string[];
-  csrf: string;
   busy: boolean;
   refresh: () => Promise<void>;
   api: (path: string, method?: string, body?: unknown) => Promise<unknown>;
   perform: (f: () => Promise<void>) => Promise<void>;
 };
-export function Hosts({
-  hosts,
-  groups,
-  csrf,
-  busy,
-  refresh,
-  api,
-  perform,
-}: Props) {
+export function Hosts({ hosts, groups, busy, refresh, api, perform }: Props) {
   const [joining, setJoining] = useState(false),
     [clientDetailsId, setClientDetails] = useState<string | null>(null);
   const clientDetails = hosts.find(
@@ -68,61 +58,13 @@ export function Hosts({
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
     [query, setQuery] = useState(""),
-    [dnsEnabled, setDnsEnabled] = useState(false),
-    [zones, setZones] = useState<string[]>([]),
-    [zoneError, setZoneError] = useState(""),
+    [hostname, setHostname] = useState(""),
     [removing, setRemoving] = useState<Host | null>(null),
     [notice, setNotice] = useState("");
-  async function open(host: Host | null) {
+  function open(host: Host | null) {
     setError("");
-    setZoneError("");
+    setHostname(host?.hostname || "");
     setEditing(host);
-    setDnsEnabled(!!host?.dns);
-    setZones([]);
-    try {
-      const value = (await api("dns")) as {
-        available: boolean;
-        error?: string;
-        zones: { name: string; managed: boolean }[];
-      };
-      setZones(
-        value.zones
-          .filter((z) => z.managed && !z.name.endsWith(".arpa."))
-          .map((z) => z.name),
-      );
-      if (!value.available)
-        setZoneError(
-          value.error ||
-            "DNS is unavailable. Settings can be saved for later retry.",
-        );
-    } catch (e) {
-      setZoneError((e as Error).message);
-    }
-  }
-  async function download(host: Host) {
-    const warning = host.exported_at
-      ? "This creates a new host bind password and invalidates previous bundles. Redeploy immediately; existing SSSD LDAP connections may continue until reconnected."
-      : "This download contains a password for this host to read the directory. Keep it private and install it only on this host.";
-    if (!confirm(warning + " Generate configuration?")) return;
-    await perform(async () => {
-      const r = await fetch(`/api/hosts/${host.id}/bundle`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-        body: JSON.stringify({ revision: host.revision, rotate: true }),
-      });
-      if (!r.ok) {
-        const v = await r.json();
-        throw Error(v.error || "Export failed");
-      }
-      const blob = await r.blob(),
-        url = URL.createObjectURL(blob),
-        a = document.createElement("a");
-      a.href = url;
-      a.download = `forklift-${host.hostname}.tar.gz`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      await refresh();
-    });
   }
   return (
     <>
@@ -140,27 +82,26 @@ export function Hosts({
             <Help label="Host inventory and access">
               Directory servers appear here automatically. Adding a host does
               not enable SSH login. To use directory accounts for Linux sign-in,
-              choose the allowed groups and install the generated client
-              configuration using the Linux client guide. Local recovery
-              accounts keep their existing access.
+              choose the allowed groups and follow the Linux client guide. Local
+              recovery accounts keep their existing access.
             </Help>
           </div>
           <div className="wizard-actions">
             <button
-              className="secondary"
+              className="primary"
               disabled={busy}
               onClick={() => setJoining(true)}
             >
-              Join existing machine
+              Join via Code
             </button>
             <button
-              className="primary"
+              className="secondary"
               onClick={() => {
-                void open(null);
+                open(null);
               }}
             >
               <Plus size={17} />
-              Register host
+              Join Manually
             </button>
           </div>
         </div>
@@ -185,7 +126,6 @@ export function Hosts({
                   <th>Host</th>
                   <th>Permitted login groups</th>
                   <th>Client</th>
-                  <th>Configuration</th>
                   <th>DNS</th>
                   <th>Actions</th>
                 </tr>
@@ -264,30 +204,6 @@ export function Hosts({
                         )}
                       </td>
                       <td>
-                        <span
-                          className={
-                            h.revision === h.exported_revision
-                              ? "pill"
-                              : "badge"
-                          }
-                        >
-                          {h.exported_revision === null
-                            ? !h.allowed_groups.length
-                              ? "Inventory only"
-                              : "Not exported"
-                            : h.revision === h.exported_revision
-                              ? "Configuration exported"
-                              : "Needs new export"}
-                        </span>
-                        <small>
-                          Revision {h.revision}
-                          {h.exported_at
-                            ? " · " +
-                              new Date(h.exported_at * 1000).toLocaleString()
-                            : ""}
-                        </small>
-                      </td>
-                      <td>
                         {h.dns?.fqdn && <small>{h.dns.fqdn}</small>}
                         <span
                           className={
@@ -316,41 +232,9 @@ export function Hosts({
                         {h.dns_status?.warnings.map((w, i) => (
                           <small key={i}>{w}</small>
                         ))}
-                        {(h.dns ||
-                          (h.dns_status &&
-                            !["retained", "removed"].includes(
-                              h.dns_status.state,
-                            ))) && (
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              perform(async () => {
-                                const status = (await api(
-                                  `dns/hosts/${h.id}/reconcile`,
-                                  "POST",
-                                  {},
-                                )) as HostDnsStatus;
-                                setNotice(
-                                  status.error || "DNS records reconciled.",
-                                );
-                                await refresh();
-                              })
-                            }
-                          >
-                            Apply DNS changes
-                          </button>
-                        )}
                       </td>
                       <td>
                         <div className="actions">
-                          <button
-                            disabled={busy || !h.allowed_groups.length}
-                            title="Generate configuration (rotates bind credential)"
-                            aria-label="Generate configuration"
-                            onClick={() => download(h)}
-                          >
-                            <Download size={17} />
-                          </button>
                           <button
                             aria-label="Edit host"
                             onClick={() => {
@@ -432,16 +316,7 @@ export function Hosts({
                       .filter(Boolean),
                     allowed_groups: form.getAll("allowed_groups").map(String),
                     ...(editing ? { revision: editing.revision } : {}),
-                    dns: dnsEnabled
-                      ? {
-                          zone: String(form.get("dns_zone")),
-                          fqdn: String(form.get("dns_fqdn")),
-                          ipv4: String(form.get("dns_ipv4")),
-                          ipv6: String(form.get("dns_ipv6") || "") || null,
-                          reverse: form.has("dns_reverse"),
-                        }
-                      : null,
-                    dns_apply: form.has("dns_apply"),
+                    dns: hostDnsFromForm(form),
                     dns_cleanup: String(form.get("dns_cleanup") || "keep"),
                   };
                   const saved = (await api(
@@ -452,12 +327,13 @@ export function Hosts({
                   setNotice(
                     saved.dns_status?.error
                       ? `Host saved. DNS needs attention: ${saved.dns_status.error}`
-                      : saved.dns_status?.state === "needs_apply"
-                        ? "Host saved. Apply DNS changes to apply its pending settings."
-                        : "Host saved.",
+                      : "Host saved.",
                   );
-                  setEditing(undefined);
-                  await refresh();
+                  try {
+                    await refresh();
+                  } finally {
+                    setEditing(undefined);
+                  }
                 } catch (err) {
                   setError((err as Error).message);
                 } finally {
@@ -480,7 +356,8 @@ export function Hosts({
                 <input
                   name="hostname"
                   readOnly={!!editing?.directory_id}
-                  defaultValue={editing?.hostname || ""}
+                  value={hostname}
+                  onChange={(e) => setHostname(e.target.value)}
                   placeholder="backup.homelab.internal"
                   required
                 />
@@ -518,12 +395,9 @@ export function Hosts({
                     Permitted login groups
                     <Help label="Permitted login groups">
                       Choose which directory groups may sign in to this host.
-                      Install the updated client configuration after changing
+                      Review the host’s sign-in configuration after changing
                       this list. Leave it empty for a host used only for DNS.
                       This does not change local account permissions.
-                      Downloading a new configuration replaces the host’s
-                      directory access password, so install the new download
-                      promptly.
                     </Help>
                   </span>
                 </legend>
@@ -540,132 +414,18 @@ export function Hosts({
                 ))}
               </fieldset>
 
-              <fieldset>
-                <legend>DNS registration</legend>
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={dnsEnabled}
-                    onChange={(e) => setDnsEnabled(e.target.checked)}
-                  />
-                  Manage this host’s DNS records
-                </label>
-                {zoneError && (
-                  <p className="hint" role="status">
-                    {zoneError}
-                  </p>
+              <HostDnsFields
+                api={api}
+                hostname={hostname}
+                initial={editing?.dns}
+                suggestedIp={reportedIpv4(
+                  (
+                    editing?.client?.monitoring?.inventory ||
+                    editing?.client?.identity
+                  )?.addresses || [],
                 )}
-                {dnsEnabled && (
-                  <>
-                    <FieldHelp
-                      label="Choosing a DNS zone"
-                      caption={<>DNS zone</>}
-                      help={
-                        <>
-                          Create the DNS zone first, then choose a name within
-                          it.
-                        </>
-                      }
-                    >
-                      <select
-                        name="dns_zone"
-                        aria-label="DNS zone"
-                        defaultValue={editing?.dns?.zone || ""}
-                        required
-                      >
-                        <option value="">Select a managed forward zone</option>
-                        {[
-                          ...new Set([
-                            ...zones,
-                            ...(editing?.dns?.zone ? [editing.dns.zone] : []),
-                          ]),
-                        ].map((z) => (
-                          <option key={z} value={z}>
-                            {z}
-                          </option>
-                        ))}
-                      </select>
-                    </FieldHelp>
-
-                    <label>
-                      DNS name
-                      <input
-                        name="dns_fqdn"
-                        aria-label="DNS name"
-                        defaultValue={
-                          editing?.dns?.fqdn || editing?.hostname || ""
-                        }
-                        placeholder="server.example.test."
-                        required
-                      />
-                    </label>
-                    <label>
-                      IPv4 address
-                      <input
-                        name="dns_ipv4"
-                        aria-label="IPv4 address"
-                        defaultValue={editing?.dns?.ipv4 || ""}
-                        placeholder="192.168.1.50"
-                        required
-                      />
-                    </label>
-                    <label>
-                      IPv6 address (optional)
-                      <input
-                        name="dns_ipv6"
-                        aria-label="IPv6 address (optional)"
-                        defaultValue={editing?.dns?.ipv6 || ""}
-                        placeholder="fd00::50"
-                      />
-                    </label>
-                    <div className="help-row checkbox-help">
-                      <label className="checkbox">
-                        <input
-                          type="checkbox"
-                          name="dns_reverse"
-                          defaultChecked={editing?.dns?.reverse ?? true}
-                        />
-                        Create matching reverse DNS
-                      </label>
-                      <Help label="Host DNS registration">
-                        Add a matching reverse zone before enabling reverse DNS.
-                        Forklift keeps records that belong to other hosts. DNS
-                        records do not grant SSH access. The host name and DNS
-                        name are separate fields; check both when renaming a
-                        machine.
-                      </Help>
-                    </div>
-                  </>
-                )}
-                {!dnsEnabled && (editing?.dns || editing?.dns_status) && (
-                  <label>
-                    Existing managed DNS records
-                    <select
-                      name="dns_cleanup"
-                      aria-label="Existing managed DNS records"
-                      defaultValue="keep"
-                    >
-                      <option value="keep">
-                        Keep records and release ownership
-                      </option>
-                      <option value="delete">
-                        Delete only this host’s managed values
-                      </option>
-                    </select>
-                  </label>
-                )}
-                <div className="help-row checkbox-help">
-                  <label className="checkbox">
-                    <input type="checkbox" name="dns_apply" defaultChecked />
-                    Apply DNS changes after saving
-                  </label>
-                  <Help label="Applying host DNS changes">
-                    Save now and apply DNS later if needed. Use Apply DNS
-                    changes to apply saved changes or retry after a DNS service
-                    outage.
-                  </Help>
-                </div>
-              </fieldset>
+                hasExistingRecords={!!(editing?.dns || editing?.dns_status)}
+              />
               <button className="primary" disabled={saving}>
                 {saving ? "Saving…" : "Save host"}
               </button>

@@ -65,15 +65,24 @@ with s:
             join.stdin.write(choice[1] + '\n')
             join.stdin.flush()
             code = read_until(r'Enrollment code: ([A-Z2-9]{4}-[A-Z2-9]{4})')[1]
+            s.request('/api/dns/zones', 'POST', dict(
+                name='enrollment.test', kind='forward', nameserver='ns.enrollment.test.',
+                nameserver_address='192.168.1.2', ttl=300,
+            ))
             requested = s.request('/api/clients/lookup', 'POST', dict(code=code))
             approved = s.request('/api/clients/' + requested['id'] + '/approve', 'POST',
-                                 dict(name='Discovered client', acknowledge=True))
+                                 dict(name='Discovered client', acknowledge=True, dns=dict(
+                                     zone='enrollment.test.', fqdn='discovered-client',
+                                     ipv4='192.168.1.75', ipv6=None, reverse=False,
+                                 )))
             output, error = join.communicate(timeout=25)
             assert join.returncode == 0 and 'Enrollment successful' in output, error[:300]
             status = json.loads(run([*command, 'status', '--offline']).stdout)
             assert status['server'] == s.url and status['instance_id'] == descriptor['instance_id']
             assert status['client_version'] == '0.6.0' and status['host_id'] == approved['host_id']
             assert s.request('/api/status')['version'] == '0.6.0'
+            host = next(item for item in s.request('/api/hosts') if item['id'] == approved['host_id'])
+            assert host['dns_status']['state'] == 'applied'
             print('PASS: client 0.6 discovered the manager, verified HTTPS and joined server 0.6.', flush=True)
         finally:
             if join.poll() is None:

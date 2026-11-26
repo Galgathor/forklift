@@ -286,11 +286,10 @@ with Stack(https=True) as s:
         result=report();assert result['dns']['state']=='applied',result
         dig('52.'+reverse_zone,'PTR','client.example.test.')
         assert current_host()['client']['monitoring']['inventory']['hostname']=='observed.example.test'
-        # A deliberately deferred administrator edit must never be applied or overwritten by a heartbeat.
-        deferred=configure_dns('192.168.1.54',apply=False,ipv6='fd00::52')
-        result=report();assert result['dns']['state']=='needs_retry',result
-        assert current_host()['dns']['ipv4']=='192.168.1.54'
-        dig('client.example.test.',value='192.168.1.52');dig('client.example.test.',value='192.168.1.54',absent=True)
+        # Saving applies DNS even when an old client sends the removed defer flag.
+        saved = configure_dns('192.168.1.54', apply=False, ipv6='fd00::52')
+        assert saved['dns_status']['state'] == 'applied'
+        dig('client.example.test.', value='192.168.1.54')
         configure_dns('192.168.1.52',ipv6='fd00::52')
         # A manual edit relinquishes ownership. An enrolled client must not reclaim it.
         old=next(v for v in r('/api/dns/zones/'+zone)['rrsets'] if v['name']=='client.example.test.' and v['type']=='A')

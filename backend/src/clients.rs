@@ -558,6 +558,7 @@ pub(super) struct Approve {
     host_id: Option<String>,
     host_revision: Option<i64>,
     acknowledge: bool,
+    dns: Option<dns::host_records::Config>,
 }
 pub(super) async fn approve(
     State(a): State<App>,
@@ -580,6 +581,15 @@ pub(super) async fn approve(
     if !p.acknowledge {
         return Err(bad("Confirm the machine identity before approval"));
     }
+    if p.host_id.is_some() && p.dns.is_some() {
+        return Err(bad("Edit DNS settings on the existing host after linking"));
+    }
+    let dns = p
+        .dns
+        .map(dns::host_records::Config::normalize)
+        .transpose()?;
+    dns::host_records::validate_unique(&a, "", dns.as_ref())?;
+    let new_host = p.host_id.is_none();
     let hosts = hosts::list(&a)?;
     let host = if let Some(host_id) = p.host_id {
         let host = hosts
@@ -630,7 +640,7 @@ pub(super) async fn approve(
                 endpoints,
                 allowed_groups: vec![],
             },
-            dns: None,
+            dns,
             dns_status: None,
             client: None,
             revision: 1,
@@ -668,6 +678,9 @@ pub(super) async fn approve(
         tx.commit().map_err(anyhow::Error::from)?;
     }
     audit(&a, &who, "client approve enrollment", &host.id)?;
+    if new_host {
+        hosts::finish_dns(&a, &who, &host).await;
+    }
     Ok(Json(view(&n)))
 }
 fn by_host(a: &App, id: &str) -> Result<Vec<Enrollment>> {

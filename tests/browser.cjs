@@ -28,7 +28,7 @@ const fs = require('fs');
  await button('Create new installation').click();
  await page.getByLabel('Directory name',{exact:true}).fill('Browser directory',{exact:true});await page.getByLabel('Directory base DN',{exact:true}).fill('dc=integration,dc=test');await page.getByLabel('Administrator username',{exact:true}).fill('admin');await page.getByLabel('Administrator password',{exact:true}).fill(input.password);await checkHelpLayout();await page.setViewportSize({width:390,height:844});await checkHelpLayout();await page.setViewportSize({width:1280,height:900});await button('Initialize directory').click();
  await page.getByLabel('Username',{exact:true}).fill('admin',{exact:true});await page.getByLabel('Password (14+ characters)',{exact:true}).fill(input.password);await button('Sign in',{exact:true}).click();
- await button('Hosts').click();await page.getByText('Inventory only',{exact:false}).first().waitFor();
+ await button('Hosts').click();await page.getByRole('table').getByText('Directory Server',{exact:true}).first().waitFor();
  await button('DNS').click();await page.getByRole('heading',{name:'DNS overview',exact:true}).waitFor();
  if(await button('Approve node pairing').count())throw Error('Node pairing is still on the DNS tab');
  await button('Directory Servers').click();
@@ -57,14 +57,38 @@ const fs = require('fs');
  await button('Import records').click();let importDialog=page.getByRole('dialog',{name:'Import DNS records',exact:true});await importDialog.getByLabel('Zone JSON file',{exact:true}).setInputFiles({name:'zone.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({format:1,zone:'dns.browser.test.',rrsets:[{name:'imported.dns.browser.test.',type:'A',ttl:300,records:[{content:'192.168.1.90',disabled:false}]}]}))});await importDialog.getByRole('button',{name:'Preview DNS import',exact:true}).click();await importDialog.getByText('1 record sets will change',{exact:true}).waitFor();await importDialog.getByLabel('Confirm import zone',{exact:true}).fill('dns.browser.test.',{exact:true});await importDialog.getByLabel('I reviewed these DNS record changes.',{exact:true}).check();await page.setViewportSize({width:390,height:844});if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('DNS import mobile overflow',{exact:true});await page.setViewportSize({width:1280,height:900});await importDialog.getByRole('button',{name:'Apply DNS import',exact:true}).click();await importDialog.waitFor({state:'hidden'});await page.getByRole('cell',{name:'192.168.1.90',exact:true}).waitFor();
  await button('1.168.192.in-addr.arpa.').click();await page.getByRole('heading',{name:'1.168.192.in-addr.arpa.',exact:true}).waitFor();await page.getByRole('cell',{name:'browser.dns.browser.test.',exact:true}).waitFor();
  await page.setViewportSize({width:390,height:844});if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('DNS mobile layout overflows');await page.setViewportSize({width:1280,height:900});
- await button('Hosts').click();await button('Register host').click();
+ await page.getByLabel('Default DNS zone for new hosts',{exact:true}).selectOption('dns.browser.test.');
+ await page.getByText('Default host DNS zone saved.',{exact:true}).waitFor();
+ await button('Hosts').click();
+ await page.route('**/api/clients/lookup',route=>route.fulfill({json:{
+   id:'test-machine',key_fingerprint:'test-key',expires_at:Math.floor(Date.now()/1000)+600,
+   identity:{hostname:'reported.dns.browser.test',fqdn:'reported.dns.browser.test',os:'Linux',os_version:'test',kernel:'test',architecture:'test',client_version:'0.6.0',addresses:[{interface:'eth0',address:'192.168.1.75'}]}
+ }}));
+ await button('Join via Code').click();
+ let codeJoin=page.getByRole('dialog',{name:'Join via Code',exact:true});
+ await codeJoin.getByLabel('Pairing code',{exact:true}).fill('TEST-TEST');
+ await codeJoin.getByRole('button',{name:'Find machine',exact:true}).click();
+ await codeJoin.getByLabel('DNS zone',{exact:true}).waitFor();
+ if(await codeJoin.getByLabel('IPv4 address',{exact:true}).inputValue()!=='192.168.1.75'||!await codeJoin.getByLabel('Create matching reverse DNS',{exact:true}).isChecked())throw Error('Client DNS defaults missing');
+ await codeJoin.getByRole('button',{name:'Close machine pairing',exact:true}).click();
+ await page.unroute('**/api/clients/lookup');
+ await button('Join Manually').click();
+
  let hostDialog=page.getByRole('dialog',{name:'Host configuration',exact:true});
  await hostDialog.getByLabel('Friendly name',{exact:true}).fill('DNS managed host',{exact:true});await hostDialog.getByLabel('Hostname',{exact:true}).fill('managed.dns.browser.test',{exact:true});
- await hostDialog.getByLabel('Manage this host’s DNS records',{exact:true}).check();await hostDialog.getByLabel('DNS zone',{exact:true}).selectOption('dns.browser.test.',{exact:true});await hostDialog.getByLabel('DNS name',{exact:true}).fill('managed',{exact:true});await hostDialog.getByLabel('IPv4 address',{exact:true}).fill('192.168.1.70',{exact:true});
+ await hostDialog.getByLabel('Hostname',{exact:true}).fill('192.168.1.70');
+ await hostDialog.getByLabel('IPv4 address',{exact:true}).fill('192.168.1.70');
+ if(await hostDialog.getByLabel('Manage this host’s DNS records',{exact:true}).isChecked())throw Error('IP-only hostname enabled DNS');
+ await hostDialog.getByLabel('Hostname',{exact:true}).fill('managed.dns.browser.test');
+ await hostDialog.getByLabel('DNS zone',{exact:true}).waitFor();
+ if(!await hostDialog.getByLabel('Manage this host’s DNS records',{exact:true}).isChecked())throw Error('Host DNS did not default to enabled');
+ if(!await hostDialog.getByLabel('Create matching reverse DNS',{exact:true}).isChecked())throw Error('Reverse DNS did not default to enabled');
+ if(await hostDialog.getByLabel('DNS zone',{exact:true}).inputValue()!=='dns.browser.test.')throw Error('Default host zone missing');
+
  await page.setViewportSize({width:390,height:844});if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('Host DNS dialog mobile layout overflows');await page.setViewportSize({width:1280,height:900});
  await checkHelpLayout();await hostDialog.getByRole('button',{name:'Save host',exact:true}).click();await hostDialog.waitFor({state:'hidden'});
  let hostRow=page.getByRole('row').filter({hasText:'DNS managed host'});await hostRow.getByText('applied',{exact:true}).waitFor();
- await hostRow.getByRole('button',{name:'Edit host',exact:true}).click();hostDialog=page.getByRole('dialog',{name:'Host configuration',exact:true});await hostDialog.getByLabel('IPv4 address',{exact:true}).fill('192.168.1.71',{exact:true});await hostDialog.getByLabel('Apply DNS changes after saving',{exact:true}).uncheck();await hostDialog.getByRole('button',{name:'Save host',exact:true}).click();await hostDialog.waitFor({state:'hidden'});await hostRow.getByText('needs apply',{exact:true}).waitFor();await hostRow.getByRole('button',{name:'Apply DNS changes',exact:true}).click();await hostRow.getByText('applied',{exact:true}).waitFor();
+ await hostRow.getByRole('button',{name:'Edit host',exact:true}).click();hostDialog=page.getByRole('dialog',{name:'Host configuration',exact:true});await hostDialog.getByLabel('IPv4 address',{exact:true}).fill('192.168.1.71',{exact:true});await hostDialog.getByRole('button',{name:'Save host',exact:true}).click();await hostDialog.waitFor({state:'hidden'});await hostRow.getByText('applied',{exact:true}).waitFor();
  await hostRow.getByRole('button',{name:'Delete host',exact:true}).click();let deleteDialog=page.getByRole('dialog',{name:'Delete host',exact:true});await deleteDialog.getByLabel('Managed DNS records',{exact:true}).selectOption('keep',{exact:true});await deleteDialog.getByRole('button',{name:'Delete host',exact:true}).click();await deleteDialog.waitFor({state:'hidden'});await hostRow.waitFor({state:'hidden'});
  await button('Directory Servers').click();
  await button('Approve node pairing').waitFor();
@@ -81,5 +105,5 @@ const fs = require('fs');
  await button('Hosts').click();await button('Toggle theme').click();await button('About Host inventory and access').click();await page.getByRole('dialog',{name:'Help: Host inventory and access',exact:true}).waitFor();await button('Close help: Host inventory and access').click();await button('Toggle theme').click();
  await page.setViewportSize({width:390,height:844});if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('Mobile layout overflows');
  if(errors.length)throw Error(errors.join('\n'));
- await browser.close();process.stdout.write('PASS: Chromium aligned information buttons/labels, distinct record textarea/focus in both themes, keyboard/Escape/focus, outside dismissal, one-open help, mobile positioning/touch and themes; first-run primary setup, LDAP login, auto Hosts, DNS forwarding form, zones/A/PTR/validation/JSON export/reviewed import, host DNS create/edit/defer/reconcile/retain, hidden legacy DNS server setup, recovery-key download, backup/receipt/download, archive verification, node pairing and clipboard actions.\n');
+ await browser.close();process.stdout.write('PASS: Chromium aligned information buttons/labels, distinct record textarea/focus in both themes, keyboard/Escape/focus, outside dismissal, one-open help, mobile positioning/touch and themes; first-run primary setup, LDAP login, auto Hosts, DNS forwarding form, zones/A/PTR/validation/JSON export/reviewed import, automatic host DNS create/edit and retention, hidden legacy DNS server setup, recovery-key download, backup/receipt/download, archive verification, node pairing and clipboard actions.\n');
 })().catch(e=>{console.error(e);process.exit(1)});

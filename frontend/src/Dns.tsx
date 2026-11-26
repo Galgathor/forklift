@@ -1,3 +1,4 @@
+import { forwardZones } from "./HostDnsFields";
 import { Help, FieldHelp } from "./Help";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useEffect, useRef, useState } from "react";
@@ -35,6 +36,7 @@ type Overview = {
     port?: number;
   };
   zones: Zone[];
+  default_host_zone?: string | null;
   changes: { id: string; status: string; error?: string }[];
   host_tasks?: {
     id: string;
@@ -85,6 +87,7 @@ export function Dns({ api }: { api: Api }) {
       api("dns/peers"),
     ])) as [Overview, { coordinator: string | null }];
     setJoined(!!pairing.coordinator);
+    if (pairing.coordinator) value.host_tasks = await api("dns/host-tasks");
     setOverview(value);
     if (name && value.available && value.zones.some((z) => z.name === name))
       setSelected(await api(`dns/zones/${encodeURIComponent(name)}`));
@@ -223,8 +226,43 @@ export function Dns({ api }: { api: Api }) {
           </>
         )}
       </section>
+      {overview?.available && (
+        <section className="panel">
+          <FieldHelp
+            label="Default DNS zone for new hosts"
+            caption="Default DNS zone for new hosts"
+            help="Forklift uses this zone when you add a host. You can choose a different zone while editing the host."
+          >
+            <select
+              value={
+                forwardZones(overview.zones).includes(
+                  overview.default_host_zone || "",
+                )
+                  ? overview.default_host_zone || ""
+                  : ""
+              }
+              disabled={busy}
+              onChange={(e) => {
+                const zone = e.target.value || null;
+                void perform(async () => {
+                  await api("dns/default-host-zone", "PUT", { zone });
+                  await load();
+                  setNotice("Default host DNS zone saved.");
+                });
+              }}
+            >
+              <option value="">First available forward zone</option>
+              {forwardZones(overview.zones).map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
+              ))}
+            </select>
+          </FieldHelp>
+        </section>
+      )}
       <DnsForwarding api={api} />
-      {!joined && !!overview?.host_tasks?.length && (
+      {!!overview?.host_tasks?.length && (
         <section className="panel">
           <h2>Host DNS tasks</h2>
           {overview.host_tasks.map((t) => (
@@ -271,9 +309,17 @@ export function Dns({ api }: { api: Api }) {
                             "Keep all already-applied records for this deleted host and release their ownership?",
                           )
                         ) {
-                          await api(`dns/hosts/${t.id}/retain`, "POST", {
-                            acknowledge: true,
-                          });
+                          const result = await api(
+                            `dns/hosts/${t.id}/retain`,
+                            "POST",
+                            {
+                              acknowledge: true,
+                            },
+                          );
+                          setNotice(
+                            result.status?.error ||
+                              "Existing DNS values retained.",
+                          );
                           await load();
                         }
                       })

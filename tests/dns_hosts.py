@@ -120,23 +120,22 @@ with Stack() as s:
     dig('server.example.test.', 'AAAA', absent=True)
     stale = dict(h)
     h = update(h, dns=config('renamed', '192.168.1.55'), dns_apply=False)
-    assert h['dns_status']['state']=='needs_apply'
-    dig('renamed.example.test.', value='192.168.1.54')
+    assert h['dns_status']['state']=='applied'
+    dig('renamed.example.test.', value='192.168.1.55')
     r('/api/hosts/'+h['id'], 'PUT', {k: stale[k] for k in ['name', 'hostname', 'endpoints', 'allowed_groups', 'revision']}, expect=409)
     assert reconcile(h)['state']=='applied'
     output=dig('renamed.example.test.', value='192.168.1.55')
     assert '192.168.1.54' not in output
-    # Old clients omitting DNS preserve the desired name and defer any DNS write.
+    # Old clients omitting DNS preserve the desired name.
     h=update(h, hostname='inventory.example.test')
-    assert h['dns']['fqdn']=='renamed.example.test.' and h['dns_status']['state']=='needs_apply'
-    reconcile(h)
+    assert h['dns']['fqdn']=='renamed.example.test.' and h['dns_status']['state']=='applied'
     # Disabling requires an explicit retain/delete policy.
     r('/api/hosts/'+h['id'], 'PUT', {k: h[k] for k in ['name', 'hostname', 'endpoints', 'allowed_groups', 'revision']} | dict(dns=None), expect=400)
     h=update(h, dns=None, dns_cleanup='keep')
     assert h['dns_status']['state']=='retained'
     delete(h)
     dig('renamed.example.test.', value='192.168.1.55')
-    print('PASS: real A/AAAA/IPv4+IPv6 PTR, validation, authorization, shared values/TTL, manual ownership, rename, apply/defer, stale updates and explicit keep/delete.', flush=True)
+    print('PASS: real A/AAAA/IPv4+IPv6 PTR, validation, authorization, shared values/TTL, manual ownership, rename, automatic saves, stale updates and explicit keep/delete.', flush=True)
 
     # Native changes without our marker are retained, even when metadata says owned.
     drift=create('drift', config('drift', '192.168.1.56', reverse=False))

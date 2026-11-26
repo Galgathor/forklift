@@ -621,7 +621,6 @@ function App() {
                 <Hosts
                   hosts={data.hosts}
                   groups={data.groups.map((g) => attr(g, "cn"))}
-                  csrf={session.csrf}
                   busy={busy || data.read_only}
                   api={api}
                   refresh={refresh}

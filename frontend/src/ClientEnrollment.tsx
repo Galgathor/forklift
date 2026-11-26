@@ -1,3 +1,4 @@
+import { HostDnsFields, hostDnsFromForm, reportedIpv4 } from "./HostDnsFields";
 import { useState } from "react";
 import { X } from "lucide-react";
 import { FieldHelp, Help } from "./Help";
@@ -159,11 +160,11 @@ export function ClientEnrollment({
         className="dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="Join existing machine"
+        aria-label="Join via Code"
       >
         <div className="panel-title">
           <div className="heading-help">
-            <h2>Join existing machine</h2>
+            <h2>Join via Code</h2>
             <Help label="Machine pairing">
               Run forklift-client join on the Linux machine and enter its code
               here before it expires. Check that the displayed name, addresses
@@ -231,6 +232,7 @@ export function ClientEnrollment({
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
+                  const form = new FormData(e.currentTarget);
                   void perform(async () => {
                     const host = hosts.find((h) => h.id === target);
                     await api(`clients/${pending.id}/approve`, "POST", {
@@ -238,6 +240,7 @@ export function ClientEnrollment({
                       host_id: target || null,
                       host_revision: host?.revision || null,
                       acknowledge: verified,
+                      ...(!host ? { dns: hostDnsFromForm(form) } : {}),
                     });
                     setApproved(true);
                     await refresh();
@@ -287,6 +290,13 @@ export function ClientEnrollment({
                       onChange={(e) => setName(e.target.value)}
                     />
                   </label>
+                )}
+                {!target && (
+                  <HostDnsFields
+                    api={api}
+                    hostname={pending.identity.hostname}
+                    suggestedIp={reportedIpv4(pending.identity.addresses)}
+                  />
                 )}
                 <small>Pairing expires {date(pending.expires_at)}</small>
                 <label className="checkbox">

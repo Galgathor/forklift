@@ -8,7 +8,7 @@ const fs = require('fs');
  const button=name=>page.getByRole('button',{name,exact:true});
  await page.goto(input.url);await page.getByLabel('Username',{exact:true}).fill('admin');await page.getByLabel('Password (14+ characters)',{exact:true}).fill(input.password);await button('Sign in').click();await button('Hosts').click();
  if(input.action==='approve'){
-  await button('Join existing machine').click();const dialog=page.getByRole('dialog',{name:'Join existing machine',exact:true});await dialog.getByLabel('Pairing code',{exact:true}).fill(input.code);await dialog.getByRole('button',{name:'Find machine',exact:true}).click();await dialog.getByText(input.fingerprint,{exact:true}).waitFor();await dialog.getByText('client.example.test',{exact:true}).first().waitFor();
+  await button('Join via Code').click();const dialog=page.getByRole('dialog',{name:'Join via Code',exact:true});await dialog.getByLabel('Pairing code',{exact:true}).fill(input.code);await dialog.getByRole('button',{name:'Find machine',exact:true}).click();await dialog.getByText(input.fingerprint,{exact:true}).waitFor();await dialog.getByText('client.example.test',{exact:true}).first().waitFor();
   if(!await dialog.getByRole('button',{name:'Approve enrollment',exact:true}).isDisabled())throw Error('Unreviewed pairing can be approved');
   await dialog.getByLabel('Friendly host name',{exact:true}).fill('Native client');await dialog.getByLabel('I verified this machine and the selected inventory target.',{exact:true}).check();
   await page.setViewportSize({width:390,height:844});if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('Machine pairing dialog overflows');await page.setViewportSize({width:1280,height:900});

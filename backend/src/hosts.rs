@@ -171,16 +171,11 @@ pub(super) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Val
     admin(&a, &h, false).await?;
     Ok(Json(json!(list(&a)?)))
 }
-fn yes() -> bool {
-    true
-}
 #[derive(Deserialize)]
 pub(super) struct Create {
     #[serde(flatten)]
     draft: HostDraft,
     dns: Option<dns_hosts::Config>,
-    #[serde(default = "yes")]
-    dns_apply: bool,
 }
 pub(super) async fn create(
     State(a): State<App>,
@@ -210,16 +205,16 @@ pub(super) async fn create(
     audit(&a, &who, "attempt register host", &host.id)?;
     store(&a, &host)?;
     audit(&a, &who, "register host", &host.id)?;
-    finish_dns(&a, &who, &host, p.dns_apply).await;
+    finish_dns(&a, &who, &host).await;
     Ok(Json(json!(load(&a, &host.id)?)))
 }
-async fn finish_dns(a: &App, who: &str, host: &Host, apply: bool) {
+pub(super) async fn finish_dns(a: &App, who: &str, host: &Host) {
     if host.dns.is_some() || host.dns_status.is_some() {
         if let Err(error) = dns_hosts::intent(a, host) {
             eprintln!("Host DNS intent failed: {}", error.1);
             return;
         }
-        if apply && let Err(error) = dns_hosts::reconcile_locked(a, who, &host.id).await {
+        if let Err(error) = dns_hosts::reconcile_locked(a, who, &host.id).await {
             eprintln!("Host DNS reconciliation failed: {}", error.1);
         }
     }
@@ -242,8 +237,6 @@ pub(super) struct Update {
     revision: i64,
     #[serde(default)]
     dns: DnsEdit,
-    #[serde(default = "yes")]
-    dns_apply: bool,
     dns_cleanup: Option<String>,
 }
 pub(super) async fn update(
@@ -266,7 +259,6 @@ pub(super) async fn update(
             "Host changed; refresh before editing".into(),
         ));
     }
-    let explicit = matches!(p.dns, DnsEdit::Set(_));
     let disabling =
         matches!(p.dns, DnsEdit::Set(None)) && (host.dns.is_some() || host.dns_status.is_some());
     if disabling && !matches!(p.dns_cleanup.as_deref(), Some("keep" | "delete")) {
@@ -289,8 +281,15 @@ pub(super) async fn update(
     audit(&a, &who, "update host", &id)?;
     if disabling && p.dns_cleanup.as_deref() == Some("keep") {
         dns_hosts::detach(&a, &host)?;
-    } else {
-        finish_dns(&a, &who, &host, explicit && p.dns_apply).await;
+        dns_hosts::reconcile_locked(&a, &who, &id).await?;
+    } else if host.dns.is_some() || disabling {
+        finish_dns(&a, &who, &host).await;
+    } else if host
+        .dns_status
+        .as_ref()
+        .is_some_and(|status| matches!(status.state.as_str(), "needs_retry" | "needs_apply"))
+    {
+        dns_hosts::reconcile_locked(&a, &who, &id).await?;
     }
     Ok(Json(json!(load(&a, &id)?)))
 }
@@ -332,7 +331,7 @@ pub(super) async fn delete(
     crate::clients::revoke_host(&a, &id)?;
     dns_hosts::retire(&a, &host, has_dns && p.dns.as_deref() == Some("delete"))?;
     audit(&a, &who, "delete host", &id)?;
-    let status = if has_dns && p.dns.as_deref() == Some("delete") {
+    let status = if has_dns {
         Some(
             dns_hosts::reconcile_locked(&a, &who, &id)
                 .await

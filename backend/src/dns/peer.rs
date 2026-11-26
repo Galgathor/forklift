@@ -384,9 +384,40 @@ fn persist_upstream(tx: &rusqlite::Transaction<'_>, active: &Upstream) -> Result
     Ok(())
 }
 
+pub(super) async fn send_host_dns(
+    a: &App,
+    intent: &host_records::RemoteIntent,
+) -> Result<Option<host_records::Status>> {
+    let Some(up) = upstream(a)? else {
+        return Ok(None);
+    };
+    let body = Bytes::from(serde_json::to_vec(intent).map_err(anyhow::Error::from)?);
+    let (status, _, data) = remote(&up, Method::POST, "/api/dns/peer/host-records", body).await?;
+    if !status.is_success() {
+        let message = serde_json::from_slice::<Value>(&data)
+            .ok()
+            .and_then(|value| value["error"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| {
+                "The DNS coordinator could not apply this host's DNS settings".into()
+            });
+        return Err(Error(status, message));
+    }
+    serde_json::from_slice(&data)
+        .map(Some)
+        .map_err(anyhow::Error::from)
+        .map_err(Error::from)
+}
+
+pub(super) fn host_dns_peer(a: &App, h: &HeaderMap) -> Result<String> {
+    principal(a, h)
+}
+
 fn forwardable(method: &Method, path: &str) -> bool {
     if path == "/api/dns" {
         return method == Method::GET;
+    }
+    if path == "/api/dns/default-host-zone" {
+        return method == Method::PUT;
     }
     if path == "/api/dns/forwarding" {
         return matches!(*method, Method::GET | Method::PUT);

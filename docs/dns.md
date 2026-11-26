@@ -45,13 +45,13 @@ Forward and reverse zones cannot be changed atomically. Durable pending-change p
 
 ## Host DNS registration
 
-In **Hosts → Register host** (or **Edit host**), enable **Manage this host’s DNS records**. Select an existing managed forward zone, enter its relative name or FQDN, an IPv4 address and optional IPv6 address. For example, `server` in `example.test.` with `192.168.1.50` creates `server.example.test. A 192.168.1.50`. The inventory hostname and DNS name are separate fields; review both when renaming a machine.
+In **Hosts → Join Manually** (or **Edit host**), enable **Manage this host’s DNS records**. Select an existing managed forward zone, enter its relative name or FQDN, an IPv4 address and optional IPv6 address. For example, `server` in `example.test.` with `192.168.1.50` creates `server.example.test. A 192.168.1.50`. The inventory hostname and DNS name are separate fields; review both when renaming a machine.
 
 **Create matching reverse DNS** requires managed reverse zones covering every supplied address. Create `192.168.1.0/24` first for the example above; its PTR owner is `50.1.168.192.in-addr.arpa.`. IPv6 registration requires a covering ULA nibble reverse zone. Missing coverage or CNAME/zone conflicts leave a saved host with an actionable DNS error, without partially applying that new plan.
 
 Directory machines, including the primary, can manage DNS through the same form. Login groups may be empty for DNS-only inventory; DNS registration never grants SSH or sudo permissions. Configuring Linux login still requires permitted groups and deployment of the client configuration. Removing a directory server retains its DNS-managed host inventory so its records can be reviewed and explicitly retained/deleted through Hosts.
 
-Saving a host and changing DNS are independent operations. Host saves survive DNS outages. Leave **Apply DNS changes after saving** checked, or uncheck it to review later. **Reconcile DNS** applies pending settings, retries failed work and checks ownership against current native record sets. Status is the last confirmed application result, not continuous host/service monitoring. Inventory edits from older API clients that omit DNS preserve the existing desired name and defer reconciliation. Host revisions protect concurrent edits; DNS settings changes also advance the configuration revision.
+Saving a host applies its DNS changes automatically. Host inventory still saves during a DNS outage, and the host status shows any DNS error. Review failed DNS work under **DNS → Host DNS tasks**. Host revisions protect concurrent edits, and existing host DNS settings are preserved when an API request omits them.
 
 Forklift tracks individual values in its metadata and [PowerDNS record-set comments](https://doc.powerdns.com/authoritative/http-api/zone.html#comment). It merges host values into existing record sets, preserving unrelated values, disabled flags, comments and TTLs. Preexisting identical values are preserved without taking ownership. Editing a record set through DNS releases host ownership of the edited values and flags the host for review. Removing ownership comments or disabling a value externally also prevents automatic deletion of that value. Do not edit DNS SQLite files directly or run concurrent external API writers; record revision checks cannot provide atomic compare-and-swap with independent administrators.
 
@@ -74,6 +74,10 @@ Upstreams must already provide the DNS answers you need. This is query forwardin
 Save forwarding from any joined manager. The coordinator applies the policy first. Joined nodes copy it automatically and keep applying their last saved policy during an outage. Use upstream servers that all nodes can reach. Applying a changed policy briefly restarts the local DNS listener.
 
 Existing native secondaries receive policy updates through their [legacy management connection](dns-replication.md). Backups include the local copy of the forwarding settings.
+
+## Default zone for new hosts
+
+Choose **Default DNS zone for new hosts** on the DNS tab. Forklift uses the first managed forward zone when the selection is automatic. The host form uses a reported IPv4 address when the client reports exactly one. It enables DNS and reverse records by default when a hostname, a separate IPv4 address and a forward zone are available. Host saves apply DNS changes automatically.
 
 ## Conditional forwarding with an existing resolver
 

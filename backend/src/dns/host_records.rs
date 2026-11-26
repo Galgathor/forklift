@@ -72,6 +72,10 @@ struct State {
     status: Status,
     #[serde(default)]
     client_revision: Option<i64>,
+    #[serde(default)]
+    retain: bool,
+    #[serde(default)]
+    remote: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Completion {
@@ -191,7 +195,10 @@ pub(crate) fn status(
         .transpose()
         .map_err(anyhow::Error::from)?;
     Ok(match state {
-        Some(state) if state.revision == revision && state.desired.as_ref() == config => {
+        Some(state)
+            if state.desired.as_ref() == config
+                && (state.revision == revision || state.retain && config.is_none()) =>
+        {
             Some(state.status)
         }
         Some(state) => Some(pending_status(state.bindings.len())),
@@ -217,6 +224,8 @@ pub(crate) fn intent(a: &App, host: &hosts::Host) -> Result<()> {
         deleted: false,
         status: pending_status(bindings.len()),
         client_revision: None,
+        retain: false,
+        remote: false,
     };
     let mut db = a.db.lock().unwrap();
     let tx = db.transaction().map_err(anyhow::Error::from)?;
@@ -238,6 +247,8 @@ pub(crate) fn retire(a: &App, host: &hosts::Host, remove: bool) -> Result<()> {
         deleted: false,
         status: pending_status(0),
         client_revision: None,
+        retain: false,
+        remote: false,
     });
     let mut db = a.db.lock().unwrap();
     let tx = db.transaction().map_err(anyhow::Error::from)?;
@@ -246,6 +257,7 @@ pub(crate) fn retire(a: &App, host: &hosts::Host, remove: bool) -> Result<()> {
     state.deleted = true;
     state.revision = host.revision;
     state.status = pending_status(state.bindings.len());
+    state.retain = !remove;
     if !remove {
         state.bindings.clear();
         state.status.state = "retained".into();
@@ -263,6 +275,7 @@ pub(crate) fn detach(a: &App, host: &hosts::Host) -> Result<()> {
     state.bindings.clear();
     state.status = pending_status(0);
     state.status.state = "retained".into();
+    state.retain = true;
     store(a, &state)
 }
 fn marker(id: &str) -> String {
@@ -321,6 +334,9 @@ pub(super) fn check_current(a: &App, operation: &str, completion: &Completion) -
         || state.deleted != completion.deleted
     {
         return Err(Error(StatusCode::CONFLICT,"The host DNS intent changed; reconcile its current settings instead of retrying an old plan".into()));
+    }
+    if state.remote {
+        return Ok(());
     }
     let host = hosts::load(a, &completion.host_id).ok();
     if completion.deleted {
@@ -685,19 +701,136 @@ pub(crate) async fn client_retry_allowed(a: &App, host: &hosts::Host) -> Result<
     // A journaled partial plan checks every original record/comment revision before retrying writes.
     Ok(())
 }
+#[derive(Deserialize, Serialize)]
+pub(crate) struct RemoteIntent {
+    id: String,
+    label: String,
+    desired: Option<Config>,
+    revision: i64,
+    deleted: bool,
+    retain: bool,
+}
+
+pub(crate) async fn receive(
+    axum::extract::State(a): axum::extract::State<App>,
+    h: HeaderMap,
+    Json(p): Json<RemoteIntent>,
+) -> Result<Json<Status>> {
+    let who = peer::host_dns_peer(&a, &h)?;
+    let _guard = a.gate.lock().await;
+    if operations::recovery(&a)? {
+        return Err(unavailable("Complete recovery review before DNS changes"));
+    }
+    if p.id.len() != 32
+        || !p.id.bytes().all(|b| b.is_ascii_hexdigit())
+        || p.label.len() > 100
+        || p.label.chars().any(char::is_control)
+        || p.revision < 1
+        || (p.deleted || p.retain) && p.desired.is_some()
+    {
+        return Err(bad("Invalid host DNS request"));
+    }
+    ensure(&a)?;
+    let id = digest(&format!("host-dns/{who}/{}", p.id))[..32].to_owned();
+    let desired = p.desired.map(Config::normalize).transpose()?;
+    validate_unique(&a, &id, desired.as_ref())?;
+    let old = get(&a, &id)?;
+    if let Some(previous) = &old {
+        if previous.revision > p.revision || previous.deleted && !p.deleted {
+            return Err(Error(
+                StatusCode::CONFLICT,
+                "A newer host DNS request is already saved".into(),
+            ));
+        }
+        if previous.revision == p.revision
+            && previous.desired == desired
+            && previous.deleted == p.deleted
+            && previous.retain == p.retain
+        {
+            if matches!(
+                previous.status.state.as_str(),
+                "applied" | "removed" | "retained"
+            ) {
+                return Ok(Json(previous.status.clone()));
+            }
+            return Ok(Json(reconcile_locked(&a, &who, &id).await?));
+        }
+    }
+    let bindings = old
+        .as_ref()
+        .map(|state| state.bindings.clone())
+        .unwrap_or_default();
+    let mut state = State {
+        id: id.clone(),
+        label: p.label,
+        desired,
+        revision: p.revision,
+        status: pending_status(bindings.len()),
+        bindings,
+        deleted: p.deleted,
+        client_revision: None,
+        retain: p.retain,
+        remote: true,
+    };
+    if p.retain {
+        state.bindings.clear();
+        state.status = pending_status(0);
+        state.status.state = "retained".into();
+    }
+    {
+        let mut db = a.db.lock().unwrap();
+        let tx = db.transaction().map_err(anyhow::Error::from)?;
+        if let Some(previous) = &old {
+            cancel(&tx, previous)?;
+        }
+        store_tx(&tx, &state)?;
+        tx.commit().map_err(anyhow::Error::from)?;
+    }
+    if p.retain {
+        Ok(Json(state.status))
+    } else {
+        Ok(Json(reconcile_locked(&a, &who, &id).await?))
+    }
+}
+
 pub(crate) async fn reconcile_locked(a: &App, who: &str, id: &str) -> Result<Status> {
     ensure(a)?;
     let host = hosts::load(a, id).ok();
     if let Some(host) = &host {
         let current = get(a, id)?;
-        if current
-            .as_ref()
-            .is_none_or(|s| s.revision != host.revision || s.desired != host.dns || s.deleted)
-        {
+        if current.as_ref().is_none_or(|s| {
+            (s.revision != host.revision && !(s.retain && host.dns.is_none()))
+                || s.desired != host.dns
+                || s.deleted
+        }) {
             intent(a, host)?;
         }
     }
     let mut state = get(a, id)?.ok_or(bad("No host DNS intent exists"))?;
+    let intent = RemoteIntent {
+        id: id.into(),
+        label: state.label.clone(),
+        desired: state.desired.clone(),
+        revision: state.revision,
+        deleted: state.deleted,
+        retain: state.retain,
+    };
+    match peer::send_host_dns(a, &intent).await {
+        Ok(None) => {}
+        Ok(Some(status)) => {
+            state.status = status;
+            store(a, &state)?;
+            return Ok(state.status);
+        }
+        Err(error) => {
+            state.status = Status::failed(&error.1);
+            store(a, &state)?;
+            return Ok(state.status);
+        }
+    }
+    if state.retain {
+        return Ok(state.status);
+    }
     if state.deleted && ["retained", "removed"].contains(&state.status.state.as_str()) {
         return Err(bad("This deleted host's DNS cleanup is already resolved"));
     }
@@ -777,19 +910,33 @@ pub(crate) async fn retain(
     if !state.deleted {
         return Err(bad("Change a live host's DNS settings through Hosts"));
     }
-    let mut db = a.db.lock().unwrap();
-    let tx = db.transaction().map_err(anyhow::Error::from)?;
-    cancel(&tx, &state)?;
-    state.bindings.clear();
-    state.desired = None;
-    state.status = pending_status(0);
-    state.status.state = "retained".into();
-    store_tx(&tx, &state)?;
-    tx.commit().map_err(anyhow::Error::from)?;
-    drop(db);
+    {
+        let mut db = a.db.lock().unwrap();
+        let tx = db.transaction().map_err(anyhow::Error::from)?;
+        cancel(&tx, &state)?;
+        state.bindings.clear();
+        state.desired = None;
+        state.status = pending_status(0);
+        state.status.state = "retained".into();
+        state.retain = true;
+        store_tx(&tx, &state)?;
+        tx.commit().map_err(anyhow::Error::from)?;
+    }
+    let status = reconcile_locked(&a, &who, &id).await?;
     audit(&a, &who, "DNS retain deleted-host records", &id)?;
-    Ok(Json(json!({"retained":true})))
+    Ok(Json(
+        json!({"retained":status.state=="retained","status":status}),
+    ))
 }
+
+pub(crate) async fn local_tasks(
+    axum::extract::State(a): axum::extract::State<App>,
+    h: HeaderMap,
+) -> Result<Json<Vec<Value>>> {
+    authorize(&a, &h, false).await?;
+    Ok(Json(tasks(&a)?))
+}
+
 pub(crate) fn tasks(a: &App) -> Result<Vec<Value>> {
     Ok(all(a)?.into_iter().filter(|s|!["applied","retained","removed"].contains(&s.status.state.as_str())).map(|s|json!({"id":s.id,"name":s.label,"deleted":s.deleted,"desired":s.desired,"status":s.status})).collect())
 }

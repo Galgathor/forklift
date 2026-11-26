@@ -57,6 +57,22 @@ with Stack(dns_bind='0.0.0.0') as upstream, Stack(https=True) as coordinator:
         r('/api/dns/peer/redeem','POST',dict(access_key=secrets.token_hex(32)),
           headers=key_header,authenticated=False,expect=401)
         until(lambda: answer(peer, 'ns.shared.test.', 'A', '192.168.1.2'), 'Peer did not seed')
+        p('/api/dns/default-host-zone', 'PUT', dict(zone='shared.test.'))
+        assert r('/api/dns')['default_host_zone'] == 'shared.test.'
+        host = p('/api/hosts', 'POST', dict(
+            name='Peer Linux host', hostname='peer-linux.shared.test',
+            endpoints=['ldaps://' + peer.net['hostname'] + ':' + str(peer.net['port'])],
+            allowed_groups=[], dns=dict(zone='shared.test.', fqdn='peer-linux',
+            ipv4='192.168.1.56', ipv6=None, reverse=False),
+        ))
+        assert host['dns_status']['state'] == 'applied', host['dns_status']
+        assert answer(coordinator, 'peer-linux.shared.test.', 'A', '192.168.1.56')
+        body = {key: host[key] for key in ('name', 'hostname', 'endpoints', 'allowed_groups', 'revision')}
+        host = p('/api/hosts/' + host['id'], 'PUT', body | dict(dns=dict(host['dns'], ipv4='192.168.1.57')))
+        assert host['dns_status']['state'] == 'applied', host['dns_status']
+        until(lambda: answer(peer, 'peer-linux.shared.test.', 'A', '192.168.1.57'),
+              'Host save did not replicate the changed DNS address')
+        print('PASS: shared default zone and host DNS applied from the joined manager.', flush=True)
         endpoint = '/api/dns/zones/shared.test./records'
         edit = dict(name='host', type='A', ttl=300, values=['192.168.1.50'],
                     request_id=secrets.token_hex(16))
