@@ -5,9 +5,9 @@ Every node uses the main Compose stack and runs a manager, a persistent OpenLDAP
 ## Join an installation
 
 1. Run `docker compose up -d` from the repository on the new host and open its WebUI. Copy the installation key from `docker compose logs initialize`.
-2. Open the existing manager using its HTTPS address. In **DNS → Node pairing**, choose **Approve node pairing**. Keep the pairing key private and use it within ten minutes.
+2. Open the existing manager using its HTTPS address. In **Directory Servers → Node pairing**, choose **Approve node pairing**. Keep the pairing key private and use it within ten minutes.
 3. On the new node, enter its installation key and choose a private address and port for its directory. Choose **Join existing installation** and enter the existing manager's HTTPS address and pairing key.
-4. Wait for setup to confirm the directory and DNS copy. Sign in using the existing administrator account. Check **Directory Servers** for live comparisons between the nodes and **DNS → Node pairing** for the status of the local DNS copy.
+4. Wait for setup to confirm the directory and DNS copy. Sign in using the existing administrator account. Check **Directory Servers** for live comparisons between the nodes and the status of the local DNS copy.
 5. Configure clients with both directory and DNS addresses before relying on failover.
 
 The new manager must trust the coordinator's HTTPS certificate. Use a certificate from a CA already trusted by the manager when possible. The node keeps its own LDAP private key. Forklift exchanges the directory trust certificates and creates replication credentials during pairing. Let joined nodes reach each other's private LDAP listeners by TCP. Let intended DNS clients reach both DNS listeners by TCP and UDP.

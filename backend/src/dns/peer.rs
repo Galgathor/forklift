@@ -101,11 +101,12 @@ pub(super) async fn editor(a: &App, h: &HeaderMap, write: bool) -> Result<String
 pub(crate) async fn invitations(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
     authorize(&a, &h, false).await?;
     schema(&a)?;
+    directory::schema(&a)?;
     let peers = {
         let db = a.db.lock().unwrap();
-        let mut q = db.prepare("SELECT id,access_hash IS NOT NULL,expires,directory FROM dns_peer_keys WHERE access_hash IS NOT NULL OR expires>? ORDER BY expires DESC")
+        let mut q = db.prepare("SELECT k.id,k.access_hash IS NOT NULL,k.expires,k.directory,p.sid FROM dns_peer_keys k LEFT JOIN ldap_peers p ON p.peer_id=k.id AND p.revoked=0 WHERE k.access_hash IS NOT NULL OR k.expires>? ORDER BY k.expires DESC")
             .map_err(anyhow::Error::from)?;
-        q.query_map([now()], |r| Ok(json!({"id":r.get::<_,String>(0)?,"active":r.get::<_,bool>(1)?,"expires":r.get::<_,i64>(2)?,"directory":r.get::<_,bool>(3)?})))
+        q.query_map([now()], |r| Ok(json!({"id":r.get::<_,String>(0)?,"active":r.get::<_,bool>(1)?,"expires":r.get::<_,i64>(2)?,"directory":r.get::<_,bool>(3)?,"server_id":r.get::<_,Option<i64>>(4)?.map(|sid| format!("provider-{sid}"))})))
             .map_err(anyhow::Error::from)?
             .collect::<std::result::Result<Vec<_>,_>>().map_err(anyhow::Error::from)?
     };

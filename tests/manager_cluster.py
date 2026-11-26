@@ -86,6 +86,8 @@ with Stack(https=True) as first, Stack(https=True) as peer:
     p('/api/setup/join', 'POST', draft, expect=400)
     peer.password = first.password
     peer.login()
+    paired = next(item for item in r('/api/dns/peers')['peers'] if item['id'] == invite['id'])
+    assert paired['active'] and paired['server_id'] == 'provider-2'
     peer.bind('before')
     assert dns_answer(peer, 'ns.cluster.test.', '192.168.1.2')
     print('PASS: approved same-Compose join seeded existing native LDAP and DNS data.', flush=True)

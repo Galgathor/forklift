@@ -2,7 +2,6 @@ import { Help, FieldHelp } from "./Help";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useEffect, useRef, useState } from "react";
 import { DnsForwarding } from "./DnsForwarding";
-import { DnsPeers } from "./DnsPeers";
 import { DnsServers } from "./DnsServers";
 import { DnsImport } from "./DnsImport";
 import { Plus, RefreshCw, Pencil, Trash2, X, Download } from "lucide-react";
@@ -82,7 +81,11 @@ export function Dns({ api }: { api: Api }) {
     return result;
   }
   async function load(name = selected?.name) {
-    const value = (await api("dns")) as Overview;
+    const [value, pairing] = (await Promise.all([
+      api("dns"),
+      api("dns/peers"),
+    ])) as [Overview, { coordinator: string | null }];
+    setJoined(!!pairing.coordinator);
     setOverview(value);
     if (name && value.available && value.zones.some((z) => z.name === name))
       setSelected(await api(`dns/zones/${encodeURIComponent(name)}`));
@@ -221,7 +224,6 @@ export function Dns({ api }: { api: Api }) {
           </>
         )}
       </section>
-      <DnsPeers api={api} onStatus={setJoined} />
       <DnsForwarding api={api} />
       {!joined && (
         <DnsServers

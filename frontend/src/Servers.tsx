@@ -1,5 +1,6 @@
 import { Help } from "./Help";
 import { useState } from "react";
+import { NodePairing, PairingCard, useNodePairing } from "./NodePairing";
 import { ReplicaWizard } from "./ReplicaWizard";
 import { Database, Plus, Download, Trash2 } from "lucide-react";
 export type DirectoryNode = {
@@ -36,7 +37,6 @@ type Props = {
   api: (path: string, method?: string, body?: unknown) => Promise<unknown>;
   perform: (f: () => Promise<void>) => Promise<void>;
   refresh: () => Promise<void>;
-  openDnsPairing: () => void;
 };
 const labels: Record<string, string> = {
   ready: "Primary ready",
@@ -61,10 +61,10 @@ export function Servers({
   api,
   perform,
   refresh,
-  openDnsPairing,
 }: Props) {
   const [adding, setAdding] = useState(false),
     [resuming, setResuming] = useState<DirectoryNode | undefined>();
+  const pairing = useNodePairing(api, refresh);
   async function rotateCredential(node: DirectoryNode) {
     if (
       !confirm(
@@ -91,8 +91,8 @@ export function Servers({
                 <span className="muted">{health.servers.length}</span>
               </h2>
               <Help label="Directory server enrollment">
-                To add a writable node, approve pairing under DNS and choose
-                Join existing installation on the new node. To add a read-only
+                To add a writable node, approve pairing here and choose Join
+                existing installation on the new node. To add a read-only
                 replica using an enrolled client, open its details in Hosts and
                 choose LDAP replica service. For manual deployment, use Add
                 server, enter the new machine’s private address, and follow the
@@ -108,10 +108,6 @@ export function Servers({
             </small>
           </div>
           <div className="wizard-actions">
-            <button className="primary" onClick={openDnsPairing}>
-              <Plus size={17} />
-              Pair Forklift node
-            </button>
             <button
               className="secondary"
               disabled={busy || readOnly}
@@ -124,6 +120,7 @@ export function Servers({
             </button>
           </div>
         </div>
+        <NodePairing pairing={pairing} disabled={busy || readOnly} />
         <div className="server-grid">
           {health.servers.map((node) => (
             <section key={node.id} className="server-card">
@@ -341,6 +338,16 @@ export function Servers({
                     )}
                   </details>
                 )}
+              {pairing.status?.peers
+                .filter((peer) => peer.server_id === node.id)
+                .map((peer) => (
+                  <PairingCard
+                    key={peer.id}
+                    peer={peer}
+                    pairing={pairing}
+                    disabled={busy || readOnly}
+                  />
+                ))}
               {node.error && <p className="hint server-error">{node.error}</p>}
               {node.context_csn?.length ? (
                 <details>
@@ -350,6 +357,27 @@ export function Servers({
               ) : null}
             </section>
           ))}
+          {pairing.status?.peers
+            .filter(
+              (peer) =>
+                !health.servers.some((node) => node.id === peer.server_id),
+            )
+            .map((peer) => (
+              <section className="server-card" key={peer.id}>
+                <h3>
+                  {peer.server_id
+                    ? "Directory node"
+                    : peer.active
+                      ? "Unassigned pairing"
+                      : "Pending node"}
+                </h3>
+                <PairingCard
+                  peer={peer}
+                  pairing={pairing}
+                  disabled={busy || readOnly}
+                />
+              </section>
+            ))}
         </div>
       </section>
 

@@ -1012,3 +1012,19 @@ textarea {
   flex-wrap: wrap;
   margin: 1rem 0;
 }
+
+.pairing-copy {
+  align-items: end;
+}
+
+.pairing-copy > label {
+  flex: 1;
+}
+
+.pairing-status {
+  flex-wrap: wrap;
+}
+
+.pairing-status > code {
+  overflow-wrap: anywhere;
+}

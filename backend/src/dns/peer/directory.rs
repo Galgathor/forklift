@@ -45,7 +45,7 @@ fn own_endpoint(network: &Value) -> Result<Endpoint> {
     })
 }
 
-fn schema(a: &App) -> Result<()> {
+pub(super) fn schema(a: &App) -> Result<()> {
     a.db.lock()
         .unwrap()
         .execute_batch(
