@@ -366,6 +366,73 @@ pub(crate) async fn after_zone_change(a: &App, who: &str) {
         );
     }
 }
+pub(super) fn peer_endpoints(a: &App) -> Result<Vec<Primary>> {
+    Ok(nodes(a)?
+        .into_iter()
+        .map(|node| Primary {
+            address: node.draft.address,
+            dns_port: node.draft.dns_port,
+        })
+        .collect())
+}
+
+async fn forwarding_policy() -> Result<Value> {
+    let Json(value) = forwarding::control(Method::GET, None).await?;
+    let mut names = zones()
+        .await?
+        .into_iter()
+        .filter_map(|zone| zone["name"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    names.sort();
+    Ok(json!({"settings":value["settings"], "zones":names}))
+}
+
+pub(crate) fn watch_forwarding(a: App) {
+    tokio::spawn(async move {
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            timer.tick().await;
+            let Ok(_lease) = a.jobs.lease.try_read() else {
+                continue;
+            };
+            if a.jobs.active.load(std::sync::atomic::Ordering::SeqCst) {
+                continue;
+            }
+            let Ok(_gate) = a.gate.try_lock() else {
+                continue;
+            };
+            if !matches!(operations::recovery(&a), Ok(false)) {
+                continue;
+            }
+            let Ok(nodes) = nodes(&a) else { continue };
+            let peers = nodes
+                .iter()
+                .filter(|n| n.state == "enrolled" && !n.revoked && !transition(n))
+                .collect::<Vec<_>>();
+            if peers.is_empty() {
+                continue;
+            }
+            let Ok(policy) = forwarding_policy().await else {
+                continue;
+            };
+            let mut requests = tokio::task::JoinSet::new();
+            for peer in peers {
+                let peer = peer.clone();
+                let body = json!({"id":peer.id,"policy":policy});
+                requests.spawn(async move {
+                    // Retry on the next pass if the peer is offline, busy, or still on an older image.
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(6),
+                        remote(&peer, "/forwarding", body),
+                    )
+                    .await;
+                });
+            }
+            while requests.join_next().await.is_some() {}
+        }
+    });
+}
+
 pub(crate) async fn index(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
     authorize(&a, &h, false).await?;
     Ok(Json(
@@ -658,6 +725,13 @@ pub(crate) async fn check(
     let primary_zones = zones().await.ok();
     match remote(&n, "/inspect", json!({"id":id})).await {
         Ok(mut report) => {
+            let peer_policy = report
+                .as_object_mut()
+                .and_then(|report| report.remove("forwarding_policy"));
+            report["forwarding_current"] = match (peer_policy, forwarding_policy().await.ok()) {
+                (Some(peer), Some(desired)) => json!(peer == desired),
+                _ => Value::Null,
+            };
             let mut synchronized = !n.draft.zones.is_empty() && report["revision"] == n.revision;
             for item in report["zones"]
                 .as_array_mut()
@@ -757,7 +831,7 @@ pub(crate) async fn remove(
             remote(
                 &n,
                 "/configure",
-                json!({"id":id,"configuration":configuration(&a,&active)?}),
+                json!({"id":id,"configuration":configuration(&a,&active)?,"clear_forwarding":true}),
             )
             .await?;
         }

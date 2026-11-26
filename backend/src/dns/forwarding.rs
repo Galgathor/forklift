@@ -73,7 +73,7 @@ pub(crate) async fn get(State(a): State<App>, h: HeaderMap) -> Result<Json<Value
     authorize(&a, &h, false).await?;
     control(Method::GET, None).await
 }
-async fn control(method: Method, value: Option<&Value>) -> Result<Json<Value>> {
+pub(super) async fn control(method: Method, value: Option<&Value>) -> Result<Json<Value>> {
     let (status, body) = transport(method, "/forwarding", value, true).await?;
     if !status.is_success() {
         return Err(unavailable(
@@ -90,8 +90,11 @@ pub(crate) async fn put(
     Json(value): Json<Settings>,
 ) -> Result<Json<Value>> {
     let who = authorize(&a, &h, true).await?;
-    validate(&value, replication::primary(&a)?.as_ref())?;
     let _guard = a.gate.lock().await;
+    validate(&value, replication::primary(&a)?.as_ref())?;
+    for endpoint in replication::peer_endpoints(&a)? {
+        validate(&value, Some(&endpoint))?;
+    }
     audit(&a, &who, "DNS update forwarding", "primary")?;
     let body = serde_json::to_value(value).map_err(anyhow::Error::from)?;
     match control(Method::PUT, Some(&body)).await {

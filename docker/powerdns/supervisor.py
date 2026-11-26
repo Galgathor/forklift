@@ -22,6 +22,7 @@ SECONDARY = os.environ.get('FORKLIFT_DNS_SECONDARY') == '1'
 SECRETS = DATA / 'secrets' if SECONDARY else Path('/run/dns-secrets')
 CONTROL = DATA / 'control' if SECONDARY else Path('/run/dns-control')
 API_PORT = 8081
+AUTH_PORT = 5354
 SCHEMA = Path('/usr/local/share/doc/pdns/schema.sqlite3.sql')
 child = None
 frontend = None
@@ -93,8 +94,8 @@ def initialize():
 
 def configuration(isolated=False):
     settings = json.loads((DATA / 'secondary.json').read_text()) if SECONDARY else None
-    address = settings['address'] if settings else '127.0.0.1'
-    port = settings['dns_port'] if settings else 5354
+    address = '127.0.0.1'
+    port = AUTH_PORT
     return f'''launch=gsqlite3
 gsqlite3-dnssec=yes
 gsqlite3-database=/dns/pdns.sqlite3
@@ -102,6 +103,7 @@ gsqlite3-pragma-journal-mode=WAL
 gsqlite3-pragma-synchronous=FULL
 local-address={address}
 local-port={port}
+proxy-protocol-from={"127.0.0.1" if SECONDARY else ""}
 socket-dir={CONTROL}
 daemon=no
 guardian=no
@@ -168,25 +170,36 @@ def stop_frontend():
 
 def refresh_frontend(value=None):
     global frontend
-    if SECONDARY:
-        raise ValueError('Forwarding is configured on the primary DNS server')
     code, data, _ = native('GET', '/api/v1/servers/localhost/zones?rrsets=false')
     if code != 200:
         raise ValueError('Cannot read authoritative zones for forwarding')
     zones = [zone['name'] for zone in json.loads(data)]
+    settings = json.loads((DATA / 'secondary.json').read_text()) if SECONDARY else None
+    address, port = (settings['address'], settings['dns_port']) if settings else ('127.0.0.1', 5353)
+    policy = value if value is not None else (secondary_policy() if SECONDARY else forwarding_settings())
+    if settings:
+        zones = sorted(set(zones) | set(settings['zones']) | set(policy['zones']))
     candidate = DATA / 'dnsdist.conf'
-    atomic(candidate, forwarding.configuration(value if value is not None else forwarding_settings(), zones).encode())
+    atomic(candidate, forwarding.configuration(
+        policy['settings'] if settings else policy, zones,
+        f'{address if settings else "0.0.0.0"}:{port}', AUTH_PORT, SECONDARY,
+    ).encode())
     subprocess.run(['dnsdist', '--check-config', '-C', str(candidate)], check=True, timeout=10, capture_output=True)
     stop_frontend()
     frontend = subprocess.Popen(['dnsdist', '--supervised', '--disable-syslog', '-C', str(candidate)])
     for _ in range(50):
         if frontend.poll() is not None:
             raise ValueError('DNS forwarding listener could not start')
-        probe = subprocess.run(['dig', '@127.0.0.1', '-p', '5353', 'version.bind', 'TXT', 'CH', '+time=1', '+tries=1'], capture_output=True, timeout=3)
+        probe = subprocess.run(['dig', '@'+address, '-p', str(port), 'version.bind', 'TXT', 'CH', '+time=1', '+tries=1'], capture_output=True, timeout=3)
         if probe.returncode == 0:
             return
         time.sleep(.1)
     raise ValueError('DNS forwarding listener did not become ready')
+
+
+def secondary_policy():
+    path = DATA / 'forwarding-peer.json'
+    return json.loads(path.read_text()) if path.exists() else {'settings': forwarding.DEFAULT, 'zones': []}
 
 
 def save_forwarding(value):

@@ -36,12 +36,12 @@ def validate(value):
     return value
 
 
-def configuration(value, zones):
+def configuration(value, zones, listener="0.0.0.0:5353", backend_port=5354, preserve_source=False):
     validate(value)
-    lines = ['setLocal("0.0.0.0:5353")', 'setACL({"0.0.0.0/0", "::/0"})',
+    lines = ['setLocal(' + json.dumps(listener) + ')', 'setACL({"0.0.0.0/0", "::/0"})',
              'setSecurityPollSuffix("")', 'setServerPolicy(firstAvailable)', 'setServFailWhenNoServer(true)',
-             'local auth = newServer({address="127.0.0.1:5354", pool="authoritative"})', 'auth:setUp()',
-             'addAction(OrRule({QTypeRule(DNSQType.AXFR), QTypeRule(DNSQType.IXFR)}), PoolAction("authoritative"))',
+             f'local auth = newServer({{address="127.0.0.1:{backend_port}", pool="authoritative", useProxyProtocol={str(preserve_source).lower()}}})', 'auth:setUp()',
+             'addAction(OrRule({NotRule(OpcodeRule(DNSOpcode.Query)), QTypeRule(DNSQType.AXFR), QTypeRule(DNSQType.IXFR)}), PoolAction("authoritative"))',
              'addAction(QClassRule(DNSClass.CHAOS), PoolAction("authoritative"))',
              'local owned = newSuffixMatchNode()']
     for zone in zones:

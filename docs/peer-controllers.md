@@ -4,7 +4,7 @@ Every joined controller should serve the same managed DNS zones, forward other D
 
 ## Deliver DNS failover first
 
-Keep the existing authenticated zone transfers as the upgrade path. Add the same forwarding listener to enrolled DNS peers and replicate upstream addresses and allowed client networks through the existing authenticated configuration channel. Persist the policy on each peer. Route managed zones locally, including negative answers, and apply the client network restrictions before forwarding other queries. Preserve signed zone transfers and notification source checks. Report loaded policy version separately from transferred zone serials. Test both DNS paths from a separate client after stopping the original controller. This stage gives query parity while edits still use the existing controller.
+The first implementation keeps authenticated zone transfers and uses the existing authenticated configuration channel to distribute upstream addresses, client networks, and managed zone names to updated DNS peers. Each peer persists the applied policy and uses it while the original controller is offline. The DNS server check compares the peer's loaded policy separately from zone serials. Assign all the same zones and configure both client DNS endpoints for query parity. Edits still use the existing controller in this stage.
 
 ## Replicate changes between controllers
 

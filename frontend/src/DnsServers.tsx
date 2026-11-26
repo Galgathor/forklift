@@ -28,6 +28,7 @@ type Node = {
   report: {
     state?: string;
     api_available?: boolean | null;
+    forwarding_current?: boolean | null;
     zones?: {
       name: string;
       synchronized: boolean;
@@ -245,6 +246,16 @@ export function DnsServers({ api, zones }: { api: Api; zones: string[] }) {
                         : n.state}
                     </span>
                     {n.error && <small role="status">{n.error}</small>}
+                    {n.state === "enrolled" && (
+                      <small>
+                        Forwarding at last check{" "}
+                        {n.report.forwarding_current === true
+                          ? "up to date"
+                          : n.report.forwarding_current === false
+                            ? "waiting for sync"
+                            : "unverified"}
+                      </small>
+                    )}
                     {n.transfers_revoked && (
                       <small>Primary transfer authorization revoked</small>
                     )}

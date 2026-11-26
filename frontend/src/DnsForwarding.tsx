@@ -34,11 +34,10 @@ export function DnsForwarding({ api }: { api: Api }) {
       <div className="heading-help">
         <h2>DNS forwarding</h2>
         <Help label="DNS forwarding">
-          The primary DNS server answers your managed zones itself. Turn on
-          forwarding to send other queries to another DNS server, such as your
-          router. Missing names inside a managed zone stay local. Secondary DNS
-          servers continue serving their own zones and do not use these
-          settings.
+          Forklift answers managed zones locally and sends other queries to your
+          upstream DNS servers. Updated DNS peers copy these settings
+          automatically and keep using them during an outage. Each peer answers
+          the managed zones assigned to it.
         </Help>
       </div>
       {error && (

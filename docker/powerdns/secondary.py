@@ -1,5 +1,6 @@
 """Pinned HTTPS management of native secondary zones. No public native REST proxy."""
 import base64
+import forwarding
 from concurrent.futures import ThreadPoolExecutor
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -170,6 +171,29 @@ def provision(config):
     for key in keys:
         if key['name'].startswith('forklift-dns-'+config['id']+'-') and key['id'] != config['tsig_name']:
             api('DELETE', '/tsigkeys/'+key['id'])
+    supervisor.refresh_frontend()
+
+
+def apply_forwarding(policy):
+    if not isinstance(policy, dict) or set(policy) != {'settings', 'zones'}:
+        raise ValueError('Invalid peer forwarding policy')
+    value = forwarding.validate(policy['settings'])
+    if any(peer['address'] == node['address'] and peer['port'] == node['dns_port']
+           for peer in value['upstreams'] for node in (settings, settings['primary'])):
+        raise ValueError('Do not forward to a controller DNS listener')
+    names = policy['zones']
+    if not isinstance(names, list) or len(names) > 128 or any(not isinstance(z, str) or len(z) > 254 or not ZONE.fullmatch(z) for z in names):
+        raise ValueError('Invalid managed zone list')
+    previous = supervisor.secondary_policy()
+    if policy == previous:
+        return
+    try:
+        supervisor.refresh_frontend(policy)
+        supervisor.atomic(ROOT/'forwarding-peer.json', json.dumps(policy).encode())
+    except Exception:
+        supervisor.refresh_frontend(previous)
+        raise
+
 
 
 def query(address, port, name, tcp=False):
@@ -194,7 +218,7 @@ def inspect():
     with ThreadPoolExecutor(max_workers=4) as pool:
         zones = list(pool.map(probe, config['zones']))
     return dict(id=config['id'], revision=config['revision'], credential_epoch=epoch(config), protocol=2, api_available=True,
-                checked_at=int(time.time()), zones=zones)
+                checked_at=int(time.time()), zones=zones, forwarding_policy=supervisor.secondary_policy())
 
 
 def enroll():
@@ -272,6 +296,9 @@ class Handler(BaseHTTPRequestHandler):
                 api('GET', '')
                 return self.reply(200, dict(api_available=True, protocol=2))
             with supervisor.lock:
+                if self.path == '/forwarding':
+                    apply_forwarding(body['policy'])
+                    return self.reply(200, dict(applied=True))
                 if self.path == '/inspect':
                     return self.reply(200, inspect())
                 if self.path == '/credentials':
@@ -317,6 +344,8 @@ class Handler(BaseHTTPRequestHandler):
                         supervisor.stop()
                         supervisor.start()
                     provision(config)
+                    if body.get('clear_forwarding') is True:
+                        apply_forwarding({'settings': forwarding.DEFAULT, 'zones': []})
                     return self.reply(200, dict(applied=True, revision=config['revision']))
                 if self.path == '/resync':
                     provision(settings)
@@ -363,6 +392,10 @@ def run(runtime):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         supervisor.API_PORT = sock.getsockname()[1]
+    with socket.socket() as tcp, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        tcp.bind(('127.0.0.1', 0))
+        supervisor.AUTH_PORT = tcp.getsockname()[1]
+        udp.bind(('127.0.0.1', supervisor.AUTH_PORT))
     supervisor.start()
     provision(settings)
     if (ROOT/'certificate-activation.json').exists():

@@ -31,6 +31,7 @@ with stack as s:
     openssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=DNS test manager', '-keyout', 'server.key', '-out', 'server.csr')
     (s.root/'extensions').write_text('basicConstraints=critical,CA:FALSE\nsubjectAltName=IP:'+proxy_address+'\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n')
     openssl('x509', '-req', '-in', 'server.csr', '-CA', 'ca.crt', '-CAkey', 'ca.key', '-set_serial', '2', '-days', '2', '-extfile', 'extensions', '-out', 'server.crt')
+    upstream_name = s.project+'-dns-upstream'
     proxy_name = s.project+'-dns-proxy'
     run(['docker', 'run', '-d', '--name', proxy_name, '--network', network_name, '--ip', proxy_address,
          '--user', str(os.getuid())+':'+str(os.getgid()), '-e', 'PROXY_PORT=8443', '-e', 'MANAGER_HOST=manager', '-e', 'MANAGER_PORT=8080',
@@ -93,14 +94,16 @@ with stack as s:
             return run(['docker', 'compose', '-p', project+'-second', '-f', str(SOURCE/'deploy/dns-secondary/compose.yaml'), '-f', str(override2), *args], env=env2, check=check)
         def configure(envelope):
             env['FORKLIFT_DNS_JOIN'] = base64.b64encode(json.dumps(envelope).encode()).decode()
-        def public_query(name, kind='A', expected=None, tcp=False, dns_port=secondary_port, dns_address=None):
+        def public_query(name, kind='A', expected=None, tcp=False, dns_port=secondary_port, dns_address=None, status='NOERROR', authoritative=True):
             result = run(['docker', 'run', '--rm', '--network', 'host', '--entrypoint', 'dig', 'forklift-dns:latest', '@'+(dns_address or (primary_address if dns_port==primary_port else address)),
                           '-p', str(dns_port), name, kind, '+time=1', '+tries=1', '+nocookie']+(['+tcp'] if tcp else []), check=False)
             text = result.stdout.decode()
             if kind=='AXFR':
                 assert 'Transfer failed' in text or result.returncode, text
             else:
-                assert 'status: NOERROR' in text and 'aa' in text.split('flags:', 1)[1].split(';', 1)[0].split(), text
+                assert 'status: '+status in text, text
+                if authoritative:
+                    assert 'aa' in text.split('flags:', 1)[1].split(';', 1)[0].split(), text
                 if expected:
                     assert expected in text, text
             return text
@@ -269,6 +272,30 @@ except ssl.SSLCertVerificationError:pass
             r('/api/dns/zones/'+new_zone, 'DELETE', dict(acknowledge=True, confirm_name=new_zone, expected_revision=data['revision']))
             node = synced()
             assert new_zone not in node['zones']
+            upstream_address = str(subnet.network_address+103)
+            upstream_config = s.root/'upstream.conf'
+            upstream_config.write_text('setLocal("0.0.0.0:5353")\nsetSecurityPollSuffix("")\nsetACL({"'+str(subnet)+'"})\naddAction(QTypeRule(DNSQType.SOA), RCodeAction(DNSRCode.REFUSED))\naddAction(AllRule(), SpoofAction("192.168.1.80"))\n')
+            run(['docker','run','-d','--name',upstream_name,'--network',network_name,'--ip',upstream_address,
+                 '--mount','type=bind,src='+str(upstream_config)+',dst=/upstream.conf,readonly',
+                 '--entrypoint','dnsdist','forklift-dns:latest','--supervised','--disable-syslog','-C','/upstream.conf'])
+            policy = dict(enabled=True, upstreams=[dict(address=upstream_address,port=5353)], allowed_clients=[str(subnet)])
+            r('/api/dns/forwarding','PUT',policy)
+            for _ in range(40):
+                if r(path+'/check', 'POST', {})['report']['forwarding_current'] is True:
+                    break
+                time.sleep(.5)
+            else:
+                raise AssertionError('DNS peer did not receive forwarding settings')
+            def forwarded(tcp=False):
+                for attempt in range(10):
+                    try:
+                        return public_query('outside.test.', expected='192.168.1.80', tcp=tcp, authoritative=False)
+                    except AssertionError:
+                        if attempt == 9:
+                            raise
+                        time.sleep(1)
+            forwarded()
+            public_query('missing.example.test.', status='NXDOMAIN')
             # Secondary restart works with no join and primary/manager offline, using independent storage.
             s.compose('stop', 'dns')
             unavailable = r(path+'/check', 'POST', {})
@@ -280,6 +307,7 @@ except ssl.SSLCertVerificationError:pass
             secondary('up', '-d', '--no-build', '--force-recreate', '--wait')
             public_query('server.example.test.', expected='192.168.1.51', tcp=True)
             public_query('51.'+reverse, 'PTR', 'server.example.test.')
+            forwarded(tcp=True)
             s.compose('start', 'dns', 'manager'); s.wait()
             synced()
             record('server', ['192.168.1.52']); synced()
@@ -310,4 +338,4 @@ except ssl.SSLCertVerificationError:pass
             secondary('down', '--volumes', '--remove-orphans', check=False)
             run(['docker','image','rm',old_image],check=False)
     finally:
-        run(['docker', 'rm', '-f', proxy_name], check=False)
+        run(['docker', 'rm', '-f', proxy_name, upstream_name], check=False)

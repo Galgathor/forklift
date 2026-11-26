@@ -1057,6 +1057,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     maintenance::watch(a.clone());
+    dns::replication::watch_forwarding(a.clone());
     clients::monitoring::watch(a.clone());
     let machine = Router::new()
         .route("/api/client/v1/info", get(clients::info))
